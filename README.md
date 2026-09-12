@@ -41,22 +41,30 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 ./gradlew mingwX64Test       # Windows (core modules; net lands in P3)
 ```
 
-Cross-compile the Linux test binary from macOS and run it elsewhere:
+Run the full Linux suite on a Linux host (needed for the io_uring/epoll/poll drivers), pinning the
+driver:
 
 ```bash
-./gradlew :neton-io-net:linkDebugTestLinuxX64
-scp neton-io-net/build/bin/linuxX64/debugTest/test.kexe <host>:/tmp/
-ssh <host> /tmp/test.kexe
+# on a Linux host with JDK 17 (the macOS box cannot run the Linux reactors)
+NETON_IO_DRIVER=iouring ./gradlew :neton-io-net:linuxX64Test                          # io_uring
+NETON_IO_DRIVER=epoll   ./gradlew :neton-io-net:linuxX64Test                          # epoll
+NETON_IO_DRIVER=iouring NETON_IO_URING_DEPTH=8 ./gradlew :neton-io-net:linuxX64Test   # full-SQ path
 ```
 
 ## Status
 
-**P0** (model + in-memory driver, no cinterop) and **P1** (kqueue/epoll reactor + non-blocking TCP)
-are green on macOS (kqueue) and Linux (epoll). The same `Framed`/`Service`/`dispatcher` code runs
-unchanged over the in-memory driver and over real sockets.
+**P0** (model + in-memory driver) and **P1** (kqueue/epoll reactor + non-blocking TCP) are green;
+the io_uring completion driver, the threading contract (cross-thread dispatch + wakeup, owner
+checks), reactor timers, and the buffer-lifecycle / close / cancel paths are implemented.
 
-Next (P2/P3): TLS filter and WebSocket codec; then io_uring (Linux) and IOCP (Windows), and an
-HTTP layer.
+Verified (2026-09-13), reproducible: `neton-io-net` `linuxX64Test` (13 cases) passes with 0
+failures on a Rocky Linux 9.8 / kernel 5.14 / x86_64 host under **io_uring, epoll, poll(2), and
+io_uring at SQ depth 8** (Kotlin 2.4.0, Gradle 8.14.2, JDK 17); macOS (kqueue) passes the same
+cases. This is test-case pass, not a guarantee that every error path, scalability, tail latency or
+memory behaviour is covered. Windows: core modules compile; the net driver (IOCP) is not built.
+
+Next (P2/P3): TLS filter and WebSocket codec; then io_uring optimization (batching, registered
+buffers, multi-reactor) and IOCP, and an HTTP layer.
 
 ## Benchmark
 
