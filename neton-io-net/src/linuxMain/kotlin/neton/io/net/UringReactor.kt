@@ -29,6 +29,8 @@ import neton.io.uring.NETON_IORING_OP_ASYNC_CANCEL
 import neton.io.uring.NETON_IORING_OP_POLL_ADD
 import neton.io.uring.NETON_IORING_OP_READ
 import neton.io.uring.NETON_IORING_OP_SEND
+import neton.io.uring.NETON_IORING_OP_TIMEOUT
+import neton.io.uring.neton_kernel_timespec
 import neton.io.uring.NETON_MSG_NOSIGNAL
 import neton.io.uring.NETON_POLLIN
 import neton.io.uring.NETON_POLLOUT
@@ -125,6 +127,8 @@ internal class UringReactor : Reactor() {
         cqesOff = params.cq_off.cqes
         nativeHeap.free(params.ptr.rawValue)
     }
+
+    private fun nowMs(): Long = reactorNowMs()
 
     private fun pending(): UInt = neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff)
 
@@ -223,6 +227,18 @@ internal class UringReactor : Reactor() {
 
     private fun armWake() { wakeUd = prepSqe(NETON_IORING_OP_POLL_ADD, wakeReadFd, 0L, 0, NETON_POLLIN) }
 
+    // One IORING_OP_TIMEOUT at a time bounds the wait to the nearest timer. The timespec must
+    // stay valid until the op completes, so it lives on the native heap for the reactor's life.
+    private val timeoutSpec = nativeHeap.alloc<neton_kernel_timespec>()
+    private var timeoutUd: ULong = 0uL
+    private var timeoutDeadlineMs = Long.MAX_VALUE
+
+    private fun armTimeout(ms: Int) {
+        timeoutSpec.tv_sec = (ms / 1000).toLong()
+        timeoutSpec.tv_nsec = ((ms % 1000) * 1_000_000).toLong()
+        timeoutUd = prepSqe(NETON_IORING_OP_TIMEOUT, -1, timeoutSpec.ptr.toLong(), 1, 0)
+    }
+
     override fun runUntil(root: Job) {
         armWake()
         while (!root.isCompleted) {
@@ -231,17 +247,18 @@ internal class UringReactor : Reactor() {
             drainTasks()
             if (root.isCompleted) break
 
-            val toSubmit = pending()
             val timerMs = nextTimerMillis()
-            val minComplete = if (hasTasks() || timerMs == 0) 0u else 1u
-            // Timers: io_uring_enter has no timeout argument in this minimal binding; a due-soon
-            // timer is honoured by a bounded wait through IORING_OP_TIMEOUT in the full binding.
-            // Until then a pending timer makes the wait non-blocking and the loop polls the clock.
-            val mc = if (timerMs > 0) 0u else minComplete
+            val mc = if (hasTasks() || timerMs == 0) 0u else 1u
+            if (mc > 0u && timerMs > 0) {
+                // Bound the blocking wait by the nearest timer (re-arm only if none is in flight
+                // or the in-flight one would fire too late; a stale one completes harmlessly).
+                val deadline = nowMs() + timerMs
+                if (timeoutUd == 0uL || deadline < timeoutDeadlineMs) { armTimeout(timerMs); timeoutDeadlineMs = deadline }
+            }
+            val toSubmit = pending()
             val flags = if (mc > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
             neton_uring_enter(ringFd, toSubmit, mc, flags)
             countPoll(mc == 0u, reap())
-            if (mc == 0u && timerMs > 0 && !hasTasks()) platform.posix.usleep(minOf(timerMs, 1) .toUInt() * 1000u)
         }
     }
 
@@ -257,6 +274,7 @@ internal class UringReactor : Reactor() {
             val res = cqe.res
             head += 1u
             if (ud == wakeUd) { onWake(); armWake(); continue }
+            if (ud == timeoutUd) { timeoutUd = 0uL; timeoutDeadlineMs = Long.MAX_VALUE; continue }
             val entry = inFlight.remove(ud) ?: continue // a cancel op's own CQE, or unknown
             entry.pinned?.unpin()                          // the kernel is done with the buffer
             val cont = entry.cont ?: continue              // null if the awaiter was cancelled/closed

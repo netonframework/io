@@ -89,18 +89,21 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     private var timerSeq = 0L
     private val clock = TimeSource.Monotonic.markNow()
     private fun nowNs(): Long = clock.elapsedNow().inWholeNanoseconds
+    protected fun reactorNowMs(): Long = nowNs() / 1_000_000L
 
     /** Null unless NETON_IO_STATS=1. Subclasses count only when non-null. */
     protected val stats: ReactorStats? = if (getenv("NETON_IO_STATS")?.toKString() == "1") ReactorStats() else null
 
     /**
-     * Max dispatched tasks to run per loop round before giving the poller a turn (0 = unbounded,
-     * the original behaviour: drain everything, then block in the poller). NETON_IO_TASK_BUDGET.
-     * With a budget, tasks still pending after the round make the next poll non-blocking, so I/O
-     * readiness is checked every `budget` tasks instead of only when the task queue is empty. Note:
-     * the reactor has no timers yet; when it does, a budget must not delay them either.
+     * Max dispatched tasks to run per loop round before the poller and the timers get a turn
+     * (0 = unbounded: drain everything, then block). NETON_IO_TASK_BUDGET overrides the default.
+     * The default is finite for fairness, not throughput: a coroutine that keeps re-dispatching
+     * itself (a `yield()` loop, a busy connection whose every step resumes immediately) must not
+     * starve I/O readiness and timers for the other connections (FairnessTest). Benchmarks showed
+     * no throughput difference between 64 and unbounded at 1 in-flight (msgtrans bench results).
+     * Tasks left over make the next poll non-blocking, so nothing is delayed beyond one round.
      */
-    protected val taskBudget: Int = getenv("NETON_IO_TASK_BUDGET")?.toKString()?.toIntOrNull() ?: 0
+    protected val taskBudget: Int = getenv("NETON_IO_TASK_BUDGET")?.toKString()?.toIntOrNull() ?: DEFAULT_TASK_BUDGET
 
     protected abstract val driverName: String
 
@@ -249,6 +252,8 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     abstract fun shutdown()
 
     companion object {
+        const val DEFAULT_TASK_BUDGET = 0
+
         fun run(block: suspend CoroutineScope.() -> Unit) {
             val reactor = createReactor()
             var failure: Throwable? = null

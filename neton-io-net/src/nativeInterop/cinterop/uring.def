@@ -29,6 +29,9 @@ package = neton.io.uring
 #define NETON_IORING_OP_POLL_ADD 6
 #define NETON_IORING_OP_SEND     26
 #define NETON_IORING_OP_ASYNC_CANCEL 14
+#define NETON_IORING_OP_TIMEOUT  11
+
+struct neton_kernel_timespec { int64_t tv_sec; long long tv_nsec; };
 
 /* send(2) flags */
 #define NETON_MSG_NOSIGNAL 0x4000
