@@ -1,6 +1,6 @@
 # neton-io — 规格说明（SPEC）
 
-> **协程原生的高性能异步 I/O 框架（Kotlin/Native 优先），Neton / PrivChat / Pulse 全栈的统一 I/O 底座。**
+> **协程原生的高性能异步 I/O 框架（Kotlin/Native 优先），Neton / Pulse 全栈的统一 I/O 底座。**
 >
 > 架构对标并移植 [`geario`](../../Neton/geario)（ntex 网络层的单 crate 提取，性能 ≈ ntex），
 > 采用 ntex-io 的 **buffered filter** 模型，映射到 Kotlin 协程。
@@ -20,12 +20,12 @@
    msgtrans-kotlin      neton-io-http          （其它）
    长连接 / RPC / 流      HTTP/1.1 · HTTP/2
         │                   │
-   PrivChat / Pulse     neton-http（替代 hyper4k / Ktor）
+   Pulse                neton-http（替代 hyper4k / Ktor）
 ```
 
 **三个战略目标：**
 
-1. **承接 `msgtrans-kotlin`**：长连接、双向 RPC、事件流的传输底座（`privchat-server ↔ privchat-application`、Pulse 上报/下发）。
+1. **承接 `msgtrans-kotlin`**：长连接、双向 RPC、事件流的传输底座（Pulse 上报 / 远程配置下发 / 命令）。
 2. **承接 HTTP 实现**：`neton-io-http` 提供 HTTP/1.1 + HTTP/2，让 `neton-http` 框架**甩掉 Rust 的 `hyper4k`（Tokio+Hyper FFI）**，全栈归一到纯 Kotlin/Native。
 3. **未来替代 Ktor**：以更先进的架构（io_uring + buffered-filter + thread-per-core + 零拷贝 + 协程原生）提供比 Ktor 更强、更快、且与长连接/RPC 统一在同一 runtime 的 HTTP 能力。
 
@@ -158,9 +158,9 @@ geario/ntex 是 `task::Poll` + `poll_read/poll_write` + `Waker` 的手动 poll �
              /              |                 \
    msgtrans-kotlin     neton-io-http        （直接用户）
         |                   |
-  PrivChat / Pulse     neton-http（去 hyper4k）
+  Pulse                neton-http（去 hyper4k）
 ```
-- `neton-io` **不依赖**任何上层（msgtrans/neton/pulse/privchat）。
+- `neton-io` **不依赖**任何上层（msgtrans/neton/pulse）。
 - 平台后端通过 cinterop（liburing/openssl(官方)/epoll/kqueue）与 OS（Network.framework/IOCP/SChannel）——**这是不可避免的 C 边界,但远轻于内嵌 Tokio runtime**。
 
 ---
@@ -173,13 +173,13 @@ geario/ntex 是 `task::Poll` + `poll_read/poll_write` + `Waker` 的手动 poll �
 | **P1** | `polling`（epoll+kqueue）+ 裸 TCP + connect/DNS;echo benchmark 立基线 | 对比 geario/Ktor 出数;稳定跑压测 |
 | **P2** | TLS filter（OpenSSL 服务端 / nw Apple）+ WS codec;`msgtrans-kotlin` 落上来 | msgtrans conformance（与 Rust/TS wire 一致）通过 |
 | **P3** | `io_uring` / `IOCP` / QUIC;`neton-io-http`（H1/H2） | io_uring 逼近 geario;http 超 Ktor-CIO |
-| **then** | `neton-http` 重绑 neton-io-http、下线 hyper4k;Pulse/PrivChat 全量 | 全栈无 Rust runtime FFI |
+| **then** | `neton-http` 重绑 neton-io-http、下线 hyper4k;Pulse 全量 | 全栈无 Rust runtime FFI |
 
 ---
 
 ## 11.1 平台与协议优先级（已定）
 
-- **平台**：**Linux 优先（性能/benchmark 主场）+ macOS 作开发机（kqueue）**；iOS/Android 客户端走 `nw`/socket 后端，属 P2。多平台是最终要求（服务端 privchat-server/neton + 客户端 PulseKit/privchat-sdk 都要），但**性能攻坚只对 Linux 服务端**；客户端单连接、非吞吐战场，用 OS 原生栈即可。→ 底层借鉴偏 **gnet**。
+- **平台**：**Linux 优先（性能/benchmark 主场）+ macOS 作开发机（kqueue）**；iOS/Android 客户端走 `nw`/socket 后端，属 P2。多平台是最终要求（服务端 neton + 客户端 PulseKit 都要），但**性能攻坚只对 Linux 服务端**；客户端单连接、非吞吐战场，用 OS 原生栈即可。→ 底层借鉴偏 **gnet**。
 - **协议**：**Raw TCP → WebSocket → HTTP**。第一个消费者是 `msgtrans-kotlin`（要 TCP+WS，不要 HTTP）；HTTP（替代 Ktor）是更后阶段。→ 参考偏 gnet/netpoll（底层高性能），**不是 nbio**（协议解析优化）。
 
 ## 11.2 Go 网络库借鉴与定位（gnet / netpoll）
