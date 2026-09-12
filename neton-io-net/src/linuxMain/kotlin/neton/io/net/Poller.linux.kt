@@ -16,26 +16,30 @@ import platform.linux.epoll_create1
 import platform.linux.epoll_ctl
 import platform.linux.epoll_event
 import platform.linux.epoll_wait
+import platform.posix.EEXIST
 import platform.posix.close
+import platform.posix.errno
 
 /** epoll-backed [Poller] for Linux targets. */
 @OptIn(ExperimentalForeignApi::class)
 internal actual class Poller actual constructor() {
 
     private val epfd: Int = epoll_create1(0)
-    private val registered = HashSet<Int>()
 
     actual fun armRead(fd: Int) = arm(fd, EPOLLIN.toInt())
 
     actual fun armWrite(fd: Int) = arm(fd, EPOLLOUT.toInt())
 
     // epoll arms immediately (one epoll_ctl per interest), unlike kqueue's batched changelist.
+    // We do not track which fds are registered: a closed fd is auto-removed from the epoll set,
+    // and its number may be reused, so ADD then fall back to MOD on EEXIST is the robust path.
     private fun arm(fd: Int, events: Int) = memScoped {
         val ev = alloc<epoll_event>()
         ev.events = (events or EPOLLONESHOT.toInt()).convert()
         ev.data.fd = fd
-        val op = if (registered.add(fd)) EPOLL_CTL_ADD else EPOLL_CTL_MOD
-        epoll_ctl(epfd, op, fd, ev.ptr)
+        if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, ev.ptr) != 0 && errno == EEXIST) {
+            epoll_ctl(epfd, EPOLL_CTL_MOD, fd, ev.ptr)
+        }
         Unit
     }
 

@@ -85,6 +85,36 @@ class Buffer(initialCapacity: Int = DEFAULT_CAPACITY) {
         readerIndex = 0
     }
 
+    // ---- direct I/O (fill/drain the backing memory in place, no intermediate copy) ----
+
+    /** Ensure at least [min] writable bytes and return the writable capacity now available. */
+    fun reserve(min: Int): Int {
+        ensureWritable(min)
+        return array.size - writerIndex
+    }
+
+    /** Backing array, valid until the next write/reserve. Use with [writerIndex]/[readerIndex]. */
+    fun backingArray(): ByteArray = array
+
+    /** Current writer position into [backingArray]. */
+    fun writerIndex(): Int = writerIndex
+
+    /** Current reader position into [backingArray]. */
+    fun readerIndex(): Int = readerIndex
+
+    /** Commit [n] bytes filled directly into the backing array at the writer position. */
+    fun commitWrite(n: Int) {
+        require(n >= 0 && writerIndex + n <= array.size)
+        writerIndex += n
+    }
+
+    /** Consume [n] readable bytes drained directly from the backing array. */
+    fun consume(n: Int) {
+        require(n in 0..readableBytes)
+        readerIndex += n
+        resetIfDrained()
+    }
+
     private fun resetIfDrained() {
         if (readerIndex == writerIndex) clear()
     }

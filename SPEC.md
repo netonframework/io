@@ -37,7 +37,7 @@
 
 - **不**一步到位复刻 Tokio 全部特性；按 §11 分阶段。
 - **不** JVM 优先：Kotlin/Native 优先（KMP，后续可加 JVM 后端）。
-- **不**做纯 KN 的 TLS：TLS 走原生（BoringSSL / OS），见 §7。
+- **不**做纯 KN 的 TLS：TLS 走原生（OpenSSL / OS，不用 BoringSSL 等第三方），见 §7。
 - **不**在公开 API 暴露 `Future/poll/Waker`：对用户只暴露 `suspend` / `Flow`（见 §5）。
 
 ---
@@ -68,7 +68,7 @@
 | `neton-io-service` | `Service<Req,Res>`、pipeline、middleware | `service` |
 | `neton-io-dispatcher` | framed 协议的通用连接循环 | `dispatcher` |
 | `neton-io-net` | socket、connector、DNS、**平台驱动**（见 §6） | `net` |
-| `neton-io-tls` | TLS filter（BoringSSL / Network.framework / SChannel） | `tls/rustls`（重造后端） |
+| `neton-io-tls` | TLS filter（OpenSSL / Network.framework / SChannel） | `tls/rustls`（重造后端） |
 | `neton-io-server` | worker pool + accept loop | `server` |
 | `neton-io-rt` | runtime / arbiter / driver 选择 / 定时器 | `rt` |
 | `neton-io-http` | **HTTP/1.1 + HTTP/2**（filter/dispatcher 之上；未来替代 Ktor/hyper4k） | geario-http（独立仓） |
@@ -116,7 +116,7 @@ geario/ntex 是 `task::Poll` + `poll_read/poll_write` + `Waker` 的手动 poll �
 
 沿用 ntex 把 TLS 建模成 `FilterLayer` 的做法（`Io<Layer<TlsServerFilter, F>>`），替换被关在一个 filter 内、不污染其它层：
 
-- 服务端：**BoringSSL / OpenSSL**（cinterop）。
+- 服务端：**OpenSSL**（cinterop，直接用官方 OpenSSL，不用 BoringSSL）。
 - Apple 客户端：**Network.framework**（TLS 内建）。
 - Windows：**SChannel**。
 
@@ -161,7 +161,7 @@ geario/ntex 是 `task::Poll` + `poll_read/poll_write` + `Waker` 的手动 poll �
   PrivChat / Pulse     neton-http（去 hyper4k）
 ```
 - `neton-io` **不依赖**任何上层（msgtrans/neton/pulse/privchat）。
-- 平台后端通过 cinterop（liburing/openssl/epoll/kqueue）与 OS（Network.framework/IOCP/SChannel）——**这是不可避免的 C 边界,但远轻于内嵌 Tokio runtime**。
+- 平台后端通过 cinterop（liburing/openssl(官方)/epoll/kqueue）与 OS（Network.framework/IOCP/SChannel）——**这是不可避免的 C 边界,但远轻于内嵌 Tokio runtime**。
 
 ---
 
@@ -171,7 +171,7 @@ geario/ntex 是 `task::Poll` + `poll_read/poll_write` + `Waker` 的手动 poll �
 |------|------|-----------|
 | **P0** | `bytes/codec/core(filter)/service/dispatcher` + **testing driver**;移植 geario 单测子集;echo dispatcher 纯 KN 跑通 | 模型单测全绿、任意 KN 目标可跑、零 cinterop |
 | **P1** | `polling`（epoll+kqueue）+ 裸 TCP + connect/DNS;echo benchmark 立基线 | 对比 geario/Ktor 出数;稳定跑压测 |
-| **P2** | TLS filter（BoringSSL 服务端 / nw Apple）+ WS codec;`msgtrans-kotlin` 落上来 | msgtrans conformance（与 Rust/TS wire 一致）通过 |
+| **P2** | TLS filter（OpenSSL 服务端 / nw Apple）+ WS codec;`msgtrans-kotlin` 落上来 | msgtrans conformance（与 Rust/TS wire 一致）通过 |
 | **P3** | `io_uring` / `IOCP` / QUIC;`neton-io-http`（H1/H2） | io_uring 逼近 geario;http 超 Ktor-CIO |
 | **then** | `neton-http` 重绑 neton-io-http、下线 hyper4k;Pulse/PrivChat 全量 | 全栈无 Rust runtime FFI |
 
@@ -200,7 +200,7 @@ geario 是**主蓝图**（架构 + filter/dispatcher/buffer 模型，已 benchma
 
 1. JVM 后端是否要（当前 KN 优先，服务端 `macosArm64/linuxX64/linuxArm64/mingwX64` + 客户端 `iosArm64/iosSimulatorArm64`，`androidNative*` 排期待定）？
 2. P0 内存 driver 之上,是否直接把 `msgtrans-kotlin` 的 wire codec 叠上跑 conformance（提前验证协议层）？
-3. Linux TLS 选 BoringSSL 还是 OpenSSL？（BoringSSL 体积/性能好但构建更麻烦）
+3. （已定）Linux TLS 用官方 OpenSSL，不用 BoringSSL。
 4. io_uring 最低内核版本与 polling 回退策略细节。
 5. buffer 池的所有权模型：是否完全照搬 geario 的 `BytePages`/`FilterBuf`,还是按 KN 的 pinned/native 内存重新设计？
 

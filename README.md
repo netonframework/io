@@ -56,3 +56,29 @@ unchanged over the in-memory driver and over real sockets.
 
 Next (P2/P3): TLS filter and WebSocket codec; then io_uring (Linux) and IOCP (Windows), and an
 HTTP layer.
+
+## Benchmark
+
+Raw byte echo (`echoServer`/`echoClient`), client and server on the same 2-core Linux box,
+localhost, release build:
+
+| Connections | Payload | Throughput |
+|---|---|---|
+| 1 | 64 B | 25,192 req/s |
+| 50 | 64 B | 88,251 req/s |
+| 200 | 64 B | 73,479 req/s |
+| 1000 | 64 B | 63,479 req/s |
+| 200 | 1024 B | 71,349 req/s (139 MiB/s) |
+
+This is the epoll single-reactor baseline. The read/write path is allocation-free (the socket
+fills and drains the `Buffer` backing directly). The known levers to peak, in order:
+
+1. **Arm once, edge-triggered** — remove the per-round `epoll_ctl` re-arm.
+2. **Multi-reactor** — one reactor per core with connection affinity.
+3. **io_uring** — batched submission, completion-based, registered buffers.
+
+```bash
+# on one host:
+./echoServer 0.0.0.0 9000
+./echoClient 127.0.0.1 9000 50 5 64   # host port connections seconds payload
+```
