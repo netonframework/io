@@ -75,18 +75,21 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     override suspend fun awaitConnect(fd: Int) = waitWritable(fd)
 
     override fun runUntil(root: Job) {
+        poller.armRead(wakeReadFd)
         while (!root.isCompleted) {
+            absorbExternal()
+            fireTimers()
             drainTasks()
             if (root.isCompleted) break
 
-            val hasWaiters = readWaiters.isNotEmpty() || writeWaiters.isNotEmpty()
-            if (!hasWaiters && !hasTasks()) break
-
-            val timeout = if (hasTasks()) 0 else -1
+            val timeout = if (hasTasks()) 0 else nextTimerMillis()
+            var woke = false
             val n = poller.poll(timeout) { fd, readable, writable ->
+                if (fd == wakeReadFd) { woke = true; return@poll }
                 if (readable) readWaiters.remove(fd)?.resume(Unit)
                 if (writable) writeWaiters.remove(fd)?.resume(Unit)
             }
+            if (woke) { onWake(); poller.armRead(wakeReadFd) }
             countPoll(timeout == 0, n)
         }
     }
@@ -99,5 +102,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         closeFd(fd)
     }
 
-    override fun shutdown() = poller.close()
+    override fun shutdown() {
+        poller.close()
+        closeWakePipe()
+    }
 }

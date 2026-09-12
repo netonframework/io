@@ -4,6 +4,8 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.get
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
@@ -25,6 +27,9 @@ import platform.posix.close
 import platform.posix.errno
 import platform.posix.fcntl
 import platform.posix.getsockopt
+import platform.posix.pipe
+import platform.posix.read
+import platform.posix.write
 import platform.posix.recv
 import platform.posix.send
 import platform.posix.socklen_tVar
@@ -123,3 +128,28 @@ internal fun writeFrom(fd: Int, buf: Buffer): Int {
 
 internal const val WOULD_BLOCK = -1
 internal const val IO_ERROR = -2
+
+/** A non-blocking self-pipe [read fd, write fd] used to wake the reactor from another thread. */
+@OptIn(ExperimentalForeignApi::class)
+internal fun createWakePipe(): IntArray = memScoped {
+    val fds = allocArray<IntVar>(2)
+    check(pipe(fds) == 0) { "pipe() failed: ${errnoMessage(errno)}" }
+    setNonBlocking(fds[0]); setNonBlocking(fds[1])
+    intArrayOf(fds[0], fds[1])
+}
+
+/** Write one byte; a full pipe already guarantees a wakeup, so EAGAIN is fine. */
+@OptIn(ExperimentalForeignApi::class)
+internal fun signalWakePipe(writeFd: Int) = memScoped {
+    val b = alloc<kotlinx.cinterop.ByteVar>()
+    b.value = 1
+    write(writeFd, b.ptr, 1u)
+    Unit
+}
+
+/** Drain the pipe so the next signal is a fresh edge. */
+@OptIn(ExperimentalForeignApi::class)
+internal fun drainWakePipe(readFd: Int) = memScoped {
+    val buf = allocArray<kotlinx.cinterop.ByteVar>(64)
+    while (read(readFd, buf, 64u) > 0) { /* drain */ }
+}

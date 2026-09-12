@@ -1,11 +1,18 @@
 package neton.io.net
 
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Delay
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.launch
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.TimeSource
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.toKString
 import neton.io.bytes.Buffer
@@ -53,10 +60,35 @@ internal class ReactorStats {
  * The upper layers ([ReactorStream], TCP helpers) are written against these operations and do
  * not know which family is underneath.
  */
-@OptIn(ExperimentalForeignApi::class)
-internal abstract class Reactor : CoroutineDispatcher() {
+/**
+ * Threading contract. The reactor is single-threaded: connection state, buffers and waiters are
+ * touched only on the thread running [runUntil]. The one supported cross-thread entry is
+ * [dispatch]: a coroutine resumed from another thread (a `CompletableDeferred` completed by a
+ * worker, a callback from a foreign library) is queued on a lock-free external queue and the
+ * loop is woken through a self-pipe. I/O calls (read/write/close) from another thread are
+ * rejected with IllegalStateException rather than silently corrupting state. Timers are part
+ * of the loop ([Delay]), so `delay` / `withTimeout` never leave the reactor thread.
+ */
+@OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class, InternalCoroutinesApi::class)
+internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     private val tasks = ArrayDeque<Runnable>()
+
+    // ---- cross-thread dispatch: MPSC stack + self-pipe wakeup
+    private class ExtNode(val block: Runnable, val next: ExtNode?)
+    private val external = AtomicReference<ExtNode?>(null)
+    private val wakePipe: IntArray = createWakePipe()
+    protected val wakeReadFd: Int get() = wakePipe[0]
+
+    // ---- timers (min-heap by deadline, lazy cancellation)
+    private class Timer(val deadlineNs: Long, val seq: Long, val block: Runnable) : DisposableHandle {
+        var cancelled = false
+        override fun dispose() { cancelled = true }
+    }
+    private val timers = ArrayList<Timer>()
+    private var timerSeq = 0L
+    private val clock = TimeSource.Monotonic.markNow()
+    private fun nowNs(): Long = clock.elapsedNow().inWholeNanoseconds
 
     /** Null unless NETON_IO_STATS=1. Subclasses count only when non-null. */
     protected val stats: ReactorStats? = if (getenv("NETON_IO_STATS")?.toKString() == "1") ReactorStats() else null
@@ -84,6 +116,10 @@ internal abstract class Reactor : CoroutineDispatcher() {
         check(isOwnerThread()) { "$what must be called on the reactor thread that owns the stream" }
     }
 
+    fun checkOwnerPublic(what: String) = checkOwner(what)
+
+    protected fun closeWakePipe() { closeFd(wakePipe[0]); closeFd(wakePipe[1]) }
+
     /**
      * Close a stream's fd: fail every coroutine parked on it with [neton.io.core.ClosedException],
      * drop the driver's interest, then close. Reactor thread only.
@@ -91,7 +127,75 @@ internal abstract class Reactor : CoroutineDispatcher() {
     abstract fun closeStream(fd: Int)
 
     final override fun dispatch(context: CoroutineContext, block: Runnable) {
-        tasks.addLast(block)
+        if (isOwnerThread()) {
+            tasks.addLast(block)
+            return
+        }
+        // Another thread: push (lock-free) and wake the loop.
+        while (true) {
+            val head = external.load()
+            if (external.compareAndSet(head, ExtNode(block, head))) break
+        }
+        signalWakePipe(wakePipe[1])
+    }
+
+    /** Move externally posted tasks (if any) onto the local queue, oldest first. */
+    protected fun absorbExternal() {
+        var node: ExtNode? = external.exchange(null) ?: return
+        val batch = ArrayList<Runnable>()
+        while (node != null) { batch.add(node.block); node = node.next }
+        for (i in batch.indices.reversed()) tasks.addLast(batch[i])
+    }
+
+    /** Called when the wake pipe is readable: drain it and absorb the external queue. */
+    protected fun onWake() {
+        drainWakePipe(wakePipe[0])
+        absorbExternal()
+    }
+
+    // ---- Delay: timers run on the reactor thread
+    private fun addTimer(delayMs: Long, block: Runnable): Timer {
+        val t = Timer(nowNs() + delayMs.coerceAtLeast(0) * 1_000_000L, timerSeq++, block)
+        timers.add(t); siftUp(timers.size - 1)
+        return t
+    }
+
+    override fun scheduleResumeAfterDelay(timeMillis: Long, continuation: CancellableContinuation<Unit>) {
+        val t = addTimer(timeMillis) { with(continuation) { resumeUndispatched(Unit) } }
+        continuation.invokeOnCancellation { t.dispose() }
+    }
+
+    override fun invokeOnTimeout(timeMillis: Long, block: Runnable, context: CoroutineContext): DisposableHandle =
+        addTimer(timeMillis, block)
+
+    /** Milliseconds until the next live timer (0 if due), or -1 when there is none. */
+    protected fun nextTimerMillis(): Int {
+        while (timers.isNotEmpty() && timers[0].cancelled) popTimer()
+        if (timers.isEmpty()) return -1
+        val ns = timers[0].deadlineNs - nowNs()
+        return if (ns <= 0) 0 else ((ns + 999_999L) / 1_000_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    /** Run every timer whose deadline has passed. */
+    protected fun fireTimers() {
+        if (timers.isEmpty()) return
+        val now = nowNs()
+        while (timers.isNotEmpty() && (timers[0].cancelled || timers[0].deadlineNs <= now)) {
+            val t = popTimer()
+            if (!t.cancelled) t.block.run()
+        }
+    }
+
+    private fun less(a: Timer, b: Timer) = a.deadlineNs < b.deadlineNs || (a.deadlineNs == b.deadlineNs && a.seq < b.seq)
+    private fun siftUp(i0: Int) { var i = i0; while (i > 0) { val p = (i - 1) / 2; if (less(timers[i], timers[p])) { val x = timers[i]; timers[i] = timers[p]; timers[p] = x; i = p } else break } }
+    private fun popTimer(): Timer {
+        val top = timers[0]; val last = timers.removeAt(timers.size - 1)
+        if (timers.isNotEmpty()) { timers[0] = last; var i = 0
+            while (true) { val l = 2 * i + 1; val r = l + 1; var m = i
+                if (l < timers.size && less(timers[l], timers[m])) m = l
+                if (r < timers.size && less(timers[r], timers[m])) m = r
+                if (m == i) break; val x = timers[i]; timers[i] = timers[m]; timers[m] = x; i = m } }
+        return top
     }
 
     protected fun drainTasks() {
@@ -127,7 +231,7 @@ internal abstract class Reactor : CoroutineDispatcher() {
 
     protected fun hasTasks(): Boolean = tasks.isNotEmpty()
 
-    /** Read available bytes into [dst]; returns the count (>0) or -1 at EOF. */
+    /** Read available bytes into [dst]; returns the count (>0) or -1 at EOF. Reactor thread only. */
     abstract suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int
 
     /** Write all readable bytes from [src]; returns the number written. */
@@ -180,11 +284,13 @@ internal class ReactorStream(
 
     override suspend fun read(dst: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
+        reactor.checkOwnerPublic("read")
         return reactor.read(fd, dst, readChunk)
     }
 
     override suspend fun write(src: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
+        reactor.checkOwnerPublic("write")
         return reactor.write(fd, src)
     }
 

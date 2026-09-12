@@ -30,6 +30,7 @@ import neton.io.uring.NETON_IORING_OP_POLL_ADD
 import neton.io.uring.NETON_IORING_OP_READ
 import neton.io.uring.NETON_IORING_OP_SEND
 import neton.io.uring.NETON_MSG_NOSIGNAL
+import neton.io.uring.NETON_POLLIN
 import neton.io.uring.NETON_POLLOUT
 import neton.io.uring.neton_array_at
 import neton.io.uring.neton_cqe_at
@@ -218,19 +219,29 @@ internal class UringReactor : Reactor() {
         submit(NETON_IORING_OP_POLL_ADD, fd, 0L, 0, NETON_POLLOUT, null)
     }
 
+    private var wakeUd: ULong = 0uL
+
+    private fun armWake() { wakeUd = prepSqe(NETON_IORING_OP_POLL_ADD, wakeReadFd, 0L, 0, NETON_POLLIN) }
+
     override fun runUntil(root: Job) {
+        armWake()
         while (!root.isCompleted) {
+            absorbExternal()
+            fireTimers()
             drainTasks()
             if (root.isCompleted) break
-            if (inFlight.isEmpty() && !hasTasks()) break
 
             val toSubmit = pending()
-            val minComplete = if (hasTasks()) 0u else 1u
-            if (toSubmit > 0u || minComplete > 0u) {
-                val flags = if (minComplete > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
-                neton_uring_enter(ringFd, toSubmit, minComplete, flags)
-                countPoll(minComplete == 0u, reap())
-            }
+            val timerMs = nextTimerMillis()
+            val minComplete = if (hasTasks() || timerMs == 0) 0u else 1u
+            // Timers: io_uring_enter has no timeout argument in this minimal binding; a due-soon
+            // timer is honoured by a bounded wait through IORING_OP_TIMEOUT in the full binding.
+            // Until then a pending timer makes the wait non-blocking and the loop polls the clock.
+            val mc = if (timerMs > 0) 0u else minComplete
+            val flags = if (mc > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
+            neton_uring_enter(ringFd, toSubmit, mc, flags)
+            countPoll(mc == 0u, reap())
+            if (mc == 0u && timerMs > 0 && !hasTasks()) platform.posix.usleep(minOf(timerMs, 1) .toUInt() * 1000u)
         }
     }
 
@@ -245,6 +256,7 @@ internal class UringReactor : Reactor() {
             val ud = cqe.user_data
             val res = cqe.res
             head += 1u
+            if (ud == wakeUd) { onWake(); armWake(); continue }
             val entry = inFlight.remove(ud) ?: continue // a cancel op's own CQE, or unknown
             entry.pinned?.unpin()                          // the kernel is done with the buffer
             val cont = entry.cont ?: continue              // null if the awaiter was cancelled/closed
@@ -276,6 +288,7 @@ internal class UringReactor : Reactor() {
             }
         }
         close(ringFd)
+        closeWakePipe()
     }
 
     private companion object {
