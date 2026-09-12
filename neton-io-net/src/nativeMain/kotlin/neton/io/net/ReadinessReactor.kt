@@ -56,6 +56,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val clientFd = acceptOne(listenFd)
             if (clientFd >= 0) {
                 setNonBlocking(clientFd)
+                suppressSigpipe(clientFd)
                 return clientFd
             }
             waitReadable(listenFd)

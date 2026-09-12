@@ -23,7 +23,8 @@ import neton.io.uring.NETON_IORING_OFF_SQ_RING
 import neton.io.uring.NETON_IORING_OP_ACCEPT
 import neton.io.uring.NETON_IORING_OP_POLL_ADD
 import neton.io.uring.NETON_IORING_OP_READ
-import neton.io.uring.NETON_IORING_OP_WRITE
+import neton.io.uring.NETON_IORING_OP_SEND
+import neton.io.uring.NETON_MSG_NOSIGNAL
 import neton.io.uring.NETON_POLLOUT
 import neton.io.uring.neton_array_at
 import neton.io.uring.neton_cqe_at
@@ -150,7 +151,7 @@ internal class UringReactor : Reactor() {
             val len = src.readableBytes
             val pinned = src.backingArray().pin()
             val res = try {
-                await(prepSqe(NETON_IORING_OP_WRITE, fd, pinned.addressOf(src.readerIndex()).toLong(), len, 0))
+                await(prepSqe(NETON_IORING_OP_SEND, fd, pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL))
             } finally {
                 pinned.unpin()
             }
@@ -161,7 +162,7 @@ internal class UringReactor : Reactor() {
 
     override suspend fun accept(listenFd: Int): Int {
         val res = await(prepSqe(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0))
-        if (res >= 0) setNonBlocking(res)
+        if (res >= 0) { setNonBlocking(res); suppressSigpipe(res) }
         return res
     }
 

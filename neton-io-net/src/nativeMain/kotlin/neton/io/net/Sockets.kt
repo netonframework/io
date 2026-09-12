@@ -18,8 +18,6 @@ import platform.posix.EWOULDBLOCK
 import platform.posix.F_GETFL
 import platform.posix.F_SETFL
 import platform.posix.O_NONBLOCK
-import platform.posix.SIGPIPE
-import platform.posix.SIG_IGN
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_ERROR
 import platform.posix.accept
@@ -29,7 +27,6 @@ import platform.posix.fcntl
 import platform.posix.getsockopt
 import platform.posix.recv
 import platform.posix.send
-import platform.posix.signal
 import platform.posix.socklen_tVar
 import platform.posix.strerror
 
@@ -70,15 +67,16 @@ internal fun socketError(fd: Int): Int = memScoped {
 internal fun errnoMessage(code: Int): String = strerror(code)?.toKString() ?: "errno $code"
 
 /**
- * Writing to a peer that has gone away raises SIGPIPE, which kills the process by default —
- * a disconnecting client would take a server down. Ignoring it turns the condition into EPIPE
- * from send()/write() (and an io_uring write CQE), which the reactor reports as an I/O error.
- * Process-wide by nature; applied once when the first reactor starts.
+ * Writing to a peer that has gone away must surface as EPIPE/ECONNRESET, never as SIGPIPE killing
+ * the process. This is done per socket / per call, not by changing the process signal disposition
+ * (a library must not alter the host's signal handling): Apple sets SO_NOSIGPIPE on every socket
+ * the reactor creates or accepts; Linux passes MSG_NOSIGNAL on every send (readiness path) and
+ * uses IORING_OP_SEND with MSG_NOSIGNAL (io_uring path).
  */
-@OptIn(ExperimentalForeignApi::class)
-internal fun ignoreSigpipe() {
-    signal(SIGPIPE, SIG_IGN)
-}
+internal expect fun suppressSigpipe(fd: Int)
+
+/** Flags for send(2) on this platform (MSG_NOSIGNAL on Linux, nothing on Apple). */
+internal expect val SEND_FLAGS: Int
 
 /** Number of bytes read into [buf] when [result] is OK. */
 internal class ReadOutcome(val result: IoResult, val count: Int)
@@ -114,7 +112,7 @@ internal fun writeFrom(fd: Int, buf: Buffer): Int {
     val len = buf.readableBytes
     if (len == 0) return 0
     val n = buf.backingArray().usePinned { pinned ->
-        send(fd, pinned.addressOf(buf.readerIndex()), len.convert(), 0).toInt()
+        send(fd, pinned.addressOf(buf.readerIndex()), len.convert(), SEND_FLAGS).toInt()
     }
     if (n > 0) {
         buf.consume(n)

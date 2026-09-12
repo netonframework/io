@@ -48,6 +48,7 @@ internal actual fun tcpConnect(host: String, port: Int): Int = memScoped {
     val fd = socket(AF_INET, SOCK_STREAM, 0)
     check(fd >= 0) { "socket() failed" }
     setNonBlocking(fd)
+    suppressSigpipe(fd)
 
     val addr = alloc<sockaddr_in>()
     addr.sin_family = AF_INET.convert()

@@ -27,6 +27,11 @@ package = neton.io.uring
 #define NETON_IORING_OP_WRITE    23
 #define NETON_IORING_OP_ACCEPT   13
 #define NETON_IORING_OP_POLL_ADD 6
+#define NETON_IORING_OP_SEND     26
+#define NETON_IORING_OP_ASYNC_CANCEL 14
+
+/* send(2) flags */
+#define NETON_MSG_NOSIGNAL 0x4000
 
 /* io_uring_enter flags */
 #define NETON_IORING_ENTER_GETEVENTS 1
