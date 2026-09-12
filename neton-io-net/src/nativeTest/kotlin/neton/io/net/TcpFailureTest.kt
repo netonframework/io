@@ -1,7 +1,13 @@
 package neton.io.net
 
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import neton.io.bytes.Buffer
+import neton.io.core.ClosedException
+import neton.io.core.IoException
+import neton.io.core.IoStream
+import kotlin.native.concurrent.TransferMode
+import kotlin.native.concurrent.Worker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -18,7 +24,7 @@ class TcpFailureTest {
     }
 
     @Test
-    fun writeToClosedPeerDoesNotKillProcess() = runReactor {
+    fun writeToClosedPeerThrowsIoException() = runReactor {
         val port = 39778
         val server = listen("127.0.0.1", port)
         val serverJob = launch {
@@ -28,22 +34,63 @@ class TcpFailureTest {
         val client = connect("127.0.0.1", port)
         serverJob.join()
 
-        // Keep writing until the kernel reports the reset. Without SIGPIPE ignored this test
+        // Keep writing until the kernel reports the reset. Without SIGPIPE suppressed this test
         // would not fail — the whole test process would be killed.
         val buf = Buffer(64 * 1024)
         var rounds = 0
-        var wrote = 0
-        while (rounds < 1000) {
-            buf.clear()
-            buf.reserve(64 * 1024)
-            buf.commitWrite(64 * 1024)
-            val n = client.write(buf)
-            rounds++
-            if (n < 64 * 1024) break // the reactor reported an I/O error (EPIPE / ECONNRESET)
-            wrote += n
+        val failed = try {
+            while (rounds < 1000) {
+                buf.clear()
+                buf.reserve(64 * 1024)
+                buf.commitWrite(64 * 1024)
+                client.write(buf)
+                rounds++
+            }
+            false
+        } catch (e: IoException) {
+            true
         }
-        assertTrue(rounds < 1000, "write never reported the reset (wrote $wrote bytes)")
-        assertEquals(-1, client.read(Buffer()))
+        assertTrue(failed, "write never reported the reset after $rounds rounds")
+        client.close()
+        server.close()
+    }
+
+    @Test
+    fun closeWakesParkedReadWithClosedException() = runReactor {
+        val port = 39779
+        val server = listen("127.0.0.1", port)
+        var serverConn: IoStream? = null
+        val accepted = launch { serverConn = server.accept() }
+        val client = connect("127.0.0.1", port)
+        accepted.join()
+
+        var outcome: Throwable? = null
+        val reader = launch {
+            try { client.read(Buffer(1024)) } catch (t: Throwable) { outcome = t }
+        }
+        yield() // read parked
+        client.close()
+        reader.join() // must not hang: close resumes the parked read
+        assertTrue(outcome is ClosedException, "expected ClosedException, got $outcome")
+        assertFailsWith<ClosedException> { client.read(Buffer(16)) } // use after close
+        client.close() // idempotent
+        serverConn!!.close()
+        server.close()
+    }
+
+    @Test
+    fun closeFromAnotherThreadIsRejected() = runReactor {
+        val port = 39782
+        val server = listen("127.0.0.1", port)
+        val accepted = launch { server.accept().close() }
+        val client = connect("127.0.0.1", port)
+        accepted.join()
+        val worker = Worker.start()
+        val result = worker.execute(TransferMode.SAFE, { client }) { c ->
+            try { c.close(); "closed" } catch (t: IllegalStateException) { "rejected" }
+        }.result
+        worker.requestTermination().result
+        assertEquals("rejected", result)
         client.close()
         server.close()
     }

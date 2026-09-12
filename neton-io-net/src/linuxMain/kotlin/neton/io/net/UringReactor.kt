@@ -17,6 +17,9 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import neton.io.bytes.Buffer
+import neton.io.core.ClosedException
+import neton.io.core.IoException
+import kotlin.coroutines.resumeWithException
 import neton.io.uring.NETON_IORING_ENTER_GETEVENTS
 import neton.io.uring.NETON_IORING_OFF_CQ_RING
 import neton.io.uring.NETON_IORING_OFF_SQES
@@ -91,7 +94,7 @@ internal class UringReactor : Reactor() {
     override val driverName: String get() = "iouring"
 
     /** One submitted op: its pinned buffer (if any) and the continuation awaiting it (null once cancelled). */
-    private class InFlight(val pinned: Pinned<ByteArray>?, var cont: CancellableContinuation<Int>?)
+    private class InFlight(val fd: Int, val pinned: Pinned<ByteArray>?, var cont: CancellableContinuation<Int>?)
 
     private val inFlight = HashMap<ULong, InFlight>()
 
@@ -156,7 +159,7 @@ internal class UringReactor : Reactor() {
     private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pinned: Pinned<ByteArray>?): Int {
         val ud = prepSqe(opcode, fd, addr, len, opFlags)
         return suspendCancellableCoroutine { cont ->
-            val entry = InFlight(pinned, cont)
+            val entry = InFlight(fd, pinned, cont)
             inFlight[ud] = entry
             cont.invokeOnCancellation {
                 // Drop the waiter but keep the entry (and its pin): the kernel still owns the buffer
@@ -177,7 +180,7 @@ internal class UringReactor : Reactor() {
         val pinned = dst.backingArray().pin()
         val res = submit(NETON_IORING_OP_READ, fd, pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pinned)
         stats?.let { it.reads++; if (res > 0) it.readBytes += res }
-        return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF, negative = error/cancelled
+        return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF (errors throw)
     }
 
     override suspend fun write(fd: Int, src: Buffer): Int {
@@ -187,15 +190,28 @@ internal class UringReactor : Reactor() {
             val pinned = src.backingArray().pin()
             val res = submit(NETON_IORING_OP_SEND, fd, pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pinned)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
-            if (res > 0) { src.consume(res); total += res } else break
+            src.consume(res); total += res
         }
         return total
     }
 
     override suspend fun accept(listenFd: Int): Int {
         val res = submit(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0, null)
-        if (res >= 0) { setNonBlocking(res); suppressSigpipe(res) }
+        setNonBlocking(res); suppressSigpipe(res)
         return res
+    }
+
+    override fun closeStream(fd: Int) {
+        checkOwner("close")
+        // Fail the awaiters now; the ops stay in flight (buffers pinned) until their CQEs arrive.
+        for ((ud, entry) in inFlight) {
+            if (entry.fd != fd || entry.cont == null) continue
+            val cont = entry.cont!!
+            entry.cont = null
+            cont.resumeWithException(ClosedException())
+            requestCancel(ud)
+        }
+        closeFd(fd)
     }
 
     override suspend fun awaitConnect(fd: Int) {
@@ -231,7 +247,9 @@ internal class UringReactor : Reactor() {
             head += 1u
             val entry = inFlight.remove(ud) ?: continue // a cancel op's own CQE, or unknown
             entry.pinned?.unpin()                          // the kernel is done with the buffer
-            entry.cont?.resume(res)                        // null if the awaiter was cancelled
+            val cont = entry.cont ?: continue              // null if the awaiter was cancelled/closed
+            if (res < 0) cont.resumeWithException(IoException("io_uring op failed: ${errnoMessage(-res)}", -res))
+            else cont.resume(res)
         }
         neton_store32(cqBase, cqHeadOff, tail)
         return n

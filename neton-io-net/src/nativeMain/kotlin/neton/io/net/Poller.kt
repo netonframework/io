@@ -12,6 +12,9 @@ internal interface Poller {
     fun armRead(fd: Int)
     fun armWrite(fd: Int)
 
+    /** The fd is being closed: drop any pending interest so it neither fires nor lingers. */
+    fun forget(fd: Int)
+
     /**
      * Block for up to [timeoutMillis] (-1 until an event, 0 to return immediately), calling
      * [onReady] once per ready fd. Returns the number of events.

@@ -44,6 +44,9 @@ internal class EpollPoller : Poller {
         Unit
     }
 
+    // epoll drops a closed fd from the set by itself; interest is armed immediately, so nothing is pending.
+    override fun forget(fd: Int) {}
+
     override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
         val maxEvents = 64
         val events = allocArray<epoll_event>(maxEvents)

@@ -72,6 +72,24 @@ internal abstract class Reactor : CoroutineDispatcher() {
 
     protected abstract val driverName: String
 
+    /** The thread that runs the loop; set by [runUntil] callers via [bindOwner]. */
+    private var ownerThread: ULong = 0uL
+
+    fun bindOwner() { ownerThread = currentThreadId() }
+
+    /** True when called on the reactor's own thread. */
+    fun isOwnerThread(): Boolean = ownerThread == 0uL || ownerThread == currentThreadId()
+
+    protected fun checkOwner(what: String) {
+        check(isOwnerThread()) { "$what must be called on the reactor thread that owns the stream" }
+    }
+
+    /**
+     * Close a stream's fd: fail every coroutine parked on it with [neton.io.core.ClosedException],
+     * drop the driver's interest, then close. Reactor thread only.
+     */
+    abstract fun closeStream(fd: Int)
+
     final override fun dispatch(context: CoroutineContext, block: Runnable) {
         tasks.addLast(block)
     }
@@ -139,6 +157,7 @@ internal abstract class Reactor : CoroutineDispatcher() {
                 }
             }
             statsReactor = reactor
+            reactor.bindOwner()
             reactor.runUntil(job)
             reactor.shutdown()
             reactor.printStats()
@@ -157,11 +176,29 @@ internal class ReactorStream(
     private val reactor: Reactor,
     private val readChunk: Int = 64 * 1024,
 ) : neton.io.core.IoStream {
-    override suspend fun read(dst: Buffer): Int = reactor.read(fd, dst, readChunk)
-    override suspend fun write(src: Buffer): Int = reactor.write(fd, src)
+    private var closed = false
+
+    override suspend fun read(dst: Buffer): Int {
+        if (closed) throw neton.io.core.ClosedException()
+        return reactor.read(fd, dst, readChunk)
+    }
+
+    override suspend fun write(src: Buffer): Int {
+        if (closed) throw neton.io.core.ClosedException()
+        return reactor.write(fd, src)
+    }
+
     override suspend fun flush() {}
-    override fun close() = closeFd(fd)
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        reactor.closeStream(fd)
+    }
 }
+
+/** Identity of the calling OS thread (pthread_self), for ownership checks. */
+internal expect fun currentThreadId(): ULong
 
 /** The reactor currently driven by [Reactor.run] (last one started), for [dumpReactorStats]. */
 private var statsReactor: Reactor? = null

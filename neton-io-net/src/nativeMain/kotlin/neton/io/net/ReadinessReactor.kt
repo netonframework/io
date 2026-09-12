@@ -4,7 +4,11 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import neton.io.bytes.Buffer
+import neton.io.core.ClosedException
+import neton.io.core.IoException
+import platform.posix.errno
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Readiness reactor backed by a [Poller] (kqueue/epoll/poll). A read waits for the fd to be
@@ -35,7 +39,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             stats?.let { it.reads++; if (outcome.result == IoResult.OK) it.readBytes += outcome.count else if (outcome.result == IoResult.WOULD_BLOCK) it.readsWouldBlock++ }
             when (outcome.result) {
                 IoResult.OK -> return outcome.count
-                IoResult.EOF, IoResult.ERROR -> return -1
+                IoResult.EOF -> return -1
+                IoResult.ERROR -> { val e = errno; throw IoException("read failed: ${errnoMessage(e)}", e) }
                 IoResult.WOULD_BLOCK -> waitReadable(fd)
             }
         }
@@ -49,7 +54,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             when {
                 n >= 0 -> total += n
                 n == WOULD_BLOCK -> waitWritable(fd)
-                else -> break // IO_ERROR
+                else -> { val e = errno; throw IoException("write failed: ${errnoMessage(e)}", e) }
             }
         }
         return total
@@ -84,6 +89,14 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             }
             countPoll(timeout == 0, n)
         }
+    }
+
+    override fun closeStream(fd: Int) {
+        checkOwner("close")
+        readWaiters.remove(fd)?.resumeWithException(ClosedException())
+        writeWaiters.remove(fd)?.resumeWithException(ClosedException())
+        poller.forget(fd)
+        closeFd(fd)
     }
 
     override fun shutdown() = poller.close()

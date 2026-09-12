@@ -31,6 +31,8 @@ internal class PollPoller : Poller {
 
     override fun armRead(fd: Int) { readFds.add(fd) }
     override fun armWrite(fd: Int) { writeFds.add(fd) }
+    // poll(2) has no registration: a closed fd left in the set would report POLLNVAL forever.
+    override fun forget(fd: Int) { readFds.remove(fd); writeFds.remove(fd) }
 
     override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int {
         val fds = IntArray(readFds.size + writeFds.size)

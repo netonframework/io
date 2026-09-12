@@ -37,6 +37,16 @@ internal class KqueuePoller : Poller {
         changeFilters.add(EVFILT_WRITE.toShort())
     }
 
+    // A closed fd is removed from the kqueue automatically; only the unsubmitted changelist can
+    // still name it (and its number may be reused before the next poll), so drop those entries.
+    override fun forget(fd: Int) {
+        var i = changeFds.size - 1
+        while (i >= 0) {
+            if (changeFds[i] == fd) { changeFds.removeAt(i); changeFilters.removeAt(i) }
+            i--
+        }
+    }
+
     override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
         val nChanges = changeFds.size
         val changes = if (nChanges > 0) allocArray<kevent>(nChanges) else null
