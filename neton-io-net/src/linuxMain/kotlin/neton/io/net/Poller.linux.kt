@@ -1,0 +1,62 @@
+package neton.io.net
+
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.get
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import platform.linux.EPOLLIN
+import platform.linux.EPOLLONESHOT
+import platform.linux.EPOLLOUT
+import platform.linux.EPOLL_CTL_ADD
+import platform.linux.EPOLL_CTL_MOD
+import platform.linux.epoll_create1
+import platform.linux.epoll_ctl
+import platform.linux.epoll_event
+import platform.linux.epoll_wait
+import platform.posix.close
+
+/** epoll-backed [Poller] for Linux targets. */
+@OptIn(ExperimentalForeignApi::class)
+internal actual class Poller actual constructor() {
+
+    private val epfd: Int = epoll_create1(0)
+    private val registered = HashSet<Int>()
+
+    actual fun armRead(fd: Int) = arm(fd, EPOLLIN.toInt())
+
+    actual fun armWrite(fd: Int) = arm(fd, EPOLLOUT.toInt())
+
+    // epoll arms immediately (one epoll_ctl per interest), unlike kqueue's batched changelist.
+    private fun arm(fd: Int, events: Int) = memScoped {
+        val ev = alloc<epoll_event>()
+        ev.events = (events or EPOLLONESHOT.toInt()).convert()
+        ev.data.fd = fd
+        val op = if (registered.add(fd)) EPOLL_CTL_ADD else EPOLL_CTL_MOD
+        epoll_ctl(epfd, op, fd, ev.ptr)
+        Unit
+    }
+
+    actual fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
+        val maxEvents = 64
+        val events = allocArray<epoll_event>(maxEvents)
+        val n = epoll_wait(epfd, events, maxEvents, timeoutMillis)
+        var count = 0
+        for (i in 0 until n) {
+            val ev = events[i]
+            val fd = ev.data.fd
+            val e = ev.events.toInt()
+            val readable = (e and EPOLLIN.toInt()) != 0
+            val writable = (e and EPOLLOUT.toInt()) != 0
+            onReady(fd, readable, writable)
+            count++
+        }
+        count
+    }
+
+    actual fun close() {
+        close(epfd)
+    }
+}
