@@ -9,6 +9,7 @@ import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.pin
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.toLong
 import kotlinx.cinterop.value
 import kotlinx.coroutines.CancellableContinuation
@@ -37,15 +38,20 @@ import platform.posix.MAP_SHARED
 import platform.posix.PROT_READ
 import platform.posix.PROT_WRITE
 import platform.posix.close
+import platform.posix.getenv
 import platform.posix.memset
 import platform.posix.mmap
 import kotlin.coroutines.resume
 
 /**
- * Completion reactor backed by io_uring: a read/write/accept submits the op (with its buffer)
- * and suspends until the completion carries the result. Single-threaded — submit and reap
- * happen on one thread around io_uring_enter, which is a full barrier, so no SMP ring barriers
- * are needed.
+ * Completion reactor backed by io_uring: a read/write/accept submits the op (with its buffer) and
+ * suspends until the completion carries the result. Single-threaded — submit and reap happen on one
+ * thread around io_uring_enter (a full barrier), so no SMP ring barriers are needed.
+ *
+ * `to_submit` is always the number of unconsumed SQEs (`sq_tail - sq_head`) read straight from the
+ * ring, so a partial submit is handled naturally by the next enter. Before writing a new SQE the
+ * ring is drained if full, so submitting more ops than the ring holds never overwrites an
+ * unconsumed entry (correctness does not depend on the ring being large enough).
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class UringReactor : Reactor() {
@@ -66,12 +72,12 @@ internal class UringReactor : Reactor() {
     private val cqesOff: UInt
 
     private var nextUserData: ULong = 1uL
-    private var toSubmit: Int = 0
     private val waiters = HashMap<ULong, CancellableContinuation<Int>>()
 
     init {
+        val depth = getenv("NETON_IO_URING_DEPTH")?.toKString()?.toUIntOrNull() ?: DEFAULT_DEPTH
         val params = nativeHeap.alloc<neton_io_uring_params>()
-        ringFd = neton_uring_setup(QUEUE_DEPTH, params.ptr)
+        ringFd = neton_uring_setup(depth, params.ptr)
         check(ringFd >= 0) { "io_uring_setup failed (fd=$ringFd)" }
 
         val prot = PROT_READ or PROT_WRITE
@@ -95,13 +101,14 @@ internal class UringReactor : Reactor() {
         nativeHeap.free(params.ptr.rawValue)
     }
 
+    private fun pending(): UInt = neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff)
+
     private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int): ULong {
-        // Guard against SQ ring overflow: if the ring is full, submit the pending SQEs so the
-        // kernel consumes them and frees slots. Without this, submitting more than sq_entries ops
-        // before an enter overwrites unconsumed SQEs and the ring stalls (seen at ~200 connections).
-        if (neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff) >= sqEntries) {
-            neton_uring_enter(ringFd, toSubmit.toUInt(), 0u, 0u)
-            toSubmit = 0
+        // Make room if the SQ is full: submit pending SQEs so the kernel consumes them (advancing
+        // sq_head). Loop because a submit may be partial; reap if the CQ is full and blocks submits.
+        while (pending() >= sqEntries) {
+            val n = neton_uring_enter(ringFd, pending(), 0u, 0u)
+            if (n < 0) reap()
         }
         val tail = neton_load32(sqBase, sqTailOff)
         val mask = neton_load32(sqBase, sqMaskOff)
@@ -118,7 +125,6 @@ internal class UringReactor : Reactor() {
         sqe.user_data = ud
         neton_array_at(sqBase, sqArrayOff, index)!!.pointed.value = index
         neton_store32(sqBase, sqTailOff, tail + 1u)
-        toSubmit++
         return ud
     }
 
@@ -169,12 +175,13 @@ internal class UringReactor : Reactor() {
             if (root.isCompleted) break
             if (waiters.isEmpty() && !hasTasks()) break
 
+            val toSubmit = pending()
             val minComplete = if (hasTasks()) 0u else 1u
-            val submit = toSubmit.toUInt()
-            toSubmit = 0
-            val enterFlags = if (minComplete > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
-            neton_uring_enter(ringFd, submit, minComplete, enterFlags)
-            reap()
+            if (toSubmit > 0u || minComplete > 0u) {
+                val flags = if (minComplete > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
+                neton_uring_enter(ringFd, toSubmit, minComplete, flags)
+                reap()
+            }
         }
     }
 
@@ -197,7 +204,7 @@ internal class UringReactor : Reactor() {
     }
 
     private companion object {
-        const val QUEUE_DEPTH: UInt = 4096u
+        const val DEFAULT_DEPTH: UInt = 4096u
         const val SIZEOF_SQE: UInt = 64u
         const val SIZEOF_CQE: UInt = 16u
     }
