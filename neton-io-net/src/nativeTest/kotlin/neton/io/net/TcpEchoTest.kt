@@ -38,6 +38,35 @@ class TcpEchoTest {
     }
 
     @Test
+    fun manyConcurrentConnections() = runReactor {
+        // Regression for an io_uring SQ-ring overflow: with more concurrent in-flight ops than the
+        // ring held, submissions were overwritten and the reactor stalled (~200 connections).
+        val port = 39219
+        val server = listen("127.0.0.1", port)
+        val serverJob = launch {
+            while (true) {
+                val conn = server.accept()
+                launch { serve(Framed(Io(conn), LineCodec, LineCodec)) { it } }
+            }
+        }
+
+        val n = 400
+        val clients = (1..n).map { i ->
+            launch {
+                val client = connect("127.0.0.1", port)
+                val framed = Framed(Io(client), LineCodec, LineCodec)
+                framed.send("m$i")
+                assertEquals("m$i", framed.incoming().first())
+                client.close()
+            }
+        }
+        clients.forEach { it.join() }
+
+        serverJob.cancelAndJoin()
+        server.close()
+    }
+
+    @Test
     fun multipleFramesOverTcp() = runReactor {
         val port = 39218
         val server = listen("127.0.0.1", port)

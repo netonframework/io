@@ -55,9 +55,11 @@ internal class UringReactor : Reactor() {
     private val cqBase: COpaquePointer
     private val sqes: COpaquePointer
 
+    private val sqHeadOff: UInt
     private val sqTailOff: UInt
     private val sqMaskOff: UInt
     private val sqArrayOff: UInt
+    private val sqEntries: UInt
     private val cqHeadOff: UInt
     private val cqTailOff: UInt
     private val cqMaskOff: UInt
@@ -81,9 +83,11 @@ internal class UringReactor : Reactor() {
         cqBase = mmap(null, cqRingBytes.convert(), prot, flags, ringFd, NETON_IORING_OFF_CQ_RING.convert())!!
         sqes = mmap(null, sqesBytes.convert(), prot, flags, ringFd, NETON_IORING_OFF_SQES.convert())!!
 
+        sqHeadOff = params.sq_off.head
         sqTailOff = params.sq_off.tail
         sqMaskOff = params.sq_off.ring_mask
         sqArrayOff = params.sq_off.array
+        sqEntries = params.sq_entries
         cqHeadOff = params.cq_off.head
         cqTailOff = params.cq_off.tail
         cqMaskOff = params.cq_off.ring_mask
@@ -92,6 +96,13 @@ internal class UringReactor : Reactor() {
     }
 
     private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int): ULong {
+        // Guard against SQ ring overflow: if the ring is full, submit the pending SQEs so the
+        // kernel consumes them and frees slots. Without this, submitting more than sq_entries ops
+        // before an enter overwrites unconsumed SQEs and the ring stalls (seen at ~200 connections).
+        if (neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff) >= sqEntries) {
+            neton_uring_enter(ringFd, toSubmit.toUInt(), 0u, 0u)
+            toSubmit = 0
+        }
         val tail = neton_load32(sqBase, sqTailOff)
         val mask = neton_load32(sqBase, sqMaskOff)
         val index = tail and mask
@@ -186,7 +197,7 @@ internal class UringReactor : Reactor() {
     }
 
     private companion object {
-        const val QUEUE_DEPTH: UInt = 256u
+        const val QUEUE_DEPTH: UInt = 4096u
         const val SIZEOF_SQE: UInt = 64u
         const val SIZEOF_CQE: UInt = 16u
     }

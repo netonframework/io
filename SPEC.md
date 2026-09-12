@@ -252,6 +252,7 @@ geario 是**主蓝图**（架构 + filter/dispatcher/buffer 模型，已 benchma
   由自带 cinterop `src/nativeInterop/cinterop/uring.def` **手写**；运行期由宿主内核提供。
 - **单线程** submit/reap 围绕 `io_uring_enter`（本身是全屏障），**免 SMP ring 内存屏障**。
 - 完成期间 buffer 用 `pin()`/`unpin()` 固定。
+- **SQ 溢出保护**：`prepSqe` 前若 `sq_tail - sq_head >= sq_entries` 则先 `io_uring_enter` 提交腾位，避免一批提交超过 ring 容量覆盖未消费 SQE 导致 stall（~200 连接时暴露，benchmark 定位）。ring 深度 4096。回归测试 `manyConcurrentConnections`（400 连接）。
 
 ### 15.4 优化 backlog（交给贡献者；不阻塞上层业务）
 
