@@ -216,3 +216,62 @@ geario 是**主蓝图**（架构 + filter/dispatcher/buffer 模型，已 benchma
 - ntex-rs / ntex-io（上游）
 - Go：gnet、字节 netpoll（性能北极星）
 - `../neton/neton-http-hyper4k` + `../hyper4k`（现有 Rust Tokio+Hyper 引擎,替换目标）
+
+---
+
+## 15. 实现现状与驱动选择（权威，随代码更新）
+
+> 本节记录实际落地的架构与状态，覆盖前文里过时的分阶段设想。
+
+### 15.1 统一 Reactor 抽象（readiness + completion 一套）
+
+`neton-io-net` 里有一个内部抽象 `Reactor`（同时是 `CoroutineDispatcher`），把连接 I/O 暴露成
+挂起操作：`read / write / accept / awaitConnect`。两类驱动实现它，上层（`ReactorStream` /
+`Framed` / TCP 助手）对底层无感：
+
+- **就绪型 `ReadinessReactor`**：等 fd 就绪再做 recv/send。后端 `Poller`：kqueue(Apple)、
+  epoll、poll(Linux)。
+- **完成型 `UringReactor`**：提交带 buffer 的 op，等完成拿结果（buffer 是模型的一部分）。
+
+`ReactorStream` 是唯一的 `IoStream` 实现，把 read/write/close 委托给当前 `Reactor`。
+
+### 15.2 驱动选择（默认 + 回退，无需配置）
+
+`createReactor()` 按平台与 `NETON_IO_DRIVER` 选择：
+
+| 平台 | 默认 | 可显式指定 |
+|------|------|-----------|
+| Linux | **io_uring**，内核不支持则**静默回退 epoll** | `NETON_IO_DRIVER=epoll \| polling \| iouring`（iouring 显式指定时不回退，创建失败即报错） |
+| Apple | kqueue | `NETON_IO_DRIVER=polling`（poll(2)） |
+
+即 Linux 生产环境**默认吃 io_uring**，老内核自动降 epoll，业务无需关心。
+
+### 15.3 io_uring 实现要点
+
+- K/N 的 Linux 交叉 sysroot 早于 io_uring（glibc 2.19 / kernel 4.9），故 UAPI struct + syscall
+  由自带 cinterop `src/nativeInterop/cinterop/uring.def` **手写**；运行期由宿主内核提供。
+- **单线程** submit/reap 围绕 `io_uring_enter`（本身是全屏障），**免 SMP ring 内存屏障**。
+- 完成期间 buffer 用 `pin()`/`unpin()` 固定。
+
+### 15.4 优化 backlog（交给贡献者；不阻塞上层业务）
+
+当前 io_uring 是**功能正确的第一版**：每次 `enter` 只提交一个 op、每 op pin 一次 buffer，
+ping-pong 下比 epoll 慢约 10%。io_uring 的性能红利在下列优化里，属底层完善项：
+
+1. **批量提交**：一次 `io_uring_enter` 提交多个 SQE，摊薄 syscall。
+2. **registered buffers**（`IORING_REGISTER_BUFFERS`）：免每 op pin/拷贝。
+3. **SQPOLL**：内核轮询 SQ，稳态零 syscall。
+4. **multishot accept / recv**：一次提交、多次完成。
+5. **边缘触发 arm-once**（就绪路径）+ **多 reactor（每核一个）**：吃满多核。
+
+benchmark harness 见 `neton-io-net` 的 echo server/client；对标 gnet/netpoll 与 geario。
+
+### 15.5 平台/驱动矩阵现状
+
+| 平台 | 驱动 | 状态 |
+|------|------|------|
+| macOS/iOS | kqueue | ✅ |
+| Linux | epoll | ✅ |
+| Linux | poll(2) | ✅ |
+| Linux | io_uring | ✅（默认，naive，待优化见 15.4） |
+| Windows | IOCP | ⏳ 未做（同 completion 模型，插同一 `Reactor` 抽象；需 winsock + mingw 目标 + Windows 测试环境） |
