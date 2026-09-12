@@ -18,7 +18,7 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 - `neton-io-codec` — `Decoder`/`Encoder` and `LineCodec`
 - `neton-io-core` — `IoStream` / `Filter` / `Io` / `Framed` / `Service` / `dispatcher` / `Readiness`
 - `neton-io-testkit` — in-memory duplex driver and integration tests
-- `neton-io-net` — the reactor: kqueue (Apple) / epoll (Linux) with non-blocking TCP
+- `neton-io-net` — the reactor: kqueue (Apple), epoll and poll (Linux), non-blocking TCP; driver selectable via `NETON_IO_DRIVER`
 
 ## Design
 
@@ -59,26 +59,25 @@ HTTP layer.
 
 ## Benchmark
 
-Raw byte echo (`echoServer`/`echoClient`), client and server on the same 2-core Linux box,
-localhost, release build:
+Raw byte echo (`echoServer`/`echoClient`), client and server on the same host, localhost,
+release build, 64 B payload, single reactor. The CI `bench` job runs a short version on every push.
 
-| Connections | Payload | Throughput |
-|---|---|---|
-| 1 | 64 B | 25,192 req/s |
-| 50 | 64 B | 88,251 req/s |
-| 200 | 64 B | 73,479 req/s |
-| 1000 | 64 B | 63,479 req/s |
-| 200 | 1024 B | 71,349 req/s (139 MiB/s) |
+| Platform / driver | 1 conn | 50 conns | 200 conns |
+|---|---|---|---|
+| macOS kqueue (Apple Silicon) | 46,305 | 110,606 | 105,799 req/s |
+| Linux epoll (2-core) | 25,192 | 90,181 | 79,451 req/s |
+| Linux poll(2) (2-core) | — | 93,736 | 75,572 req/s |
 
-This is the epoll single-reactor baseline. The read/write path is allocation-free (the socket
-fills and drains the `Buffer` backing directly). The known levers to peak, in order:
+poll(2) is O(n) per call, so it edges ahead at low connection counts and falls behind epoll as
+the fd set grows. The read/write path is allocation-free — the socket fills and drains the
+`Buffer` backing directly. The levers to peak, in order:
 
 1. **Arm once, edge-triggered** — remove the per-round `epoll_ctl` re-arm.
 2. **Multi-reactor** — one reactor per core with connection affinity.
 3. **io_uring** — batched submission, completion-based, registered buffers.
 
 ```bash
-# on one host:
+# select the driver at runtime (Linux): NETON_IO_DRIVER=epoll|polling
 ./echoServer 0.0.0.0 9000
 ./echoClient 127.0.0.1 9000 50 5 64   # host port connections seconds payload
 ```

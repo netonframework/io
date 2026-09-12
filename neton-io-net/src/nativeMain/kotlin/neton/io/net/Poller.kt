@@ -1,25 +1,24 @@
 package neton.io.net
 
 /**
- * Readiness poller SPI. Apple targets back this with kqueue, Linux with epoll.
+ * Readiness poller SPI. Backends: kqueue (Apple), epoll and poll (Linux); io_uring (Linux)
+ * and IOCP (Windows) are completion-based and land as separate drivers.
  *
- * Interest is one-shot: once an fd fires it is disarmed, and the waiting coroutine
- * re-arms on its next read/write. This keeps the reactor edge-driven and matches the
- * suspend read/write model in [SocketStream].
+ * Interest is one-shot: once an fd fires it is disarmed, and the waiting coroutine re-arms on
+ * its next read/write. This keeps the reactor edge-driven and matches [SocketStream].
  */
-internal expect class Poller() {
-
-    /** Arm a one-shot readable interest on [fd]. */
+internal interface Poller {
     fun armRead(fd: Int)
-
-    /** Arm a one-shot writable interest on [fd]. */
     fun armWrite(fd: Int)
 
     /**
-     * Block for up to [timeoutMillis] (-1 blocks until an event; 0 returns immediately),
-     * calling [onReady] once per ready fd. Returns the number of events.
+     * Block for up to [timeoutMillis] (-1 until an event, 0 to return immediately), calling
+     * [onReady] once per ready fd. Returns the number of events.
      */
     fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int
 
     fun close()
 }
+
+/** Create the poller for this platform, honoring the NETON_IO_DRIVER selection where applicable. */
+internal expect fun createPoller(): Poller

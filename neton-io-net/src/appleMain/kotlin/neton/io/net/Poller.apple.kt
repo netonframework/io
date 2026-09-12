@@ -18,7 +18,7 @@ import platform.posix.timespec
 
 /** kqueue-backed [Poller] for Apple targets. */
 @OptIn(ExperimentalForeignApi::class)
-internal actual class Poller actual constructor() {
+internal class KqueuePoller : Poller {
 
     private val kq: Int = kqueue()
 
@@ -26,17 +26,17 @@ internal actual class Poller actual constructor() {
     private val changeFds = ArrayList<Int>()
     private val changeFilters = ArrayList<Short>()
 
-    actual fun armRead(fd: Int) {
+    override fun armRead(fd: Int) {
         changeFds.add(fd)
         changeFilters.add(EVFILT_READ.toShort())
     }
 
-    actual fun armWrite(fd: Int) {
+    override fun armWrite(fd: Int) {
         changeFds.add(fd)
         changeFilters.add(EVFILT_WRITE.toShort())
     }
 
-    actual fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
+    override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
         val nChanges = changeFds.size
         val changes = if (nChanges > 0) allocArray<kevent>(nChanges) else null
         for (i in 0 until nChanges) {
@@ -75,7 +75,11 @@ internal actual class Poller actual constructor() {
         count
     }
 
-    actual fun close() {
+    override fun close() {
         close(kq)
     }
 }
+
+/** Apple uses kqueue (poll(2) selectable via NETON_IO_DRIVER=polling). */
+internal actual fun createPoller(): Poller =
+    if (driverSelection() == "polling") PollPoller() else KqueuePoller()

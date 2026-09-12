@@ -7,17 +7,30 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - name: macOS kqueue
+            os: macos-14
             task: macosArm64Test
-          - os: ubuntu-latest
+            driver: ""
+          - name: Linux epoll
+            os: ubuntu-latest
             task: linuxX64Test
-          - os: windows-latest
+            driver: ""
+          - name: Linux polling
+            os: ubuntu-latest
+            task: linuxX64Test
+            driver: polling
+          - name: Windows
+            os: windows-latest
             task: mingwX64Test
+            driver: ""
     runs-on: ${{ matrix.os }}
+    env:
+      NETON_IO_DRIVER: ${{ matrix.driver }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -29,6 +42,42 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: reports-${{ matrix.os }}
+          name: reports-${{ matrix.name }}
           path: '**/build/reports/tests/**'
           if-no-files-found: ignore
+
+  bench:
+    name: bench (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS kqueue
+            os: macos-14
+            arch: macosArm64
+          - name: Linux epoll
+            os: ubuntu-latest
+            arch: linuxX64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build echo release binaries
+        run: ./gradlew :neton-io-net:linkEchoServerReleaseExecutable${{ matrix.arch }} :neton-io-net:linkEchoClientReleaseExecutable${{ matrix.arch }} --no-daemon
+      - name: Run echo benchmark
+        shell: bash
+        run: |
+          BIN=neton-io-net/build/bin/${{ matrix.arch }}
+          "$BIN/echoServerReleaseExecutable/echoServer.kexe" 127.0.0.1 9300 >/dev/null 2>&1 &
+          SRV=$!
+          sleep 1
+          echo "### Echo benchmark (${{ matrix.name }})" >> "$GITHUB_STEP_SUMMARY"
+          for c in 1 50 200; do
+            printf "%5s conns: " "$c"
+            "$BIN/echoClientReleaseExecutable/echoClient.kexe" 127.0.0.1 9300 "$c" 3 64 | grep throughput | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          kill -9 $SRV 2>/dev/null || true

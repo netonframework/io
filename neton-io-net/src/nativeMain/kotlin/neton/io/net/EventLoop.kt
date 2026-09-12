@@ -22,7 +22,7 @@ import kotlin.coroutines.resume
  */
 internal class EventLoop : CoroutineDispatcher() {
 
-    private val poller = Poller()
+    private val poller = createPoller()
     private val tasks = ArrayDeque<Runnable>()
     private val readWaiters = HashMap<Int, CancellableContinuation<Unit>>()
     private val writeWaiters = HashMap<Int, CancellableContinuation<Unit>>()

@@ -22,13 +22,13 @@ import platform.posix.errno
 
 /** epoll-backed [Poller] for Linux targets. */
 @OptIn(ExperimentalForeignApi::class)
-internal actual class Poller actual constructor() {
+internal class EpollPoller : Poller {
 
     private val epfd: Int = epoll_create1(0)
 
-    actual fun armRead(fd: Int) = arm(fd, EPOLLIN.toInt())
+    override fun armRead(fd: Int) = arm(fd, EPOLLIN.toInt())
 
-    actual fun armWrite(fd: Int) = arm(fd, EPOLLOUT.toInt())
+    override fun armWrite(fd: Int) = arm(fd, EPOLLOUT.toInt())
 
     // epoll arms immediately (one epoll_ctl per interest), unlike kqueue's batched changelist.
     // We do not track which fds are registered: a closed fd is auto-removed from the epoll set,
@@ -43,7 +43,7 @@ internal actual class Poller actual constructor() {
         Unit
     }
 
-    actual fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
+    override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
         val maxEvents = 64
         val events = allocArray<epoll_event>(maxEvents)
         val n = epoll_wait(epfd, events, maxEvents, timeoutMillis)
@@ -60,7 +60,14 @@ internal actual class Poller actual constructor() {
         count
     }
 
-    actual fun close() {
+    override fun close() {
         close(epfd)
     }
 }
+
+/** Linux defaults to epoll; NETON_IO_DRIVER=polling selects poll(2). io_uring lands as a driver next. */
+internal actual fun createPoller(): Poller =
+    when (driverSelection()) {
+        "polling", "poll" -> PollPoller()
+        else -> EpollPoller()
+    }
