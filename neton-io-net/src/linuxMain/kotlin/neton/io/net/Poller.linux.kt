@@ -23,6 +23,7 @@ import platform.posix.errno
 /** epoll-backed [Poller] for Linux targets. */
 @OptIn(ExperimentalForeignApi::class)
 internal class EpollPoller : Poller {
+    override val name: String get() = "epoll"
 
     private val epfd: Int = epoll_create1(0)
 

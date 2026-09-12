@@ -88,6 +88,8 @@ internal class UringReactor : Reactor() {
 
     private var nextUserData: ULong = 1uL
 
+    override val driverName: String get() = "iouring"
+
     /** One submitted op: its pinned buffer (if any) and the continuation awaiting it (null once cancelled). */
     private class InFlight(val pinned: Pinned<ByteArray>?, var cont: CancellableContinuation<Int>?)
 
@@ -174,6 +176,7 @@ internal class UringReactor : Reactor() {
         val cap = dst.reserve(chunk)
         val pinned = dst.backingArray().pin()
         val res = submit(NETON_IORING_OP_READ, fd, pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pinned)
+        stats?.let { it.reads++; if (res > 0) it.readBytes += res }
         return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF, negative = error/cancelled
     }
 
@@ -183,6 +186,7 @@ internal class UringReactor : Reactor() {
             val len = src.readableBytes
             val pinned = src.backingArray().pin()
             val res = submit(NETON_IORING_OP_SEND, fd, pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pinned)
+            stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
             if (res > 0) { src.consume(res); total += res } else break
         }
         return total
@@ -209,15 +213,17 @@ internal class UringReactor : Reactor() {
             if (toSubmit > 0u || minComplete > 0u) {
                 val flags = if (minComplete > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
                 neton_uring_enter(ringFd, toSubmit, minComplete, flags)
-                reap()
+                countPoll(minComplete == 0u, reap())
             }
         }
     }
 
-    private fun reap() {
+    /** Consume every CQE in the ring; returns how many were reaped. */
+    private fun reap(): Int {
         val mask = neton_load32(cqBase, cqMaskOff)
         var head = neton_load32(cqBase, cqHeadOff)
         val tail = neton_load32(cqBase, cqTailOff)
+        val n = (tail - head).toInt()
         while (head != tail) {
             val cqe = neton_cqe_at(cqBase, cqesOff, head and mask)!!.pointed
             val ud = cqe.user_data
@@ -228,6 +234,7 @@ internal class UringReactor : Reactor() {
             entry.cont?.resume(res)                        // null if the awaiter was cancelled
         }
         neton_store32(cqBase, cqHeadOff, tail)
+        return n
     }
 
     /**

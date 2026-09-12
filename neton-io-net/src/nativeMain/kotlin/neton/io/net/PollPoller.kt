@@ -24,6 +24,7 @@ internal fun driverSelection(): String? = getenv("NETON_IO_DRIVER")?.toKString()
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class PollPoller : Poller {
+    override val name: String get() = "polling"
 
     private val readFds = HashSet<Int>()
     private val writeFds = HashSet<Int>()

@@ -19,6 +19,7 @@ import platform.posix.timespec
 /** kqueue-backed [Poller] for Apple targets. */
 @OptIn(ExperimentalForeignApi::class)
 internal class KqueuePoller : Poller {
+    override val name: String get() = "kqueue"
 
     private val kq: Int = kqueue()
 

@@ -12,6 +12,8 @@ import kotlin.coroutines.resume
  */
 internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
+    override val driverName: String get() = poller.name
+
     private val readWaiters = HashMap<Int, CancellableContinuation<Unit>>()
     private val writeWaiters = HashMap<Int, CancellableContinuation<Unit>>()
 
@@ -30,6 +32,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
         while (true) {
             val outcome = readInto(fd, dst, chunk)
+            stats?.let { it.reads++; if (outcome.result == IoResult.OK) it.readBytes += outcome.count else if (outcome.result == IoResult.WOULD_BLOCK) it.readsWouldBlock++ }
             when (outcome.result) {
                 IoResult.OK -> return outcome.count
                 IoResult.EOF, IoResult.ERROR -> return -1
@@ -42,6 +45,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         var total = 0
         while (src.readableBytes > 0) {
             val n = writeFrom(fd, src)
+            stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
             when {
                 n >= 0 -> total += n
                 n == WOULD_BLOCK -> waitWritable(fd)
@@ -74,10 +78,11 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             if (!hasWaiters && !hasTasks()) break
 
             val timeout = if (hasTasks()) 0 else -1
-            poller.poll(timeout) { fd, readable, writable ->
+            val n = poller.poll(timeout) { fd, readable, writable ->
                 if (readable) readWaiters.remove(fd)?.resume(Unit)
                 if (writable) writeWaiters.remove(fd)?.resume(Unit)
             }
+            countPoll(timeout == 0, n)
         }
     }
 

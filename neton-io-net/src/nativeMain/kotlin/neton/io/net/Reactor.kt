@@ -6,8 +6,40 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.launch
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.toKString
 import neton.io.bytes.Buffer
+import platform.posix.fflush
+import platform.posix.fprintf
+import platform.posix.getenv
+import platform.posix.stderr
 import kotlin.coroutines.CoroutineContext
+
+/**
+ * Per-reactor event-loop counters, for explaining benchmark results with counts instead of
+ * sampling guesses. Enabled by NETON_IO_STATS=1; when disabled the counters are never touched
+ * (one branch per event), and the cost of enabling them is itself measurable with an A/B run.
+ * Printed once, as one JSON line on stderr prefixed `NETON_IO_STATS`, when the reactor stops.
+ */
+internal class ReactorStats {
+    var rounds = 0L            // loop iterations
+    var tasksRun = 0L          // dispatched continuations executed
+    var maxTasksInRound = 0L
+    var polls = 0L             // poll()/io_uring_enter calls that could wait
+    var pollsZeroTimeout = 0L  // polls made with timeout 0 because tasks were still pending
+    var pollsNoEvents = 0L     // polls that returned no event
+    var events = 0L            // ready fds / CQEs delivered
+    var maxEventsInPoll = 0L
+    var reads = 0L; var readBytes = 0L; var readsWouldBlock = 0L
+    var writes = 0L; var writeBytes = 0L; var writesWouldBlock = 0L
+
+    fun json(driver: String, taskBudget: Int): String =
+        "{\"driver\":\"$driver\",\"task_budget\":$taskBudget,\"rounds\":$rounds,\"tasks_run\":$tasksRun," +
+        "\"max_tasks_in_round\":$maxTasksInRound,\"polls\":$polls,\"polls_zero_timeout\":$pollsZeroTimeout," +
+        "\"polls_no_events\":$pollsNoEvents,\"events\":$events,\"max_events_in_poll\":$maxEventsInPoll," +
+        "\"reads\":$reads,\"read_bytes\":$readBytes,\"reads_would_block\":$readsWouldBlock," +
+        "\"writes\":$writes,\"write_bytes\":$writeBytes,\"writes_would_block\":$writesWouldBlock}"
+}
 
 /**
  * The reactor: a single-threaded scheduler that is also the [CoroutineDispatcher] for the
@@ -21,16 +53,58 @@ import kotlin.coroutines.CoroutineContext
  * The upper layers ([ReactorStream], TCP helpers) are written against these operations and do
  * not know which family is underneath.
  */
+@OptIn(ExperimentalForeignApi::class)
 internal abstract class Reactor : CoroutineDispatcher() {
 
     private val tasks = ArrayDeque<Runnable>()
+
+    /** Null unless NETON_IO_STATS=1. Subclasses count only when non-null. */
+    protected val stats: ReactorStats? = if (getenv("NETON_IO_STATS")?.toKString() == "1") ReactorStats() else null
+
+    /**
+     * Max dispatched tasks to run per loop round before giving the poller a turn (0 = unbounded,
+     * the original behaviour: drain everything, then block in the poller). NETON_IO_TASK_BUDGET.
+     * With a budget, tasks still pending after the round make the next poll non-blocking, so I/O
+     * readiness is checked every `budget` tasks instead of only when the task queue is empty. Note:
+     * the reactor has no timers yet; when it does, a budget must not delay them either.
+     */
+    protected val taskBudget: Int = getenv("NETON_IO_TASK_BUDGET")?.toKString()?.toIntOrNull() ?: 0
+
+    protected abstract val driverName: String
 
     final override fun dispatch(context: CoroutineContext, block: Runnable) {
         tasks.addLast(block)
     }
 
     protected fun drainTasks() {
-        while (tasks.isNotEmpty()) tasks.removeFirst().run()
+        var n = 0L
+        while (tasks.isNotEmpty()) {
+            tasks.removeFirst().run()
+            n++
+            if (taskBudget > 0 && n >= taskBudget) break
+        }
+        stats?.let { st ->
+            st.rounds++
+            st.tasksRun += n
+            if (n > st.maxTasksInRound) st.maxTasksInRound = n
+        }
+    }
+
+    /** Record one poll/enter: [timeoutZero] if it could not block, [events] delivered. */
+    protected fun countPoll(timeoutZero: Boolean, events: Int) {
+        val st = stats ?: return
+        st.polls++
+        if (timeoutZero) st.pollsZeroTimeout++
+        if (events <= 0) st.pollsNoEvents++ else {
+            st.events += events
+            if (events > st.maxEventsInPoll) st.maxEventsInPoll = events.toLong()
+        }
+    }
+
+    fun printStats() {
+        val st = stats ?: return
+        fprintf(stderr, "NETON_IO_STATS %s\n", st.json(driverName, taskBudget))
+        fflush(stderr)
     }
 
     protected fun hasTasks(): Boolean = tasks.isNotEmpty()
@@ -64,8 +138,11 @@ internal abstract class Reactor : CoroutineDispatcher() {
                     failure = t
                 }
             }
+            statsReactor = reactor
             reactor.runUntil(job)
             reactor.shutdown()
+            reactor.printStats()
+            statsReactor = null
             failure?.let { throw it }
         }
     }
@@ -84,4 +161,16 @@ internal class ReactorStream(
     override suspend fun write(src: Buffer): Int = reactor.write(fd, src)
     override suspend fun flush() {}
     override fun close() = closeFd(fd)
+}
+
+/** The reactor currently driven by [Reactor.run] (last one started), for [dumpReactorStats]. */
+private var statsReactor: Reactor? = null
+
+/**
+ * Print the running reactor's NETON_IO_STATS line now (no-op unless NETON_IO_STATS=1). Meant for
+ * processes that are terminated externally (a benchmark server killed by the runner) and would
+ * otherwise never reach the normal end-of-run print; call it from the termination path.
+ */
+fun dumpReactorStats() {
+    statsReactor?.printStats()
 }

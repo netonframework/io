@@ -8,6 +8,7 @@ package neton.io.net
  * its next read/write. This keeps the reactor edge-driven and matches [SocketStream].
  */
 internal interface Poller {
+    val name: String
     fun armRead(fd: Int)
     fun armWrite(fd: Int)
 
