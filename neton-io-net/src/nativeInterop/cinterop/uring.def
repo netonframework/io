@@ -1,0 +1,85 @@
+package = neton.io.uring
+
+---
+#include <stdint.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/mman.h>
+
+/* io_uring was added in kernel 5.1; the Kotlin/Native cross sysroot is older, so the UAPI is
+ * declared here directly. At run time the host kernel provides io_uring. Single-threaded use
+ * (submit and reap on one thread around io_uring_enter) needs no SMP ring barriers. */
+
+#ifndef __NR_io_uring_setup
+#define __NR_io_uring_setup 425
+#endif
+#ifndef __NR_io_uring_enter
+#define __NR_io_uring_enter 426
+#endif
+
+/* mmap offsets */
+#define NETON_IORING_OFF_SQ_RING 0ULL
+#define NETON_IORING_OFF_CQ_RING 0x8000000ULL
+#define NETON_IORING_OFF_SQES    0x10000000ULL
+
+/* opcodes */
+#define NETON_IORING_OP_READ     22
+#define NETON_IORING_OP_WRITE    23
+#define NETON_IORING_OP_ACCEPT   13
+#define NETON_IORING_OP_POLL_ADD 6
+
+/* io_uring_enter flags */
+#define NETON_IORING_ENTER_GETEVENTS 1
+
+/* poll events */
+#define NETON_POLLIN  0x001
+#define NETON_POLLOUT 0x004
+
+struct neton_io_sqring_offsets {
+    uint32_t head; uint32_t tail; uint32_t ring_mask; uint32_t ring_entries;
+    uint32_t flags; uint32_t dropped; uint32_t array; uint32_t resv1; uint64_t resv2;
+};
+struct neton_io_cqring_offsets {
+    uint32_t head; uint32_t tail; uint32_t ring_mask; uint32_t ring_entries;
+    uint32_t overflow; uint32_t cqes; uint32_t flags; uint32_t resv1; uint64_t resv2;
+};
+struct neton_io_uring_params {
+    uint32_t sq_entries; uint32_t cq_entries; uint32_t flags;
+    uint32_t sq_thread_cpu; uint32_t sq_thread_idle; uint32_t features;
+    uint32_t wq_fd; uint32_t resv[3];
+    struct neton_io_sqring_offsets sq_off;
+    struct neton_io_cqring_offsets cq_off;
+};
+struct neton_io_uring_sqe {
+    uint8_t  opcode; uint8_t flags; uint16_t ioprio; int32_t fd;
+    uint64_t off; uint64_t addr; uint32_t len; uint32_t op_flags;
+    uint64_t user_data; uint16_t buf_index; uint16_t personality;
+    int32_t  splice_fd_in; uint64_t pad2[2];
+};
+struct neton_io_uring_cqe {
+    uint64_t user_data; int32_t res; uint32_t flags;
+};
+
+static int neton_uring_setup(unsigned entries, struct neton_io_uring_params* p) {
+    return (int) syscall(__NR_io_uring_setup, entries, p);
+}
+static int neton_uring_enter(int fd, unsigned to_submit, unsigned min_complete, unsigned flags) {
+    return (int) syscall(__NR_io_uring_enter, fd, to_submit, min_complete, flags, (void*)0, 0);
+}
+
+/* raw u32 load/store into ring memory at a byte offset */
+static uint32_t neton_load32(void* base, uint32_t off) {
+    return *(volatile uint32_t*)((char*)base + off);
+}
+static void neton_store32(void* base, uint32_t off, uint32_t v) {
+    *(volatile uint32_t*)((char*)base + off) = v;
+}
+static struct neton_io_uring_sqe* neton_sqe_at(void* sqes, unsigned idx) {
+    return &((struct neton_io_uring_sqe*)sqes)[idx];
+}
+static struct neton_io_uring_cqe* neton_cqe_at(void* cqes_base, uint32_t cqes_off, unsigned idx) {
+    return &((struct neton_io_uring_cqe*)((char*)cqes_base + cqes_off))[idx];
+}
+static uint32_t* neton_array_at(void* sq_base, uint32_t array_off, unsigned idx) {
+    return &((uint32_t*)((char*)sq_base + array_off))[idx];
+}

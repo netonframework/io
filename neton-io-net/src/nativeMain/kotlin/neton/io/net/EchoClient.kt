@@ -23,11 +23,11 @@ fun echoClientMain(args: Array<String>) {
     val clock = TimeSource.Monotonic.markNow()
     var totalRequests = 0L
 
-    EventLoop.run {
+    runReactor {
         val jobs = ArrayList<Job>(connections)
         repeat(connections) {
             jobs.add(launch {
-                val conn = connectTcp(host, port)
+                val conn = connect(host, port)
                 val writeBuf = Buffer(payloadSize)
                 val readBuf = Buffer(payloadSize)
                 var requests = 0L

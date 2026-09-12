@@ -18,7 +18,7 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 - `neton-io-codec` — `Decoder`/`Encoder` and `LineCodec`
 - `neton-io-core` — `IoStream` / `Filter` / `Io` / `Framed` / `Service` / `dispatcher` / `Readiness`
 - `neton-io-testkit` — in-memory duplex driver and integration tests
-- `neton-io-net` — the reactor: kqueue (Apple), epoll and poll (Linux), non-blocking TCP; driver selectable via `NETON_IO_DRIVER`
+- `neton-io-net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ## Design
 
@@ -28,8 +28,9 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 - **The reactor is the scheduler.** It doubles as the `CoroutineDispatcher`; a coroutine blocked
   on I/O parks on an fd and is resumed when the poller reports readiness. The loop blocks in
   `kevent`/`epoll_wait` when idle — no busy polling.
-- **Readiness now, completion later.** kqueue/epoll fit the current `suspend read/write` driver.
-  A completion-oriented, buffer-feed SPI is added with io_uring/IOCP, where it pays off.
+- **Readiness and completion share one `Reactor`.** Readiness drivers (kqueue/epoll/poll) wait for
+  the fd then do the syscall; the completion driver (io_uring) submits the op with its buffer and
+  awaits the result. The upper layers are written against the same suspend read/write/accept.
 - **TLS is a filter.** It slots in as a layer between the socket and the codec.
 
 ## Build and test
@@ -67,6 +68,7 @@ release build, 64 B payload, single reactor. The CI `bench` job runs a short ver
 | macOS kqueue (Apple Silicon) | 46,305 | 110,606 | 105,799 req/s |
 | Linux epoll (2-core) | 25,192 | 90,181 | 79,451 req/s |
 | Linux poll(2) (2-core) | — | 93,736 | 75,572 req/s |
+| Linux io_uring (2-core) | — | 77,973 | 71,352 req/s |
 
 poll(2) is O(n) per call, so it edges ahead at low connection counts and falls behind epoll as
 the fd set grows. The read/write path is allocation-free — the socket fills and drains the

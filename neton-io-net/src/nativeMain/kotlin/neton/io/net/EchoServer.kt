@@ -16,8 +16,8 @@ fun echoServerMain(args: Array<String>) {
     val host = args.getOrNull(0) ?: "0.0.0.0"
     val port = args.getOrNull(1)?.toIntOrNull() ?: 9000
     println("echo-server listening on $host:$port")
-    EventLoop.run {
-        val server = listenTcp(host, port)
+    runReactor {
+        val server = listen(host, port)
         while (true) {
             val conn = server.accept()
             launch { echoConnection(conn) }

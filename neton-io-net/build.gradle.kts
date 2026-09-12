@@ -1,13 +1,23 @@
 plugins { kotlin("multiplatform") }
 repositories { mavenCentral() }
 kotlin {
-    val nativeTargets = listOf(macosArm64(), macosX64(), linuxX64(), linuxArm64())
-    nativeTargets.forEach { target ->
+    val macos = listOf(macosArm64(), macosX64())
+    val linux = listOf(linuxX64(), linuxArm64())
+
+    (macos + linux).forEach { target ->
         target.binaries {
             executable("echoServer") { entryPoint = "neton.io.net.echoServerMain" }
             executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
         }
     }
+
+    // io_uring bindings (self-contained UAPI; the cross sysroot predates io_uring).
+    linux.forEach { target ->
+        target.compilations.getByName("main").cinterops.create("uring") {
+            defFile(project.file("src/nativeInterop/cinterop/uring.def"))
+        }
+    }
+
     sourceSets {
         commonMain.dependencies {
             api(project(":neton-io-core"))

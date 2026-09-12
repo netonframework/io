@@ -19,15 +19,15 @@ import kotlin.test.assertEquals
 class TcpEchoTest {
 
     @Test
-    fun echoOverTcp() = EventLoop.run {
+    fun echoOverTcp() = runReactor {
         val port = 39217
-        val server = listenTcp("127.0.0.1", port)
+        val server = listen("127.0.0.1", port)
         val serverJob = launch {
             val conn = server.accept()
             serve(Framed(Io(conn), LineCodec, LineCodec)) { req -> "echo:$req" }
         }
 
-        val client = connectTcp("127.0.0.1", port)
+        val client = connect("127.0.0.1", port)
         val framed = Framed(Io(client), LineCodec, LineCodec)
         framed.send("hello")
         assertEquals("echo:hello", framed.incoming().first())
@@ -38,15 +38,15 @@ class TcpEchoTest {
     }
 
     @Test
-    fun multipleFramesOverTcp() = EventLoop.run {
+    fun multipleFramesOverTcp() = runReactor {
         val port = 39218
-        val server = listenTcp("127.0.0.1", port)
+        val server = listen("127.0.0.1", port)
         val serverJob = launch {
             val conn = server.accept()
             serve(Framed(Io(conn), LineCodec, LineCodec)) { req -> req.uppercase() }
         }
 
-        val client = connectTcp("127.0.0.1", port)
+        val client = connect("127.0.0.1", port)
         val framed = Framed(Io(client), LineCodec, LineCodec)
         framed.send("a")
         framed.send("bb")
