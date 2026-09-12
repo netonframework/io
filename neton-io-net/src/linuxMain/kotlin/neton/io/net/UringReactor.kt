@@ -6,6 +6,7 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.nativeHeap
+import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.pin
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
@@ -21,6 +22,7 @@ import neton.io.uring.NETON_IORING_OFF_CQ_RING
 import neton.io.uring.NETON_IORING_OFF_SQES
 import neton.io.uring.NETON_IORING_OFF_SQ_RING
 import neton.io.uring.NETON_IORING_OP_ACCEPT
+import neton.io.uring.NETON_IORING_OP_ASYNC_CANCEL
 import neton.io.uring.NETON_IORING_OP_POLL_ADD
 import neton.io.uring.NETON_IORING_OP_READ
 import neton.io.uring.NETON_IORING_OP_SEND
@@ -39,6 +41,8 @@ import platform.posix.MAP_SHARED
 import platform.posix.PROT_READ
 import platform.posix.PROT_WRITE
 import platform.posix.close
+import platform.posix.fprintf
+import platform.posix.stderr
 import platform.posix.getenv
 import platform.posix.memset
 import platform.posix.mmap
@@ -53,6 +57,16 @@ import kotlin.coroutines.resume
  * ring, so a partial submit is handled naturally by the next enter. Before writing a new SQE the
  * ring is drained if full, so submitting more ops than the ring holds never overwrites an
  * unconsumed entry (correctness does not depend on the ring being large enough).
+ *
+ * Buffer lifetime (completion model): the kernel may write into an op's buffer until that op's CQE
+ * has been reaped, so a buffer stays pinned from submit until its CQE, unconditionally. Cancelling
+ * the coroutine that awaits an op does not release anything: it submits IORING_OP_ASYNC_CANCEL for
+ * the op and drops the continuation; the op's own CQE (real result or -ECANCELED) arrives exactly
+ * once either way and is what unpins the buffer. A cancel that loses the race with normal
+ * completion reports -ENOENT/-EALREADY on its own CQE, which is ignored. On shutdown every op still
+ * in flight is cancelled and the ring is drained until their CQEs arrive before the ring is closed;
+ * if some never arrive the buffers are intentionally leaked (kept pinned), never freed under the
+ * kernel. Cancellation must originate on the reactor thread (the reactor is single-threaded).
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class UringReactor : Reactor() {
@@ -73,7 +87,11 @@ internal class UringReactor : Reactor() {
     private val cqesOff: UInt
 
     private var nextUserData: ULong = 1uL
-    private val waiters = HashMap<ULong, CancellableContinuation<Int>>()
+
+    /** One submitted op: its pinned buffer (if any) and the continuation awaiting it (null once cancelled). */
+    private class InFlight(val pinned: Pinned<ByteArray>?, var cont: CancellableContinuation<Int>?)
+
+    private val inFlight = HashMap<ULong, InFlight>()
 
     init {
         val depth = getenv("NETON_IO_URING_DEPTH")?.toKString()?.toUIntOrNull() ?: DEFAULT_DEPTH
@@ -129,20 +147,34 @@ internal class UringReactor : Reactor() {
         return ud
     }
 
-    private suspend fun await(ud: ULong): Int = suspendCancellableCoroutine { cont ->
-        waiters[ud] = cont
-        cont.invokeOnCancellation { waiters.remove(ud) }
+    /**
+     * Submit [opcode] and suspend until its CQE. [pinned] (if any) is owned by the op from here on
+     * and is released only by [reap] when the CQE arrives — also after cancellation.
+     */
+    private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pinned: Pinned<ByteArray>?): Int {
+        val ud = prepSqe(opcode, fd, addr, len, opFlags)
+        return suspendCancellableCoroutine { cont ->
+            val entry = InFlight(pinned, cont)
+            inFlight[ud] = entry
+            cont.invokeOnCancellation {
+                // Drop the waiter but keep the entry (and its pin): the kernel still owns the buffer
+                // until this op's CQE. Ask the kernel to cancel; the CQE tells us when it is over.
+                entry.cont = null
+                if (inFlight[ud] === entry) requestCancel(ud)
+            }
+        }
+    }
+
+    /** Fire-and-forget IORING_OP_ASYNC_CANCEL targeting [target]; its own CQE carries no waiter. */
+    private fun requestCancel(target: ULong) {
+        prepSqe(NETON_IORING_OP_ASYNC_CANCEL, -1, target.toLong(), 0, 0)
     }
 
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
         val cap = dst.reserve(chunk)
         val pinned = dst.backingArray().pin()
-        val res = try {
-            await(prepSqe(NETON_IORING_OP_READ, fd, pinned.addressOf(dst.writerIndex()).toLong(), cap, 0))
-        } finally {
-            pinned.unpin()
-        }
-        return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF, negative = error
+        val res = submit(NETON_IORING_OP_READ, fd, pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pinned)
+        return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF, negative = error/cancelled
     }
 
     override suspend fun write(fd: Int, src: Buffer): Int {
@@ -150,31 +182,27 @@ internal class UringReactor : Reactor() {
         while (src.readableBytes > 0) {
             val len = src.readableBytes
             val pinned = src.backingArray().pin()
-            val res = try {
-                await(prepSqe(NETON_IORING_OP_SEND, fd, pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL))
-            } finally {
-                pinned.unpin()
-            }
+            val res = submit(NETON_IORING_OP_SEND, fd, pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pinned)
             if (res > 0) { src.consume(res); total += res } else break
         }
         return total
     }
 
     override suspend fun accept(listenFd: Int): Int {
-        val res = await(prepSqe(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0))
+        val res = submit(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0, null)
         if (res >= 0) { setNonBlocking(res); suppressSigpipe(res) }
         return res
     }
 
     override suspend fun awaitConnect(fd: Int) {
-        await(prepSqe(NETON_IORING_OP_POLL_ADD, fd, 0L, 0, NETON_POLLOUT))
+        submit(NETON_IORING_OP_POLL_ADD, fd, 0L, 0, NETON_POLLOUT, null)
     }
 
     override fun runUntil(root: Job) {
         while (!root.isCompleted) {
             drainTasks()
             if (root.isCompleted) break
-            if (waiters.isEmpty() && !hasTasks()) break
+            if (inFlight.isEmpty() && !hasTasks()) break
 
             val toSubmit = pending()
             val minComplete = if (hasTasks()) 0u else 1u
@@ -195,12 +223,33 @@ internal class UringReactor : Reactor() {
             val ud = cqe.user_data
             val res = cqe.res
             head += 1u
-            waiters.remove(ud)?.resume(res)
+            val entry = inFlight.remove(ud) ?: continue // a cancel op's own CQE, or unknown
+            entry.pinned?.unpin()                          // the kernel is done with the buffer
+            entry.cont?.resume(res)                        // null if the awaiter was cancelled
         }
         neton_store32(cqBase, cqHeadOff, tail)
     }
 
+    /**
+     * Drain before closing: cancel every op still in flight and reap until their CQEs arrive, so
+     * no buffer is released while the kernel may still touch it. Closing the ring with ops in flight
+     * would cancel them asynchronously, after close() returns. If the drain does not converge the
+     * remaining buffers stay pinned (a leak, reported), never a use-after-free.
+     */
     override fun shutdown() {
+        if (inFlight.isNotEmpty()) {
+            for ((ud, entry) in inFlight) { entry.cont = null; requestCancel(ud) }
+            var rounds = 0
+            while (inFlight.isNotEmpty() && rounds < DRAIN_ROUNDS) {
+                neton_uring_enter(ringFd, pending(), 1u, NETON_IORING_ENTER_GETEVENTS.toUInt())
+                reap()
+                rounds++
+            }
+            if (inFlight.isNotEmpty()) {
+                fprintf(stderr, "neton-io: %d io_uring op(s) did not complete after cancel; buffers left pinned\n", inFlight.size)
+                inFlight.clear() // entries dropped, pins intentionally kept
+            }
+        }
         close(ringFd)
     }
 
@@ -208,5 +257,6 @@ internal class UringReactor : Reactor() {
         const val DEFAULT_DEPTH: UInt = 4096u
         const val SIZEOF_SQE: UInt = 64u
         const val SIZEOF_CQE: UInt = 16u
+        const val DRAIN_ROUNDS = 1000
     }
 }
