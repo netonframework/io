@@ -22,5 +22,11 @@ internal suspend fun connectStream(host: String, port: Int): IoStream {
     val reactor = currentReactor()
     val fd = tcpConnect(host, port)
     reactor.awaitConnect(fd)
+    // A failed non-blocking connect also reports "writable"; the outcome is in SO_ERROR.
+    val err = socketError(fd)
+    if (err != 0) {
+        closeFd(fd)
+        throw ConnectException("connect to $host:$port failed: ${errnoMessage(err)} (errno $err)")
+    }
     return ReactorStream(fd, reactor)
 }

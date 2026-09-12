@@ -23,5 +23,8 @@ class TcpListener internal constructor(private val server: TcpServer) {
 /** Bind and listen on [host]:[port]. Must run inside [runReactor]. */
 suspend fun listen(host: String, port: Int): TcpListener = TcpListener(listenTcpServer(host, port))
 
-/** Connect to [host]:[port]. */
+/** Connect to [host]:[port]. Throws [ConnectException] if the connection cannot be established. */
 suspend fun connect(host: String, port: Int): IoStream = connectStream(host, port)
+
+/** A TCP connect that failed (refused, unreachable, timed out by the OS). */
+class ConnectException(message: String) : Exception(message)

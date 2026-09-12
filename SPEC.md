@@ -253,6 +253,9 @@ geario 是**主蓝图**（架构 + filter/dispatcher/buffer 模型，已 benchma
 - **单线程** submit/reap 围绕 `io_uring_enter`（本身是全屏障），**免 SMP ring 内存屏障**。
 - 完成期间 buffer 用 `pin()`/`unpin()` 固定。
 - **SQ 提交模型（正确性不依赖 ring 大小）**：`to_submit` 恒取 `sq_tail - sq_head`（直接读 ring），部分提交由下次 enter 自然补齐；`prepSqe` 写新 SQE 前若 ring 满则循环 `io_uring_enter` 提交腾位、CQ 满则先 `reap()`。ring 深度由 `NETON_IO_URING_DEPTH` 配置（默认 4096）。**饱和验证**：`NETON_IO_URING_DEPTH=4`/`8` 下跑 400 连接回归 `manyConcurrentConnections` 通过——4 项 ring 装不下 400 并发 op,证明满队列路径真的被走到且正确,而非"大到碰不到"。（此前 ~200 连接 stall 就是旧实现 depth=256 无溢出保护,benchmark 定位。）
+- **socket 边界的失败路径**：非阻塞 connect 完成后读取 `SO_ERROR`，失败（拒绝/不可达）抛 `ConnectException`
+  而不是交给上层一个"可写"但已死的 fd；`Reactor.run` 启动时忽略 `SIGPIPE`，向已断开的对端写入表现为
+  `EPIPE`/`ECONNRESET`（read 返回 -1、write 短写），而不是进程被杀。回归测试 `TcpFailureTest`。
 - **已知待验证项(诚实)**：①`io_uring_enter` 返回 EINTR/部分提交/EBUSY 目前统一走"循环重试 + 满则 reap",未按 errno 细分,需专项测;②**取消/关闭期间 in-flight op 的 buffer 生命周期**——现在 read/write 在 finally 里 `unpin`,若协程在 op 未完成时被取消,内核可能仍写入已 unpin 的 buffer(UAF 风险);正确做法是 buffer 保持 pin 到 CQE 到达(或 `IORING_OP_ASYNC_CANCEL` 后再回收),待做。③多核扩展/尾延迟/内存表现未测——500 连接跑通只证明该负载可运行,不代表可扩展性已验证。
 
 ### 15.4 优化 backlog（交给贡献者；不阻塞上层业务）

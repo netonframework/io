@@ -54,6 +54,7 @@ internal abstract class Reactor : CoroutineDispatcher() {
 
     companion object {
         fun run(block: suspend CoroutineScope.() -> Unit) {
+            ignoreSigpipe()
             val reactor = createReactor()
             var failure: Throwable? = null
             val scope = CoroutineScope(reactor)

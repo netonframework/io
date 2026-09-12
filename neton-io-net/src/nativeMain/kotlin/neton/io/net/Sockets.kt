@@ -1,9 +1,16 @@
 package neton.io.net
 
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.alloc
 import kotlinx.cinterop.convert
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.sizeOf
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.value
 import neton.io.bytes.Buffer
 import platform.posix.EAGAIN
 import platform.posix.EINTR
@@ -11,12 +18,20 @@ import platform.posix.EWOULDBLOCK
 import platform.posix.F_GETFL
 import platform.posix.F_SETFL
 import platform.posix.O_NONBLOCK
+import platform.posix.SIGPIPE
+import platform.posix.SIG_IGN
+import platform.posix.SOL_SOCKET
+import platform.posix.SO_ERROR
 import platform.posix.accept
 import platform.posix.close
 import platform.posix.errno
 import platform.posix.fcntl
+import platform.posix.getsockopt
 import platform.posix.recv
 import platform.posix.send
+import platform.posix.signal
+import platform.posix.socklen_tVar
+import platform.posix.strerror
 
 /** Outcome of a non-blocking socket op. */
 internal enum class IoResult { OK, WOULD_BLOCK, EOF, ERROR }
@@ -40,6 +55,29 @@ internal fun acceptOne(listenFd: Int): Int = accept(listenFd, null, null)
 @OptIn(ExperimentalForeignApi::class)
 internal fun closeFd(fd: Int) {
     close(fd)
+}
+
+/** Pending socket error (SO_ERROR), e.g. the outcome of a non-blocking connect; 0 when none. */
+@OptIn(ExperimentalForeignApi::class)
+internal fun socketError(fd: Int): Int = memScoped {
+    val err = alloc<IntVar>()
+    val len = alloc<socklen_tVar>()
+    len.value = sizeOf<IntVar>().convert()
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, err.ptr, len.ptr) != 0) errno else err.value
+}
+
+@OptIn(ExperimentalForeignApi::class)
+internal fun errnoMessage(code: Int): String = strerror(code)?.toKString() ?: "errno $code"
+
+/**
+ * Writing to a peer that has gone away raises SIGPIPE, which kills the process by default —
+ * a disconnecting client would take a server down. Ignoring it turns the condition into EPIPE
+ * from send()/write() (and an io_uring write CQE), which the reactor reports as an I/O error.
+ * Process-wide by nature; applied once when the first reactor starts.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal fun ignoreSigpipe() {
+    signal(SIGPIPE, SIG_IGN)
 }
 
 /** Number of bytes read into [buf] when [result] is OK. */

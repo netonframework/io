@@ -10,6 +10,8 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.value
 import platform.posix.AF_INET
+import platform.posix.EINPROGRESS
+import platform.posix.errno
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_REUSEADDR
@@ -52,6 +54,11 @@ internal actual fun tcpConnect(host: String, port: Int): Int = memScoped {
     addr.sin_port = htons(port.toUShort())
     addr.sin_addr.s_addr = ipv4NetworkOrder(host)
 
-    connect(fd, addr.ptr.reinterpret<sockaddr>(), sizeOf<sockaddr_in>().convert())
+    val rc = connect(fd, addr.ptr.reinterpret<sockaddr>(), sizeOf<sockaddr_in>().convert())
+    if (rc != 0 && errno != EINPROGRESS) {
+        val err = errno
+        closeFd(fd)
+        throw ConnectException("connect to $host:$port failed: ${errnoMessage(err)} (errno $err)")
+    }
     fd
 }
