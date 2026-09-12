@@ -252,7 +252,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     abstract fun shutdown()
 
     companion object {
-        const val DEFAULT_TASK_BUDGET = 0
+        const val DEFAULT_TASK_BUDGET = 256
 
         fun run(block: suspend CoroutineScope.() -> Unit) {
             val reactor = createReactor()
