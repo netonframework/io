@@ -24,6 +24,10 @@ jobs:
             os: ubuntu-latest
             task: linuxX64Test
             driver: polling
+          - name: Linux io_uring
+            os: ubuntu-latest
+            task: linuxX64Test
+            driver: iouring
           - name: Windows
             os: windows-latest
             task: mingwX64Test
