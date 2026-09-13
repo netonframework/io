@@ -3,6 +3,9 @@ repositories { mavenCentral() }
 kotlin {
     val macos = listOf(macosArm64(), macosX64())
     val linux = listOf(linuxX64(), linuxArm64())
+    // iOS client targets (simulator + device): reuse the appleMain kqueue reactor. No executable
+    // entry points and no io_uring (Linux-only); the transport is a library here.
+    iosArm64(); iosSimulatorArm64(); iosX64()
 
     (macos + linux).forEach { target ->
         target.binaries {
