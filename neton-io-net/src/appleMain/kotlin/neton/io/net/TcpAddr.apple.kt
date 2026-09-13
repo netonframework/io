@@ -1,6 +1,8 @@
 package neton.io.net
 
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.toKString
+import platform.posix.strerror
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.convert
@@ -26,7 +28,7 @@ import platform.posix.setsockopt
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun tcpListen(host: String, port: Int, backlog: Int): Int = memScoped {
     val fd = socket(AF_INET, SOCK_STREAM, 0)
-    check(fd >= 0) { "socket() failed" }
+    check(fd >= 0) { "socket() failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
 
     val one = alloc<IntVar>()
     one.value = 1
@@ -37,8 +39,8 @@ internal actual fun tcpListen(host: String, port: Int, backlog: Int): Int = memS
     addr.sin_port = htons(port.toUShort())
     addr.sin_addr.s_addr = ipv4NetworkOrder(host)
 
-    check(bind(fd, addr.ptr.reinterpret<sockaddr>(), sizeOf<sockaddr_in>().convert()) == 0) { "bind() failed" }
-    check(listen(fd, backlog) == 0) { "listen() failed" }
+    check(bind(fd, addr.ptr.reinterpret<sockaddr>(), sizeOf<sockaddr_in>().convert()) == 0) { "bind($host:$port) failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
+    check(listen(fd, backlog) == 0) { "listen($host:$port) failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
     setNonBlocking(fd)
     fd
 }
@@ -46,7 +48,7 @@ internal actual fun tcpListen(host: String, port: Int, backlog: Int): Int = memS
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun tcpConnect(host: String, port: Int): Int = memScoped {
     val fd = socket(AF_INET, SOCK_STREAM, 0)
-    check(fd >= 0) { "socket() failed" }
+    check(fd >= 0) { "socket() failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
     setNonBlocking(fd)
     suppressSigpipe(fd)
 
