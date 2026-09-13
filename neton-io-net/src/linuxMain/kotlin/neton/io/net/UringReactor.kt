@@ -52,6 +52,7 @@ import platform.posix.stderr
 import platform.posix.getenv
 import platform.posix.memset
 import platform.posix.mmap
+import platform.posix.munmap
 import kotlin.coroutines.resume
 
 /**
@@ -81,6 +82,11 @@ internal class UringReactor : Reactor() {
     private val sqBase: COpaquePointer
     private val cqBase: COpaquePointer
     private val sqes: COpaquePointer
+
+    // Mapping lengths, kept so shutdown() can munmap exactly what init mapped (P1-7).
+    private val sqMapLen: ULong
+    private val cqMapLen: ULong
+    private val sqesMapLen: ULong
 
     private val sqHeadOff: UInt
     private val sqTailOff: UInt
@@ -115,6 +121,7 @@ internal class UringReactor : Reactor() {
         sqBase = mmap(null, sqRingBytes.convert(), prot, flags, ringFd, NETON_IORING_OFF_SQ_RING.convert())!!
         cqBase = mmap(null, cqRingBytes.convert(), prot, flags, ringFd, NETON_IORING_OFF_CQ_RING.convert())!!
         sqes = mmap(null, sqesBytes.convert(), prot, flags, ringFd, NETON_IORING_OFF_SQES.convert())!!
+        sqMapLen = sqRingBytes; cqMapLen = cqRingBytes; sqesMapLen = sqesBytes
 
         sqHeadOff = params.sq_off.head
         sqTailOff = params.sq_off.tail
@@ -167,10 +174,14 @@ internal class UringReactor : Reactor() {
             val entry = InFlight(fd, pinned, cont)
             inFlight[ud] = entry
             cont.invokeOnCancellation {
-                // Drop the waiter but keep the entry (and its pin): the kernel still owns the buffer
-                // until this op's CQE. Ask the kernel to cancel; the CQE tells us when it is over.
-                entry.cont = null
-                if (inFlight[ud] === entry) requestCancel(ud)
+                // May run on any thread, and both `inFlight` and the SQ ring are reactor-thread
+                // state, so hop back before touching them (P1-3).
+                postToReactor {
+                    // Drop the waiter but keep the entry (and its pin): the kernel still owns the
+                    // buffer until this op's CQE. Ask the kernel to cancel; the CQE says when it is over.
+                    entry.cont = null
+                    if (inFlight[ud] === entry) requestCancel(ud)
+                }
             }
         }
     }
@@ -306,6 +317,12 @@ internal class UringReactor : Reactor() {
             }
         }
         close(ringFd)
+        // Release everything init acquired: the three ring mappings and the timeout spec.
+        // The ring fd is closed first, so the kernel is done with these pages.
+        munmap(sqes, sqesMapLen.convert())
+        munmap(cqBase, cqMapLen.convert())
+        munmap(sqBase, sqMapLen.convert())
+        nativeHeap.free(timeoutSpec.ptr.rawValue)
         closeWakePipe()
     }
 
