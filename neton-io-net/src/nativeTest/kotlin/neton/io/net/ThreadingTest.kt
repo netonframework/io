@@ -16,6 +16,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.TimeSource
 
+// Test ports are deliberately below 32768, outside the kernel's ephemeral range
+// (/proc/sys/net/ipv4/ip_local_port_range, typically 32768-60999). A fixed listen port
+// inside that range intermittently loses the bind to some other process's outbound
+// connection, which SO_REUSEADDR does not help with — it surfaces as a flaky EADDRINUSE.
 /** Threading contract: cross-thread resume is supported and wakes the loop; I/O off-thread is rejected; timers stay on the reactor. */
 class ThreadingTest {
 
@@ -45,7 +49,7 @@ class ThreadingTest {
         assertTrue(e in 25..2_000, "delay(30) took ${e}ms")
         assertEquals(owner, currentThreadId())
 
-        val port = 39790
+        val port = 19790
         val server = listen("127.0.0.1", port)
         var serverConn: IoStream? = null
         val accepted = launch { serverConn = server.accept() }
@@ -59,7 +63,7 @@ class ThreadingTest {
 
     @Test
     fun ioFromAnotherThreadIsRejected() = runReactor {
-        val port = 39791
+        val port = 19791
         val server = listen("127.0.0.1", port)
         var serverConn: IoStream? = null
         val accepted = launch { serverConn = server.accept() }

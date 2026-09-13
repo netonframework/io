@@ -15,6 +15,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+// Test ports are deliberately below 32768, outside the kernel's ephemeral range
+// (/proc/sys/net/ipv4/ip_local_port_range, typically 32768-60999). A fixed listen port
+// inside that range intermittently loses the bind to some other process's outbound
+// connection, which SO_REUSEADDR does not help with — it surfaces as a flaky EADDRINUSE.
 /**
  * Fairness: work that keeps re-dispatching itself must not starve I/O and timers. With an
  * unbounded task budget the loop would never reach the poller while a yield() loop is alive.
@@ -23,7 +27,7 @@ class FairnessTest {
 
     @Test
     fun busyYieldLoopDoesNotStarveIoOrTimers() = runReactor {
-        val port = 39795
+        val port = 19795
         val server = listen("127.0.0.1", port)
         val serverJob = launch {
             while (true) {

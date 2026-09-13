@@ -1,5 +1,11 @@
 package neton.io.net
 
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
+import neton.io.codec.LineCodec
+import neton.io.core.Framed
+import neton.io.core.Io
+import neton.io.core.serve
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import neton.io.bytes.Buffer
@@ -13,19 +19,23 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
+// Test ports are deliberately below 32768, outside the kernel's ephemeral range
+// (/proc/sys/net/ipv4/ip_local_port_range, typically 32768-60999). A fixed listen port
+// inside that range intermittently loses the bind to some other process's outbound
+// connection, which SO_REUSEADDR does not help with — it surfaces as a flaky EADDRINUSE.
 /** Failure paths at the socket boundary: a refused connect and a peer that goes away mid-write. */
 class TcpFailureTest {
 
     @Test
     fun connectRefusedThrows() = runReactor {
         // Nothing listens here; a non-blocking connect completes with SO_ERROR=ECONNREFUSED.
-        val ex = assertFailsWith<ConnectException> { connect("127.0.0.1", 39777) }
-        assertTrue(ex.message!!.contains("39777"), ex.message)
+        val ex = assertFailsWith<ConnectException> { connect("127.0.0.1", 19777) }
+        assertTrue(ex.message!!.contains("19777"), ex.message)
     }
 
     @Test
     fun writeToClosedPeerThrowsIoException() = runReactor {
-        val port = 39778
+        val port = 19778
         val server = listen("127.0.0.1", port)
         val serverJob = launch {
             val conn = server.accept()
@@ -57,7 +67,7 @@ class TcpFailureTest {
 
     @Test
     fun closeWakesParkedReadWithClosedException() = runReactor {
-        val port = 39779
+        val port = 19779
         val server = listen("127.0.0.1", port)
         var serverConn: IoStream? = null
         val accepted = launch { serverConn = server.accept() }
@@ -80,18 +90,35 @@ class TcpFailureTest {
 
     @Test
     fun closeFromAnotherThreadIsRejected() = runReactor {
-        val port = 39782
+        val port = 19782
         val server = listen("127.0.0.1", port)
-        val accepted = launch { server.accept().close() }
+        val serverJob = launch {
+            val conn = server.accept()
+            serve(Framed(Io(conn), LineCodec, LineCodec)) { req -> "echo:$req" }
+        }
         val client = connect("127.0.0.1", port)
-        accepted.join()
+        val framed = Framed(Io(client), LineCodec, LineCodec)
+
         val worker = Worker.start()
         val result = worker.execute(TransferMode.SAFE, { client }) { c ->
             try { c.close(); "closed" } catch (t: IllegalStateException) { "rejected" }
         }.result
         worker.requestTermination().result
-        assertEquals("rejected", result)
-        client.close()
-        server.close()
+
+        // The server job is cancelled in `finally`: without it an assertion failure here would
+        // leave `serve()` parked on the reactor and the test would hang instead of reporting.
+        try {
+            assertEquals("rejected", result)
+
+            // P1-2: a rejected close must leave the stream exactly as it was. Before the fix
+            // `closed` was set before the ownership check, so this round-trip failed with
+            // ClosedException and the fd leaked — the rejection alone did not prove the invariant.
+            framed.send("still-alive")
+            assertEquals("echo:still-alive", framed.incoming().first())
+            client.close()
+        } finally {
+            serverJob.cancelAndJoin()
+            server.close()
+        }
     }
 }

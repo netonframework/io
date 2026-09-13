@@ -8,6 +8,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+// Test ports are deliberately below 32768, outside the kernel's ephemeral range
+// (/proc/sys/net/ipv4/ip_local_port_range, typically 32768-60999). A fixed listen port
+// inside that range intermittently loses the bind to some other process's outbound
+// connection, which SO_REUSEADDR does not help with — it surfaces as a flaky EADDRINUSE.
 /**
  * In-flight op lifetime: cancelling a coroutine parked in read while the peer later writes, and
  * leaving the reactor with a read still in flight. On io_uring these exercise the
@@ -18,7 +22,7 @@ class InFlightLifetimeTest {
 
     @Test
     fun cancelParkedReadThenPeerWrites() = runReactor {
-        val port = 39780
+        val port = 19780
         val server = listen("127.0.0.1", port)
         var serverConn: neton.io.core.IoStream? = null
         val accepted = launch { serverConn = server.accept() }
@@ -62,7 +66,7 @@ class InFlightLifetimeTest {
         // an un-cancelled read can never be "left behind" — cancellation is the only way in.)
         var finished = false
         runReactor {
-            val port = 39781
+            val port = 19781
             val server = listen("127.0.0.1", port)
             var serverConn: neton.io.core.IoStream? = null
             val accepted = launch { serverConn = server.accept() }

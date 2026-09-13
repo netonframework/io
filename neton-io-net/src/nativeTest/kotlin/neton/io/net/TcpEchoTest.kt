@@ -12,6 +12,10 @@ import neton.io.core.serve
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+// Test ports are deliberately below 32768, outside the kernel's ephemeral range
+// (/proc/sys/net/ipv4/ip_local_port_range, typically 32768-60999). A fixed listen port
+// inside that range intermittently loses the bind to some other process's outbound
+// connection, which SO_REUSEADDR does not help with — it surfaces as a flaky EADDRINUSE.
 /**
  * P1 acceptance: the P0 model (Framed/Service/dispatcher) runs unchanged over a real
  * non-blocking TCP connection driven by the kqueue/epoll reactor.
@@ -20,7 +24,7 @@ class TcpEchoTest {
 
     @Test
     fun echoOverTcp() = runReactor {
-        val port = 39217
+        val port = 19217
         val server = listen("127.0.0.1", port)
         val serverJob = launch {
             val conn = server.accept()
@@ -41,7 +45,7 @@ class TcpEchoTest {
     fun manyConcurrentConnections() = runReactor {
         // Regression for an io_uring SQ-ring overflow: with more concurrent in-flight ops than the
         // ring held, submissions were overwritten and the reactor stalled (~200 connections).
-        val port = 39219
+        val port = 19219
         val server = listen("127.0.0.1", port)
         val serverJob = launch {
             while (true) {
@@ -68,7 +72,7 @@ class TcpEchoTest {
 
     @Test
     fun multipleFramesOverTcp() = runReactor {
-        val port = 39218
+        val port = 19218
         val server = listen("127.0.0.1", port)
         val serverJob = launch {
             val conn = server.accept()
