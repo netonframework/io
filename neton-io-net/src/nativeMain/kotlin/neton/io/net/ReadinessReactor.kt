@@ -23,13 +23,13 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     private suspend fun waitReadable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
         readWaiters[fd] = cont
-        cont.invokeOnCancellation { readWaiters.remove(fd) }
+        cont.invokeOnCancellation { postToReactor { readWaiters.remove(fd) } }
         poller.armRead(fd)
     }
 
     private suspend fun waitWritable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
         writeWaiters[fd] = cont
-        cont.invokeOnCancellation { writeWaiters.remove(fd) }
+        cont.invokeOnCancellation { postToReactor { writeWaiters.remove(fd) } }
         poller.armWrite(fd)
     }
 

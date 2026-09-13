@@ -21,6 +21,7 @@ import platform.posix.fprintf
 import platform.posix.getenv
 import platform.posix.stderr
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * Per-reactor event-loop counters, for explaining benchmark results with counts instead of
@@ -140,6 +141,17 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
             if (external.compareAndSet(head, ExtNode(block, head))) break
         }
         signalWakePipe(wakePipe[1])
+    }
+
+    /**
+     * Run [block] on the reactor thread. Cancellation handlers (`invokeOnCancellation`) may fire
+     * on any thread, so waiter-map mutations must be funnelled back here instead of racing the
+     * loop. On the owner thread this runs inline; otherwise it goes through the cross-thread
+     * dispatch path (external queue + self-pipe wakeup).
+     */
+    fun postToReactor(block: () -> Unit) {
+        if (isOwnerThread()) block()
+        else dispatch(EmptyCoroutineContext, Runnable { block() })
     }
 
     /** Move externally posted tasks (if any) onto the local queue, oldest first. */
@@ -303,6 +315,10 @@ internal class ReactorStream(
 
     override fun close() {
         if (closed) return
+        // Ownership is checked *before* any state changes (P1-2). The reverse order left a
+        // cross-thread close half-applied: closeStream() threw, but `closed` was already true,
+        // so the stream was permanently unusable and its fd never closed — a silent leak.
+        reactor.checkOwnerPublic("close")
         closed = true
         reactor.closeStream(fd)
     }
