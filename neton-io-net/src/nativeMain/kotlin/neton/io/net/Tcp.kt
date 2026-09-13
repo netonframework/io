@@ -9,8 +9,25 @@ internal suspend fun currentReactor(): Reactor = coroutineContext[ContinuationIn
 
 /** A listening TCP endpoint. */
 internal class TcpServer(private val listenFd: Int, private val reactor: Reactor) {
+    private var closed = false
+
     suspend fun accept(): IoStream = ReactorStream(reactor.accept(listenFd), reactor)
-    fun close() = closeFd(listenFd)
+
+    /**
+     * Close the listener the way a stream is closed: on the reactor thread, waking any coroutine
+     * parked in [accept] with [neton.io.core.ClosedException] and dropping the driver's interest
+     * in the fd before closing it.
+     *
+     * A bare closeFd() left an accept parked forever with no fd to wake it, left the poller
+     * holding a registration for a descriptor number the kernel was free to hand out again, and
+     * was not idempotent — a second close could take out whatever had since reused the number.
+     */
+    fun close() {
+        if (closed) return
+        reactor.checkOwnerPublic("close")
+        closed = true
+        reactor.closeStream(listenFd)
+    }
 }
 
 /** Bind and listen on [host]:[port]. Must run inside a reactor. */

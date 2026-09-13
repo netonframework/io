@@ -6,6 +6,7 @@ import neton.io.codec.LineCodec
 import neton.io.core.Framed
 import neton.io.core.Io
 import neton.io.core.serve
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import neton.io.bytes.Buffer
@@ -120,5 +121,30 @@ class TcpFailureTest {
             serverJob.cancelAndJoin()
             server.close()
         }
+    }
+
+    @Test
+    fun closeListenerUnblocksAccept() = runReactor {
+        val port = 19783
+        val server = listen("127.0.0.1", port)
+        var outcome = "still-parked"
+        val acceptJob = launch {
+            outcome = try {
+                server.accept()
+                "accepted"
+            } catch (_: ClosedException) {
+                "closed"
+            }
+        }
+        // Let the accept reach the driver and park before the listener goes away.
+        delay(50)
+
+        server.close()
+        acceptJob.join()
+        assertEquals("closed", outcome)
+
+        // Closing twice must be a no-op, not a second closeFd on a descriptor number the kernel
+        // may already have reused.
+        server.close()
     }
 }
