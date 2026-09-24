@@ -99,3 +99,7 @@ the fd set grows. The read/write path is allocation-free — the socket fills an
 ./echoServer 0.0.0.0 9000
 ./echoClient 127.0.0.1 9000 50 5 64   # host port connections seconds payload
 ```
+
+## License
+
+[Apache License 2.0](LICENSE).
