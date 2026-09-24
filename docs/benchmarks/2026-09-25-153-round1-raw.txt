@@ -1,0 +1,62 @@
+# host=service cores=4 load=0.00 rounds=8 secs=8 payload=128
+# warmup
+# mode conns=1  (server conns qps p50_us)
+neton-epoll 1 33025 27.2
+geario 1 33489 27.6
+geario-uring 1 33793 27.4
+neton-epoll 1 32851 27.2
+geario 1 30393 28.9
+geario-uring 1 31178 28.4
+neton-epoll 1 34059 27.2
+geario 1 30010 29.2
+geario-uring 1 32129 27.6
+neton-epoll 1 34288 26.6
+geario 1 33195 27.6
+geario-uring 1 30688 28.3
+neton-epoll 1 28945 32.0
+geario 1 33728 27.4
+geario-uring 1 29943 29.1
+neton-epoll 1 34104 26.5
+geario 1 28874 32.5
+geario-uring 1 32344 27.7
+neton-epoll 1 34310 26.7
+geario 1 30635 28.5
+geario-uring 1 34215 27.1
+neton-epoll 1 31334 28.0
+geario 1 32894 27.6
+geario-uring 1 30642 28.9
+# mode conns=12  (server conns qps p50_us)
+neton-epoll 12 118948 98.7
+neton-uring 12 129731 90.7
+geario 12 290334 34.4
+geario-uring 12 310482 34.0
+neton-epoll 12 101197 111.6
+neton-uring 12 93355 131.4
+geario 12 245041 41.6
+geario-uring 12 291693 36.3
+neton-epoll 12 91937 131.2
+neton-uring 12 104412 113.5
+geario 12 275519 39.2
+geario-uring 12 283297 35.8
+neton-epoll 12 92469 127.6
+neton-uring 12 98574 121.9
+geario 12 296828 36.6
+geario-uring 12 260846 40.7
+neton-epoll 12 117678 99.4
+neton-uring 12 125575 91.9
+geario 12 323099 34.2
+geario-uring 12 324420 33.6
+neton-epoll 12 96731 127.8
+neton-uring 12 114541 102.6
+geario 12 270839 37.2
+geario-uring 12 250022 40.7
+neton-epoll 12 86353 138.9
+neton-uring 12 88610 133.4
+geario 12 273411 38.3
+geario-uring 12 255807 40.8
+neton-epoll 12 99365 116.1
+neton-uring 12 124304 92.4
+geario 12 304990 34.7
+geario-uring 12 273026 39.7
+# done
+round2-launched pid=770488
