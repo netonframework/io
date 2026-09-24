@@ -49,7 +49,14 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val outcome = readInto(fd, dst, chunk)
             stats?.let { it.reads++; if (outcome.result == IoResult.OK) it.readBytes += outcome.count else if (outcome.result == IoResult.WOULD_BLOCK) it.readsWouldBlock++ }
             when (outcome.result) {
-                IoResult.OK -> return outcome.count
+                IoResult.OK -> {
+                    // SPEC §17b short-read rule: a recv that returned less than it was offered has
+                    // emptied the socket, so clear the ready flag now instead of paying a second
+                    // recv for the EAGAIN. Safe under EPOLLET/EV_CLEAR: any byte arriving after
+                    // this recv raises a fresh edge, so the next read() will not park on it.
+                    if (outcome.count < outcome.requested) readyRead.remove(fd)
+                    return outcome.count
+                }
                 IoResult.EOF -> return -1
                 IoResult.ERROR -> { val e = errno; throw IoException("read failed: ${errnoMessage(e)}", e) }
                 IoResult.WOULD_BLOCK -> { readyRead.remove(fd); waitReadable(fd) }

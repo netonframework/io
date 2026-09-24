@@ -99,3 +99,29 @@ same four cores, so uring stays lever #3 until it submits in batches with regist
 The very low p50 for neton-epoll-4 (10–11 µs, below the 27 µs single-connection floor) is measured
 by the same client and is reported as-is, but it is physically odd — likely a client-thread
 scheduling artifact at this concurrency — and is not used as evidence for anything.
+
+## Round 5 (SPEC §17 single-variable: level-triggered re-arm vs persistent edge-triggered) — medians of 8
+
+`neton-lt` = `echoServer.kexe` at aa2b42c (one-shot interest re-armed per round);
+`neton-et` = the same at d51d51e (§17: interest registered once, EPOLLET, per-fd ready flag,
+drain to EAGAIN). epoll only. Raw: `2026-09-25-153-round5-raw.txt`.
+
+| operating point | neton-lt | neton-et | geario | et/lt |
+|---|---|---|---|---|
+| pinned core 1, 1 reactor, 1 conn | 31,613 / 27.3 µs | 31,360 / 27.5 µs | 31,743 / 28.6 µs | — |
+| pinned core 1, 1 reactor, 12 conn | 101,686 / 106.8 µs | 104,196 / 104.0 µs | 131,790 / 83.2 µs | 1.02× |
+| unpinned, 4 reactors, 12 conn | 319,851 / 10.8 µs | 332,224 / 10.5 µs | 269,313 / 38.7 µs | 1.04× |
+| unpinned, 4 reactors, 48 conn | 331,810 / 10.4 µs | 336,551 / 10.7 µs | 280,080 / 148.6 µs | 1.01× |
+
+`NETON_IO_STATS` for neton-et, pinned, 12 conns, 8 s (part C): 762,578 requests (= writes − 1 per
+connection); **reads 1,525,923, reads_would_block 762,578 — exactly one EAGAIN recv per request**;
+polls 75,685 (0.10 per request, ~10 events per `epoll_wait`); writes_would_block 0.
+
+**Reading.** §17 removed the per-request `epoll_ctl` and made `epoll_wait` cheap (0.1/req), but that
+was worth only 2–4%, inside the run-to-run spread. The per-request syscall budget is now
+recv(OK) + send + recv(EAGAIN) + 0.1 epoll_wait ≈ 3.1, and the wasted recv is the whole remaining
+per-core difference to geario (1.27× pinned). SPEC §17's acceptance line expected
+`reads_would_block/req` to fall to ~0; that expectation was wrong for its own design ("recv until
+EAGAIN") — draining to EAGAIN *guarantees* one EAGAIN per burst. Removing it needs the short-read
+rule (a recv that returns fewer bytes than requested counts as drained; safe under EPOLLET/EV_CLEAR
+because every new arrival raises a fresh edge), which is the next single-variable step (§17b).

@@ -331,5 +331,15 @@ fun serveTcp(host: String, port: Int, reactors: Int = cpuCount(), handler: suspe
 5. io_uring 驱动不受影响（完成型没有"就绪"概念；它的路径在 §15.4 批量提交）。
 
 **验收**
-- 单变量：仅此改动，其余不动。153 单核钉扎（run-fair3 口径）与 4 reactor 放开各跑 8 轮；`NETON_IO_STATS` 的 reads_would_block/req 应从 ~1 降到 ~0，polls/req 下降。
+- 单变量：仅此改动，其余不动。153 单核钉扎（run-fair3 口径）与 4 reactor 放开各跑 8 轮；`NETON_IO_STATS` 的 polls/req 下降。
 - 正确性：全部现有测试 + 新增 `EdgeTriggeredTest`（半包/粘包、对端在 park 期间关闭、就绪位与 park 的竞争）。macOS + 153 三驱动。
+
+**结果（2026-09-25，153 第 5 轮，`docs/benchmarks/2026-09-25-geario-same-host.md`）**：polls/req 0.10（每次 `epoll_wait` 约 10 个事件），但吞吐仅 +2–4%（在抖动范围内）。原验收写的"reads_would_block/req 从 ~1 降到 ~0"是错的：第 2 条"recv 直到 EAGAIN"本身保证每个 burst 一次 EAGAIN，实测每请求恰好 1 次（1,525,923 recv / 762,578 请求）。这一次多余的 recv 就是与 geario 单核差距（1.27×）的全部来源，由 §17b 处理。
+
+### 17b. 短读即排空（short-read rule）
+
+**改动**：`recv` 返回的字节数小于提供的空间（`ReadOutcome.requested`）即视为套接字已排空：清就绪位并返回，不再多做一次必然 EAGAIN 的 recv。返回满额时保持就绪位，下次 read 继续 recv。
+
+**为什么安全**：EPOLLET / EV_CLEAR 对每次新数据到达都会再产生一次边沿（内核 `sk_data_ready` → 重新入就绪队列 / knote 重新激活），与用户态是否已把队列读空无关。因此 recv 之后、park 之前到达的数据一定带来新事件，不会丢唤醒；最坏情况是多一次 EAGAIN（无害）。poll(2) 驱动不常驻，不受影响；io_uring 不受影响。
+
+**验收**：单变量 153 第 6 轮（§17 二进制 vs §17b 二进制，epoll），单核钉扎与 4 reactor；`NETON_IO_STATS` 的 reads_would_block/req 应从 1 降到 ~0，reads/req 从 2 降到 ~1。正确性：macOS 全套 + `EdgeTriggeredTest`（满额读后仍需继续读的情形由 `coalescedFramesAreDrainedAcrossBursts` 覆盖）。
