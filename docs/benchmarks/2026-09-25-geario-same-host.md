@@ -77,3 +77,25 @@ is per-core cost. Two further observations:
    NETON_IO_STATS). Single-variable each, measured with this harness pinned to one core.
 3. **io_uring done properly** (batched submission, registered buffers, multishot): only after 1–2,
    and judged on one core — otherwise its "gain" is just borrowed cores.
+
+## Round 4 (multi-reactor acceptance, unpinned, 4 cores) — medians of 8
+
+neton `echoServer` with 1 vs 4 reactors (SPEC §16, commit aa2b42c; readiness path still pre-§17) against geario's 4 workers.
+
+| server | 12 conn qps (min..max) | 12 conn p50 | 48 conn qps (min..max) | 48 conn p50 |
+|---|---|---|---|---|
+| neton-epoll-1 | 112,398 (88,927..118,403) | 101.3 µs | 104,294 (86,358..118,441) | 438.9 µs |
+| neton-epoll-4 | 317,992 (284,398..346,632) | 10.6 µs | 335,620 (326,539..355,509) | 10.6 µs |
+| neton-uring-1 | 118,478 (107,200..130,646) | 100.1 µs | 116,054 (91,214..134,073) | 413.4 µs |
+| neton-uring-4 | 205,226 (183,670..227,179) | 46.5 µs | 235,780 (210,807..256,933) | 163.2 µs |
+| geario | 275,566 (222,708..328,560) | 35.6 µs | 298,337 (243,052..320,652) | 149.3 µs |
+| geario-uring-real | 275,696 (220,390..310,025) | 38.2 µs | 309,508 (248,478..340,026) | 140.0 µs |
+
+**Reading.** Four epoll reactors take neton from ~110k to ~318k at 12 connections (2.9×) and to
+~335k at 48, matching or slightly exceeding geario's 4 workers (275–317k) on the same host with the
+same client. The core-count half of the gap is closed. io_uring ×4 (~215k) is *slower* than
+epoll ×4: the naive uring driver's kernel io-wq threads now compete with the four reactors for the
+same four cores, so uring stays lever #3 until it submits in batches with registered buffers.
+The very low p50 for neton-epoll-4 (10–11 µs, below the 27 µs single-connection floor) is measured
+by the same client and is reported as-is, but it is physically odd — likely a client-thread
+scheduling artifact at this concurrency — and is not used as evidence for anything.
