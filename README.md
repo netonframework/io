@@ -12,13 +12,22 @@ I/O foundation for the Neton stack.
 
 See [`SPEC.md`](./SPEC.md) for the full design.
 
-## Modules
+## Artifact
 
-- `neton-io-bytes` — growable byte buffer (moves to native/pinned memory later)
-- `neton-io-codec` — `Decoder`/`Encoder` and `LineCodec`
-- `neton-io-core` — `IoStream` / `Filter` / `Io` / `Framed` / `Service` / `dispatcher` / `Readiness`
-- `neton-io-testkit` — in-memory duplex driver and integration tests
-- `neton-io-net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
+One artifact, `com.netonstream:neton-io`, the way tokio is one crate. Packages keep the layering:
+
+- `neton.io.bytes` — growable byte buffer (moves to native/pinned memory later)
+- `neton.io.codec` — `Decoder`/`Encoder` and `LineCodec`
+- `neton.io.core` — `IoStream` / `Filter` / `Io` / `Framed` / `Service` / `dispatcher` / `Readiness`
+- `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
+
+```kotlin
+dependencies { implementation("com.netonstream:neton-io:0.1.0") }
+```
+
+Targets: macOS, Linux (x64/arm64) and iOS. The artifact is a klib, so a consumer compiles with the
+release's Kotlin version (2.4.0). Windows returns with the IOCP driver; a Windows build with
+buffers and codecs but no reactor would be an I/O library in name only.
 
 ## Design
 
@@ -38,7 +47,6 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 ```bash
 ./gradlew macosArm64Test     # macOS (Apple Silicon), kqueue reactor
 ./gradlew linuxX64Test       # Linux, epoll reactor
-./gradlew mingwX64Test       # Windows (core modules; net lands in P3)
 ```
 
 Run the full Linux suite on a Linux host (needed for the io_uring/epoll/poll drivers), pinning the
@@ -46,9 +54,9 @@ driver:
 
 ```bash
 # on a Linux host with JDK 17 (the macOS box cannot run the Linux reactors)
-NETON_IO_DRIVER=iouring ./gradlew :neton-io-net:linuxX64Test                          # io_uring
-NETON_IO_DRIVER=epoll   ./gradlew :neton-io-net:linuxX64Test                          # epoll
-NETON_IO_DRIVER=iouring NETON_IO_URING_DEPTH=8 ./gradlew :neton-io-net:linuxX64Test   # full-SQ path
+NETON_IO_DRIVER=iouring ./gradlew :neton-io:linuxX64Test                          # io_uring
+NETON_IO_DRIVER=epoll   ./gradlew :neton-io:linuxX64Test                          # epoll
+NETON_IO_DRIVER=iouring NETON_IO_URING_DEPTH=8 ./gradlew :neton-io:linuxX64Test   # full-SQ path
 ```
 
 ## Status
@@ -57,7 +65,7 @@ NETON_IO_DRIVER=iouring NETON_IO_URING_DEPTH=8 ./gradlew :neton-io-net:linuxX64T
 the io_uring completion driver, the threading contract (cross-thread dispatch + wakeup, owner
 checks), reactor timers, and the buffer-lifecycle / close / cancel paths are implemented.
 
-Verified (2026-09-13), reproducible: `neton-io-net` `linuxX64Test` (13 cases) passes with 0
+Verified (2026-09-13), reproducible: `neton-io` `linuxX64Test` (13 cases) passes with 0
 failures on a Rocky Linux 9.8 / kernel 5.14 / x86_64 host under **io_uring, epoll, poll(2), and
 io_uring at SQ depth 8** (Kotlin 2.4.0, Gradle 8.14.2, JDK 17); macOS (kqueue) passes the same
 cases. This is test-case pass, not a guarantee that every error path, scalability, tail latency or

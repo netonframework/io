@@ -1,9 +1,16 @@
 plugins { kotlin("multiplatform") }
 repositories { mavenCentral() }
+
+// One artifact, like tokio is one crate: the byte buffer, the codec contracts, the I/O model and
+// the reactor ship together. The packages (neton.io.bytes / codec / core / net) keep the layering
+// readable; the artifact boundary does not need to.
+//
+// Targets are the ones the reactor runs on. Windows is out until the IOCP driver exists — a
+// Windows klib carrying buffers and codecs but no I/O would be an I/O library in name only.
 kotlin {
     val macos = listOf(macosArm64(), macosX64())
     val linux = listOf(linuxX64(), linuxArm64())
-    // iOS client targets (simulator + device): reuse the appleMain kqueue reactor. No executable
+    // iOS client targets (device + simulator) reuse the appleMain kqueue reactor. No executable
     // entry points and no io_uring (Linux-only); the transport is a library here.
     iosArm64(); iosSimulatorArm64(); iosX64()
 
@@ -23,7 +30,6 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api(project(":neton-io-core"))
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
         commonTest.dependencies { implementation(kotlin("test")) }

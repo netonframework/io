@@ -12,12 +12,9 @@ allprojects {
 // build/staging-repo by `publishAllPublicationsToStagingLocalRepository`, and that directory is
 // zipped and uploaded as one Central Portal bundle. Kotlin/Native artifacts are klibs; a consumer
 // must compile with the same Kotlin version as the publisher.
-val unpublished = setOf("neton-io-testkit")
+val unpublished = setOf<String>()
 val pomDescriptions = mapOf(
-    "neton-io-bytes" to "neton-io - growable byte buffer shared by the Neton I/O stack",
-    "neton-io-codec" to "neton-io - Decoder/Encoder framing contracts and LineCodec",
-    "neton-io-core" to "neton-io - IoStream, Filter, Framed, Service and the dispatcher: the coroutine-native I/O model for Kotlin/Native",
-    "neton-io-net" to "neton-io - the TCP reactor for Kotlin/Native: kqueue (Apple), epoll and poll (Linux), io_uring (Linux); the reactor doubles as the coroutine dispatcher"
+    "neton-io" to "neton-io - coroutine-native async I/O for Kotlin/Native: byte buffers, codec contracts, the IoStream/Filter/Framed model and a TCP reactor (kqueue on Apple, epoll/poll and io_uring on Linux) that doubles as the coroutine dispatcher; the I/O foundation of the Neton stack"
 )
 
 subprojects {
