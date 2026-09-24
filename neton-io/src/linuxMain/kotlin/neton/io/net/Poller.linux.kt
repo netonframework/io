@@ -7,6 +7,7 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import platform.linux.EPOLLET
 import platform.linux.EPOLLIN
 import platform.linux.EPOLLONESHOT
 import platform.linux.EPOLLOUT
@@ -27,9 +28,38 @@ internal class EpollPoller : Poller {
 
     private val epfd: Int = epoll_create1(0)
 
+    /** fds registered with persistent edge-triggered read interest (SPEC §17). */
+    private val edgeFds = HashSet<Int>()
+    /** of those, fds that also have persistent edge-triggered write interest. */
+    private val edgeWriteFds = HashSet<Int>()
+
+    override val persistentRead: Boolean get() = true
+
+    override fun watchRead(fd: Int) {
+        edgeFds.add(fd)
+        ctl(fd, EPOLLIN.toInt() or EPOLLET.toInt())
+    }
+
     override fun armRead(fd: Int) = arm(fd, EPOLLIN.toInt())
 
-    override fun armWrite(fd: Int) = arm(fd, EPOLLOUT.toInt())
+    // On a persistent fd, EPOLL_CTL_MOD replaces the whole interest set, so a one-shot write
+    // arm would drop the read interest. Register write interest edge-triggered and persistent
+    // instead (once); a writable edge with nobody waiting is simply ignored by the reactor.
+    override fun armWrite(fd: Int) {
+        if (fd in edgeFds) {
+            if (edgeWriteFds.add(fd)) ctl(fd, EPOLLIN.toInt() or EPOLLOUT.toInt() or EPOLLET.toInt())
+        } else arm(fd, EPOLLOUT.toInt())
+    }
+
+    private fun ctl(fd: Int, events: Int) = memScoped {
+        val ev = alloc<epoll_event>()
+        ev.events = events.convert()
+        ev.data.fd = fd
+        if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, ev.ptr) != 0 && errno == EEXIST) {
+            epoll_ctl(epfd, EPOLL_CTL_MOD, fd, ev.ptr)
+        }
+        Unit
+    }
 
     // epoll arms immediately (one epoll_ctl per interest), unlike kqueue's batched changelist.
     // We do not track which fds are registered: a closed fd is auto-removed from the epoll set,
@@ -45,7 +75,7 @@ internal class EpollPoller : Poller {
     }
 
     // epoll drops a closed fd from the set by itself; interest is armed immediately, so nothing is pending.
-    override fun forget(fd: Int) {}
+    override fun forget(fd: Int) { edgeFds.remove(fd); edgeWriteFds.remove(fd) }
 
     override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
         val maxEvents = 64

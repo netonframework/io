@@ -10,6 +10,7 @@ import kotlinx.cinterop.ptr
 import platform.darwin.EVFILT_READ
 import platform.darwin.EVFILT_WRITE
 import platform.darwin.EV_ADD
+import platform.darwin.EV_CLEAR
 import platform.darwin.EV_ONESHOT
 import platform.darwin.kevent
 import platform.darwin.kqueue
@@ -26,15 +27,23 @@ internal class KqueuePoller : Poller {
     // Pending one-shot changes, submitted together with the next poll() (kqueue changelist).
     private val changeFds = ArrayList<Int>()
     private val changeFilters = ArrayList<Short>()
+    private val changeFlags = ArrayList<UShort>()
+    private val oneShot: UShort = (EV_ADD or EV_ONESHOT).toUShort()
+    private val edge: UShort = (EV_ADD or EV_CLEAR).toUShort()
+
+    override val persistentRead: Boolean get() = true
+
+    /** Persistent, edge-triggered read interest: registered once, never re-armed. */
+    override fun watchRead(fd: Int) {
+        changeFds.add(fd); changeFilters.add(EVFILT_READ.toShort()); changeFlags.add(edge)
+    }
 
     override fun armRead(fd: Int) {
-        changeFds.add(fd)
-        changeFilters.add(EVFILT_READ.toShort())
+        changeFds.add(fd); changeFilters.add(EVFILT_READ.toShort()); changeFlags.add(oneShot)
     }
 
     override fun armWrite(fd: Int) {
-        changeFds.add(fd)
-        changeFilters.add(EVFILT_WRITE.toShort())
+        changeFds.add(fd); changeFilters.add(EVFILT_WRITE.toShort()); changeFlags.add(oneShot)
     }
 
     // A closed fd is removed from the kqueue automatically; only the unsubmitted changelist can
@@ -42,7 +51,7 @@ internal class KqueuePoller : Poller {
     override fun forget(fd: Int) {
         var i = changeFds.size - 1
         while (i >= 0) {
-            if (changeFds[i] == fd) { changeFds.removeAt(i); changeFilters.removeAt(i) }
+            if (changeFds[i] == fd) { changeFds.removeAt(i); changeFilters.removeAt(i); changeFlags.removeAt(i) }
             i--
         }
     }
@@ -54,13 +63,14 @@ internal class KqueuePoller : Poller {
             val ev = changes!![i]
             ev.ident = changeFds[i].convert()
             ev.filter = changeFilters[i]
-            ev.flags = (EV_ADD or EV_ONESHOT).convert()
+            ev.flags = changeFlags[i]
             ev.fflags = 0u
             ev.data = 0
             ev.udata = null
         }
         changeFds.clear()
         changeFilters.clear()
+        changeFlags.clear()
 
         val maxEvents = 64
         val events = allocArray<kevent>(maxEvents)

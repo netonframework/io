@@ -12,6 +12,15 @@ internal interface Poller {
     fun armRead(fd: Int)
     fun armWrite(fd: Int)
 
+    /**
+     * Persistent edge-triggered read interest (SPEC §17). When true, [watchRead] registers the fd
+     * once (kqueue EV_CLEAR / epoll EPOLLET) and the reactor never re-arms reads; readiness is
+     * reported on every transition and the reactor keeps a ready flag per fd. poll(2) cannot do
+     * this and stays one-shot.
+     */
+    val persistentRead: Boolean get() = false
+    fun watchRead(fd: Int) {}
+
     /** The fd is being closed: drop any pending interest so it neither fires nor lingers. */
     fun forget(fd: Int)
 

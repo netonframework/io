@@ -130,6 +130,9 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
      */
     abstract fun closeStream(fd: Int)
 
+    /** A stream over [fd] now exists on this reactor: register persistent interest if the driver has it (SPEC §17). */
+    open fun registerStream(fd: Int) {}
+
     final override fun dispatch(context: CoroutineContext, block: Runnable) {
         if (isOwnerThread()) {
             tasks.addLast(block)
@@ -316,6 +319,8 @@ internal class ReactorStream(
     private val readChunk: Int = 64 * 1024,
 ) : neton.io.core.IoStream {
     private var closed = false
+
+    init { reactor.registerStream(fd) }
 
     override suspend fun read(dst: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()

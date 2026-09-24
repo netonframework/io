@@ -21,10 +21,20 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private val readWaiters = HashMap<Int, CancellableContinuation<Unit>>()
     private val writeWaiters = HashMap<Int, CancellableContinuation<Unit>>()
 
+    // SPEC §17: fds with persistent edge-triggered read interest, and those with an unconsumed
+    // readable edge (event arrived with nobody parked). A read on such an fd recv()s until EAGAIN,
+    // then clears the flag and parks; it never recv()s speculatively.
+    private val persistent = HashSet<Int>()
+    private val readyRead = HashSet<Int>()
+
+    override fun registerStream(fd: Int) {
+        if (poller.persistentRead) { persistent.add(fd); poller.watchRead(fd) }
+    }
+
     private suspend fun waitReadable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
         readWaiters[fd] = cont
         cont.invokeOnCancellation { postToReactor { readWaiters.remove(fd) } }
-        poller.armRead(fd)
+        if (fd !in persistent) poller.armRead(fd)
     }
 
     private suspend fun waitWritable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
@@ -35,13 +45,14 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
         while (true) {
+            if (fd in persistent && fd !in readyRead) { waitReadable(fd); continue }
             val outcome = readInto(fd, dst, chunk)
             stats?.let { it.reads++; if (outcome.result == IoResult.OK) it.readBytes += outcome.count else if (outcome.result == IoResult.WOULD_BLOCK) it.readsWouldBlock++ }
             when (outcome.result) {
                 IoResult.OK -> return outcome.count
                 IoResult.EOF -> return -1
                 IoResult.ERROR -> { val e = errno; throw IoException("read failed: ${errnoMessage(e)}", e) }
-                IoResult.WOULD_BLOCK -> waitReadable(fd)
+                IoResult.WOULD_BLOCK -> { readyRead.remove(fd); waitReadable(fd) }
             }
         }
     }
@@ -86,7 +97,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             var woke = false
             val n = poller.poll(timeout) { fd, readable, writable ->
                 if (fd == wakeReadFd) { woke = true; return@poll }
-                if (readable) readWaiters.remove(fd)?.resume(Unit)
+                if (readable) { val w = readWaiters.remove(fd); if (w != null) w.resume(Unit) else if (fd in persistent) readyRead.add(fd) }
                 if (writable) writeWaiters.remove(fd)?.resume(Unit)
             }
             if (woke) { onWake(); poller.armRead(wakeReadFd) }
@@ -98,6 +109,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         checkOwner("close")
         readWaiters.remove(fd)?.resumeWithException(ClosedException())
         writeWaiters.remove(fd)?.resumeWithException(ClosedException())
+        persistent.remove(fd); readyRead.remove(fd)
         poller.forget(fd)
         closeFd(fd)
     }
