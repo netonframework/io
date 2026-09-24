@@ -266,6 +266,24 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     companion object {
         const val DEFAULT_TASK_BUDGET = 256
 
+        /**
+         * Run a reactor on the calling thread as a long-lived worker: [ready] receives the reactor
+         * and its root scope once the loop is up (so another thread can dispatch work to it), and
+         * the loop runs until [stop] is completed. Used by [ReactorGroup] for one-reactor-per-core.
+         */
+        fun runServing(stop: kotlinx.coroutines.CompletableDeferred<Unit>, ready: (Reactor, CoroutineScope) -> Unit) {
+            val reactor = createReactor()
+            val scope = CoroutineScope(reactor)
+            val job = scope.launch(start = CoroutineStart.DEFAULT) {
+                ready(reactor, this)
+                stop.await()
+            }
+            reactor.bindOwner()
+            reactor.runUntil(job)
+            reactor.shutdown()
+            reactor.printStats()
+        }
+
         fun run(block: suspend CoroutineScope.() -> Unit) {
             val reactor = createReactor()
             var failure: Throwable? = null

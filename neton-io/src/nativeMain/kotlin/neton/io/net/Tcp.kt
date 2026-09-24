@@ -13,6 +13,9 @@ internal class TcpServer(private val listenFd: Int, private val reactor: Reactor
 
     suspend fun accept(): IoStream = ReactorStream(reactor.accept(listenFd), reactor)
 
+    /** Accept and return the raw client fd without binding it to this reactor (for hand-off). */
+    suspend fun acceptFd(): Int = reactor.accept(listenFd)
+
     /**
      * Close the listener the way a stream is closed: on the reactor thread, waking any coroutine
      * parked in [accept] with [neton.io.core.ClosedException] and dropping the driver's interest
