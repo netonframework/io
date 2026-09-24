@@ -2,7 +2,7 @@ package neton.io.net
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.allocArray
-import kotlinx.cinterop.convert
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.toKString
@@ -11,7 +11,6 @@ import platform.posix.POLLHUP
 import platform.posix.POLLIN
 import platform.posix.POLLOUT
 import platform.posix.getenv
-import platform.posix.poll
 import platform.posix.pollfd
 
 /** Selected driver name from NETON_IO_DRIVER (lowercased), or null. */
@@ -53,7 +52,7 @@ internal class PollPoller : Poller {
                 arr[i].events = ev.toShort()
                 arr[i].revents = 0
             }
-            poll(arr, m.convert(), timeoutMillis)
+            pollFds(arr, m, timeoutMillis)
             var count = 0
             for (i in 0 until m) {
                 val re = arr[i].revents.toInt()
@@ -74,3 +73,11 @@ internal class PollPoller : Poller {
 
     override fun close() {}
 }
+
+/**
+ * poll(2) behind a platform seam. `nfds_t` is 32-bit on Apple and 64-bit on Linux; the shared
+ * native source set is compiled once against the commonized libc, which cannot express a parameter
+ * whose width differs per platform, so the call itself lives in the per-platform source sets.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal expect fun pollFds(fds: CPointer<pollfd>, count: Int, timeoutMillis: Int): Int
