@@ -97,7 +97,12 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             var woke = false
             val n = poller.poll(timeout) { fd, readable, writable ->
                 if (fd == wakeReadFd) { woke = true; return@poll }
-                if (readable) { val w = readWaiters.remove(fd); if (w != null) w.resume(Unit) else if (fd in persistent) readyRead.add(fd) }
+                if (readable) {
+                    // Persistent fds: record the edge *before* resuming, so the resumed read() sees
+                    // the fd as ready instead of parking again (the edge is not repeated).
+                    if (fd in persistent) readyRead.add(fd)
+                    readWaiters.remove(fd)?.resume(Unit)
+                }
                 if (writable) writeWaiters.remove(fd)?.resume(Unit)
             }
             if (woke) { onWake(); poller.armRead(wakeReadFd) }
