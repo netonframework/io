@@ -501,7 +501,7 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 
 **改动**：每个连接每一轮只读一次。就绪 fd 上的读若本轮已成功读过一次，就把自己排到恢复队列末尾再读（不额外 `epoll_wait`、不分配），于是同一轮内所有就绪连接轮流被服务。
 
-**验收**：`echo-client-fair` 在 100 / 1000 连接下 Jain ≥ 0.95（与 geario 同档）；在此前提下再比吞吐。单核钉扎也用公平客户端复核。
+**验收**：`echo-client-fair` 在 100 / 1000 连接下 Jain ≥ 0.95（与 geario 同档）；在此前提下再比吞吐。单核钉扎也用公平客户端复核。**已达成（4340d6c，153）**：epoll ×4 Jain 0.989 / 0.996 / 0.990（12/100/1000 连接），单核 1.000。公平前提下 epoll 为 geario 的 0.87 / 0.96 / 0.96（×4）与 0.95（单核）；io_uring 0.76 / 0.91 / 0.88 与 0.88。
 
 ### 19.6 TCP_NODELAY（2026-09-26）
 
@@ -509,4 +509,4 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 
 **改动**：accept 与 connect 得到的 TCP 流默认设置 `TCP_NODELAY`（与 geario、Go 标准库一致）。
 
-**验收**：io_uring multishot 64 KB 单连接恢复到与 epoll 同档；全部测试。
+**验收**：io_uring multishot 64 KB 单连接恢复到与 epoll 同档；全部测试。**已达成**：25 → 11,172 qps（p50 86 µs）。
