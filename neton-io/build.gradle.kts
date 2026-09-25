@@ -21,6 +21,10 @@ kotlin {
             executable("echoServerStw") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "stwms") }
             // Same server, no GC at all: bench-only upper bound for "what if allocation were free".
             executable("echoServerNoGc") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "noop") }
+            // SPEC §19.2 single-variable variants of the same server (bench only).
+            executable("echoServerPmcs") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "pmcs") }
+            executable("echoServerMarkSt") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gcMarkSingleThreaded", "true") }
+            executable("echoServerInline40") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("preCodegenInlineThreshold", "40") }
             executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
         }
     }
@@ -30,6 +34,14 @@ kotlin {
         target.compilations.getByName("main").cinterops.create("uring") {
             defFile(project.file("src/nativeInterop/cinterop/uring.def"))
         }
+    }
+
+    // SPEC §19.2: -Pneton.klibInliner=full turns on experimental cross-module IR inlining for every
+    // compilation (A/B only; the default build does not set it).
+    if (project.findProperty("neton.klibInliner") == "full") {
+        targets.configureEach { compilations.configureEach { compileTaskProvider.configure {
+            compilerOptions.freeCompilerArgs.add("-Xklib-ir-inliner=full")
+        } } }
     }
 
     sourceSets {
