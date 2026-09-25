@@ -24,10 +24,12 @@ import platform.posix.AI_PASSIVE
 import platform.posix.EAI_NONAME
 import platform.posix.EINPROGRESS
 import platform.posix.IPPROTO_IPV6
+import platform.posix.IPPROTO_TCP
 import platform.posix.IPV6_V6ONLY
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_REUSEADDR
+import platform.posix.TCP_NODELAY
 import platform.posix.addrinfo
 import platform.posix.bind
 import platform.posix.connect
@@ -141,6 +143,7 @@ internal fun tcpConnectAddr(addr: SockAddr, display: String): Int {
     check(fd >= 0) { "socket() failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
     setNonBlocking(fd)
     suppressSigpipe(fd)
+    setNoDelay(fd)
     val rc = addr.bytes.usePinned { connect(fd, it.addressOf(0).reinterpret<sockaddr>(), addr.bytes.size.convert()) }
     if (rc != 0 && errno != EINPROGRESS) {
         val err = errno
@@ -148,6 +151,17 @@ internal fun tcpConnectAddr(addr: SockAddr, display: String): Int {
         throw ConnectException("connect to $display failed: ${errnoMessage(err)} (errno $err)")
     }
     return fd
+}
+
+/**
+ * Disable Nagle on a TCP stream (SPEC §19.6). A response written in several pieces otherwise has
+ * each piece's partial tail held until the peer ACKs, and a peer delaying its ACK stalls the
+ * exchange for ~40 ms. geario sets it on every stream too.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal fun setNoDelay(fd: Int): Unit = memScoped {
+    val one = alloc<IntVar>(); one.value = 1
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, one.ptr, sizeOf<IntVar>().convert())
 }
 
 /** `host:port`, with IPv6 literals bracketed. */

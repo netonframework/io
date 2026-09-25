@@ -454,7 +454,7 @@ internal class UringReactor : Reactor() {
 
     override suspend fun accept(listenFd: Int): Int {
         val res = submit(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0, null)
-        setNonBlocking(res); suppressSigpipe(res)
+        setNonBlocking(res); suppressSigpipe(res); setNoDelay(res)
         return res
     }
 

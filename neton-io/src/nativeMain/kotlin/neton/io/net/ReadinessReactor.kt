@@ -161,6 +161,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             if (clientFd >= 0) {
                 setNonBlocking(clientFd)
                 suppressSigpipe(clientFd)
+                setNoDelay(clientFd)
                 return clientFd
             }
             waitReadable(listenFd)
