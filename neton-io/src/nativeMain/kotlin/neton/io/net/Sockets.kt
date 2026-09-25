@@ -36,12 +36,6 @@ import platform.posix.socklen_tVar
 import platform.posix.strerror
 
 /** Outcome of a non-blocking socket op. */
-/** Open a listening TCP socket bound to [host]:[port] (platform-specific address setup). */
-internal expect fun tcpListen(host: String, port: Int, backlog: Int = 1024): Int
-
-/** Open a TCP socket connecting to [host]:[port] (non-blocking connect completes via the reactor). */
-internal expect fun tcpConnect(host: String, port: Int): Int
-
 @OptIn(ExperimentalForeignApi::class)
 internal fun setNonBlocking(fd: Int) {
     val flags = fcntl(fd, F_GETFL, 0)

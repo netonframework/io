@@ -33,20 +33,40 @@ internal class TcpServer(private val listenFd: Int, private val reactor: Reactor
     }
 }
 
-/** Bind and listen on [host]:[port]. Must run inside a reactor. */
-internal suspend fun listenTcpServer(host: String, port: Int): TcpServer =
-    TcpServer(tcpListen(host, port), currentReactor())
+/**
+ * Bind and listen on [host]:[port] (IPv4 or IPv6 literal, or a name; SPEC §18.2). Binds the first
+ * address that works. Must run inside a reactor.
+ */
+internal suspend fun listenTcpServer(host: String, port: Int): TcpServer {
+    val display = hostPort(host, port)
+    val addrs = try { resolve(host, port, passive = true) } catch (e: ResolveException) { error("bind($display) failed: ${e.message}") }
+    var last: Throwable? = null
+    for (a in addrs) {
+        try { return TcpServer(tcpListenAddr(a, display), currentReactor()) } catch (e: IllegalStateException) { last = e }
+    }
+    throw last!!
+}
 
-/** Connect to [host]:[port], completing the non-blocking connect through the reactor. */
+/**
+ * Connect to [host]:[port], completing the non-blocking connect through the reactor. Every
+ * resolved address is tried in order (e.g. `localhost` → `::1`, then `127.0.0.1`); the last
+ * failure is reported if none connects (SPEC §18.2).
+ */
 internal suspend fun connectStream(host: String, port: Int): IoStream {
     val reactor = currentReactor()
-    val fd = tcpConnect(host, port)
-    reactor.awaitConnect(fd)
-    // A failed non-blocking connect also reports "writable"; the outcome is in SO_ERROR.
-    val err = socketError(fd)
-    if (err != 0) {
-        closeFd(fd)
-        throw ConnectException("connect to $host:$port failed: ${errnoMessage(err)} (errno $err)")
+    val display = hostPort(host, port)
+    val addrs = try { resolve(host, port, passive = false) } catch (e: ResolveException) {
+        throw ConnectException("connect to $display failed: ${e.message}")
     }
-    return ReactorStream(fd, reactor)
+    var last: ConnectException? = null
+    for (a in addrs) {
+        val fd = try { tcpConnectAddr(a, display) } catch (e: ConnectException) { last = e; continue }
+        reactor.awaitConnect(fd)
+        // A failed non-blocking connect also reports "writable"; the outcome is in SO_ERROR.
+        val err = socketError(fd)
+        if (err == 0) return ReactorStream(fd, reactor)
+        closeFd(fd)
+        last = ConnectException("connect to $display failed: ${errnoMessage(err)} (errno $err)")
+    }
+    throw last ?: ConnectException("connect to $display failed: no addresses")
 }
