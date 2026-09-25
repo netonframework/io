@@ -98,14 +98,68 @@ internal class UringReactor : Reactor() {
     private val cqMaskOff: UInt
     private val cqesOff: UInt
 
-    private var nextUserData: ULong = 1uL
-
     override val driverName: String get() = "iouring"
 
-    /** One submitted op: its pinned buffer (if any) and the continuation awaiting it (null once cancelled). */
-    private class InFlight(val fd: Int, val pinned: Pinned<ByteArray>?, var cont: CancellableContinuation<Int>?)
+    // ---- in-flight ops: a slot table instead of a HashMap<ULong, …> (SPEC §17c: no boxed keys, no
+    // per-op objects). user_data = slot index << 32 | generation; the generation makes a stale CQE
+    // for a reused slot harmless. Control ops (wake poll, timeout, cancel) use CONTROL_BASE + n.
+    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: CancellableContinuation<Int>? = null }
+    private var slots = arrayOfNulls<Slot>(256)
+    private var freeSlots = IntArray(256) { it }
+    private var freeTop = 256           // freeSlots[0 until freeTop] are free
+    private var liveOps = 0
+    private var nextControl = 0uL
 
-    private val inFlight = HashMap<ULong, InFlight>()
+    private fun controlUd(): ULong = CONTROL_BASE or (nextControl++ and 0xFFFF_FFFFuL)
+
+    /** Reserve a slot; returns its index (the [Slot] itself is `slots[index]`). */
+    private fun takeSlot(): Int {
+        if (freeTop == 0) {
+            val n = slots.size
+            slots = slots.copyOf(n * 2)
+            freeSlots = IntArray(n * 2)
+            for (i in 0 until n) freeSlots[i] = n + i
+            freeTop = n
+        }
+        val idx = freeSlots[--freeTop]
+        val slot = slots[idx] ?: Slot().also { slots[idx] = it }
+        slot.live = true; slot.gen++
+        liveOps++
+        return idx
+    }
+
+    private fun releaseSlot(idx: Int, slot: Slot) {
+        slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1
+        freeSlots[freeTop++] = idx
+        liveOps--
+    }
+
+    // ---- pins: one per fd for the buffer last used on it, ref-counted by the ops that own it. The
+    // kernel may touch a buffer until the op's CQE, so a pin is released only when no op holds it
+    // *and* it has been retired (buffer replaced, or fd closed).
+    private class PinRef(val array: ByteArray, val pinned: Pinned<ByteArray>) { var refs = 0; var retired = false
+        fun release() { if (retired && refs == 0) pinned.unpin() } }
+    private var pinRefs = arrayOfNulls<PinRef>(64)
+
+    private fun ensureFd(fd: Int) {
+        if (fd < pinRefs.size) return
+        var n = pinRefs.size
+        while (n <= fd) n *= 2
+        pinRefs = pinRefs.copyOf(n)
+    }
+
+    private fun pinFor(fd: Int, array: ByteArray): PinRef {
+        ensureFd(fd)
+        val cur = pinRefs[fd]
+        if (cur != null && cur.array === array) return cur
+        if (cur != null) { cur.retired = true; cur.release() }
+        return PinRef(array, array.pin()).also { pinRefs[fd] = it }
+    }
+
+    private fun retirePin(fd: Int) {
+        if (fd >= pinRefs.size) return
+        pinRefs[fd]?.let { it.retired = true; it.release(); pinRefs[fd] = null }
+    }
 
     init {
         val depth = getenv("NETON_IO_URING_DEPTH")?.toKString()?.toUIntOrNull() ?: DEFAULT_DEPTH
@@ -139,7 +193,7 @@ internal class UringReactor : Reactor() {
 
     private fun pending(): UInt = neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff)
 
-    private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int): ULong {
+    private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, ud: ULong): ULong {
         // Make room if the SQ is full: submit pending SQEs so the kernel consumes them (advancing
         // sq_head). Loop because a submit may be partial; reap if the CQ is full and blocks submits.
         while (pending() >= sqEntries) {
@@ -157,7 +211,6 @@ internal class UringReactor : Reactor() {
         sqe.addr = addr.toULong()
         sqe.len = len.toUInt()
         sqe.op_flags = opFlags.toUInt()
-        val ud = nextUserData++
         sqe.user_data = ud
         neton_array_at(sqBase, sqArrayOff, index)!!.pointed.value = index
         neton_store32(sqBase, sqTailOff, tail + 1u)
@@ -168,19 +221,23 @@ internal class UringReactor : Reactor() {
      * Submit [opcode] and suspend until its CQE. [pinned] (if any) is owned by the op from here on
      * and is released only by [reap] when the CQE arrives — also after cancellation.
      */
-    private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pinned: Pinned<ByteArray>?): Int {
-        val ud = prepSqe(opcode, fd, addr, len, opFlags)
+    private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pin: PinRef?): Int {
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.pin = pin
+        if (pin != null) pin.refs++
+        val gen = slot.gen
+        val ud = (idx.toULong() shl 32) or gen.toULong()
+        prepSqe(opcode, fd, addr, len, opFlags, ud)
         return suspendCancellableCoroutine { cont ->
-            val entry = InFlight(fd, pinned, cont)
-            inFlight[ud] = entry
+            slot.cont = cont
             cont.invokeOnCancellation {
-                // May run on any thread, and both `inFlight` and the SQ ring are reactor-thread
+                // May run on any thread, and both the slot table and the SQ ring are reactor-thread
                 // state, so hop back before touching them (P1-3).
                 postToReactor {
-                    // Drop the waiter but keep the entry (and its pin): the kernel still owns the
+                    // Drop the waiter but keep the slot (and its pin): the kernel still owns the
                     // buffer until this op's CQE. Ask the kernel to cancel; the CQE says when it is over.
-                    entry.cont = null
-                    if (inFlight[ud] === entry) requestCancel(ud)
+                    if (slot.live && slot.gen == gen) { slot.cont = null; requestCancel(ud) }
                 }
             }
         }
@@ -188,13 +245,13 @@ internal class UringReactor : Reactor() {
 
     /** Fire-and-forget IORING_OP_ASYNC_CANCEL targeting [target]; its own CQE carries no waiter. */
     private fun requestCancel(target: ULong) {
-        prepSqe(NETON_IORING_OP_ASYNC_CANCEL, -1, target.toLong(), 0, 0)
+        prepSqe(NETON_IORING_OP_ASYNC_CANCEL, -1, target.toLong(), 0, 0, controlUd())
     }
 
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
-        val cap = dst.reserve(chunk)
-        val pinned = dst.backingArray().pin()
-        val res = submit(NETON_IORING_OP_READ, fd, pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pinned)
+        val cap = dst.reserve(chunk)                 // may replace the backing array: pin after
+        val pin = pinFor(fd, dst.backingArray())
+        val res = submit(NETON_IORING_OP_READ, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pin)
         stats?.let { it.reads++; if (res > 0) it.readBytes += res }
         return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF (errors throw)
     }
@@ -203,8 +260,8 @@ internal class UringReactor : Reactor() {
         var total = 0
         while (src.readableBytes > 0) {
             val len = src.readableBytes
-            val pinned = src.backingArray().pin()
-            val res = submit(NETON_IORING_OP_SEND, fd, pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pinned)
+            val pin = pinFor(fd, src.backingArray())
+            val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
             src.consume(res); total += res
         }
@@ -220,13 +277,15 @@ internal class UringReactor : Reactor() {
     override fun closeStream(fd: Int) {
         checkOwner("close")
         // Fail the awaiters now; the ops stay in flight (buffers pinned) until their CQEs arrive.
-        for ((ud, entry) in inFlight) {
-            if (entry.fd != fd || entry.cont == null) continue
-            val cont = entry.cont!!
-            entry.cont = null
+        for (i in slots.indices) {
+            val slot = slots[i] ?: continue
+            if (!slot.live || slot.fd != fd) continue
+            val cont = slot.cont ?: continue
+            slot.cont = null
             cont.resumeWithException(ClosedException())
-            requestCancel(ud)
+            requestCancel((i.toULong() shl 32) or slot.gen.toULong())
         }
+        retirePin(fd)
         closeFd(fd)
     }
 
@@ -236,7 +295,7 @@ internal class UringReactor : Reactor() {
 
     private var wakeUd: ULong = 0uL
 
-    private fun armWake() { wakeUd = prepSqe(NETON_IORING_OP_POLL_ADD, wakeReadFd, 0L, 0, NETON_POLLIN) }
+    private fun armWake() { wakeUd = prepSqe(NETON_IORING_OP_POLL_ADD, wakeReadFd, 0L, 0, NETON_POLLIN, controlUd()) }
 
     // One IORING_OP_TIMEOUT at a time bounds the wait to the nearest timer. The timespec must
     // stay valid until the op completes, so it lives on the native heap for the reactor's life.
@@ -247,7 +306,7 @@ internal class UringReactor : Reactor() {
     private fun armTimeout(ms: Int) {
         timeoutSpec.tv_sec = (ms / 1000).toLong()
         timeoutSpec.tv_nsec = ((ms % 1000) * 1_000_000).toLong()
-        timeoutUd = prepSqe(NETON_IORING_OP_TIMEOUT, -1, timeoutSpec.ptr.toLong(), 1, 0)
+        timeoutUd = prepSqe(NETON_IORING_OP_TIMEOUT, -1, timeoutSpec.ptr.toLong(), 1, 0, controlUd())
     }
 
     override fun runUntil(root: Job) {
@@ -284,11 +343,18 @@ internal class UringReactor : Reactor() {
             val ud = cqe.user_data
             val res = cqe.res
             head += 1u
-            if (ud == wakeUd) { onWake(); armWake(); continue }
-            if (ud == timeoutUd) { timeoutUd = 0uL; timeoutDeadlineMs = Long.MAX_VALUE; continue }
-            val entry = inFlight.remove(ud) ?: continue // a cancel op's own CQE, or unknown
-            entry.pinned?.unpin()                          // the kernel is done with the buffer
-            val cont = entry.cont ?: continue              // null if the awaiter was cancelled/closed
+            if (ud >= CONTROL_BASE) {
+                if (ud == wakeUd) { onWake(); armWake() }
+                else if (ud == timeoutUd) { timeoutUd = 0uL; timeoutDeadlineMs = Long.MAX_VALUE }
+                continue                                   // else: a cancel op's own CQE
+            }
+            val idx = (ud shr 32).toInt()
+            val slot = slots.getOrNull(idx) ?: continue
+            if (!slot.live || slot.gen != ud.toUInt()) continue   // stale generation: unknown op
+            slot.pin?.let { it.refs--; it.release() }      // the kernel is done with the buffer
+            val cont = slot.cont                           // null if the awaiter was cancelled/closed
+            releaseSlot(idx, slot)
+            if (cont == null) continue
             if (res < 0) cont.resumeWithException(IoException("io_uring op failed: ${errnoMessage(-res)}", -res))
             else cont.resume(res)
         }
@@ -303,17 +369,20 @@ internal class UringReactor : Reactor() {
      * remaining buffers stay pinned (a leak, reported), never a use-after-free.
      */
     override fun shutdown() {
-        if (inFlight.isNotEmpty()) {
-            for ((ud, entry) in inFlight) { entry.cont = null; requestCancel(ud) }
+        if (liveOps > 0) {
+            for (i in slots.indices) {
+                val slot = slots[i] ?: continue
+                if (slot.live) { slot.cont = null; requestCancel((i.toULong() shl 32) or slot.gen.toULong()) }
+            }
             var rounds = 0
-            while (inFlight.isNotEmpty() && rounds < DRAIN_ROUNDS) {
+            while (liveOps > 0 && rounds < DRAIN_ROUNDS) {
                 neton_uring_enter(ringFd, pending(), 1u, NETON_IORING_ENTER_GETEVENTS.toUInt())
                 reap()
                 rounds++
             }
-            if (inFlight.isNotEmpty()) {
-                fprintf(stderr, "neton-io: %d io_uring op(s) did not complete after cancel; buffers left pinned\n", inFlight.size)
-                inFlight.clear() // entries dropped, pins intentionally kept
+            if (liveOps > 0) {
+                fprintf(stderr, "neton-io: %d io_uring op(s) did not complete after cancel; buffers left pinned\n", liveOps)
+                // slots dropped, pins intentionally kept
             }
         }
         close(ringFd)
@@ -331,5 +400,7 @@ internal class UringReactor : Reactor() {
         const val SIZEOF_SQE: UInt = 64u
         const val SIZEOF_CQE: UInt = 16u
         const val DRAIN_ROUNDS = 1000
+        /** user_data at or above this belongs to a control op (wake poll / timeout / cancel), not a slot. */
+        const val CONTROL_BASE: ULong = 0xFFFF_FFFF_0000_0000uL
     }
 }
