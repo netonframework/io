@@ -1,0 +1,22 @@
+# host=service load=0.90 md5 a5df465afd5313f3349a2ac9a9506163  echoServer-v19rc.kexe b52e008c758620831fc88b89a25bca98  echoServer-v19mem.kexe 
+rc 1000 128 qps=350690 p99=21.8 cmin=1 jain=0.255 rss_load_kb=147760
+mem 1000 128 qps=336251 p99=23.7 cmin=3 jain=0.263 rss_load_kb=16196
+rc 1000 4096 qps=332022 p99=22.3 cmin=2 jain=0.214 rss_load_kb=147656
+mem 1000 4096 qps=318802 p99=24.1 cmin=2 jain=0.321 rss_load_kb=22064
+rc 12 65536 qps=98414 p99=61.2 cmin=128 jain=0.534 rss_load_kb=15400
+mem 12 65536 qps=96652 p99=168.9 cmin=13714 jain=0.744 rss_load_kb=16572
+rc 1000 128 qps=349982 p99=21.6 cmin=1 jain=0.188 rss_load_kb=137796
+mem 1000 128 qps=325355 p99=26.9 cmin=2 jain=0.298 rss_load_kb=16316
+rc 1000 4096 qps=320495 p99=23.8 cmin=1 jain=0.227 rss_load_kb=124460
+mem 1000 4096 qps=310530 p99=25.9 cmin=2 jain=0.275 rss_load_kb=23600
+rc 12 65536 qps=90380 p99=336.8 cmin=142 jain=0.451 rss_load_kb=15412
+mem 12 65536 qps=94274 p99=121.3 cmin=11338 jain=0.734 rss_load_kb=16532
+rc 1000 128 qps=344635 p99=22.4 cmin=1 jain=0.186 rss_load_kb=103220
+mem 1000 128 qps=326190 p99=32.0 cmin=2 jain=0.174 rss_load_kb=16432
+rc 1000 4096 qps=318976 p99=24.2 cmin=1 jain=0.230 rss_load_kb=147908
+mem 1000 4096 qps=315293 p99=28.7 cmin=3 jain=0.267 rss_load_kb=23920
+rc 12 65536 qps=95183 p99=152.8 cmin=9673 jain=0.669 rss_load_kb=15380
+mem 12 65536 qps=97615 p99=127.2 cmin=3591 jain=0.721 rss_load_kb=16632
+# done
+
+[exited with code 0]
