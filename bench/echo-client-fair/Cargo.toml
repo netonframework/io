@@ -1,0 +1,12 @@
+[package]
+name = "echo-client-fair"
+version = "0.1.0"
+edition = "2024"
+# Derived from geario's bench-echo/client (Apache-2.0 OR MIT): same load and latency method,
+# plus per-connection completion counts, so a server that starves some connections cannot hide it
+# behind a good p99 (the p99 only samples requests that complete).
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
