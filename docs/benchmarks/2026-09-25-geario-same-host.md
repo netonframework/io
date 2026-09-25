@@ -204,3 +204,19 @@ syscall-side: GC configuration (fixed larger target heap; stop-the-world GC with
 thread), then an allocation-free hot path. Only after that is the uring driver's own setup
 (`COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN`, multishot recv, provided buffers) worth a round —
 the kernel supports them (features 0x1ffff, last_op 57, `IORING_RECV_MULTISHOT` in the UAPI).
+
+## Round 7 (SPEC §17c step 1: GC configuration) — pinned core 1, 1 reactor, 12 conns, medians of 8
+
+`et` = default GC (concurrent, autotuned); `gc64` = `NETON_IO_GC_TARGET_MB=64` (autotune off);
+`stw` = same code built with `-Xbinary=gc=stwms`. Raw: `2026-09-25-153-round7-raw.txt`. The host
+was noisier than in rounds 5–6 (geario 120k here vs 127–132k), so compare within the round only.
+
+| driver | et | gc64 | stw | geario |
+|---|---|---|---|---|
+| epoll | 97,594 (85.8k..118.4k) | **106,732** (94.7k..120.6k) | 102,185 (91.5k..115.7k) | 120,062 (96.5k..127.0k) |
+| io_uring | 93,518 (84.9k..105.3k) | 97,532 (85.4k..103.0k) | 90,997 (79.0k..97.0k) | — |
+
+**Reading.** A fixed larger target heap is worth up to +9% (fewer collections); stop-the-world GC
+gains nothing (the work moves into the mutator). GC *settings* do not close the gap; the GC has
+to be given less to do. Next: bound the prize with `-Xbinary=gc=noop` (no collection at all —
+fine for an 8 s run) before spending effort on an allocation-free hot path.

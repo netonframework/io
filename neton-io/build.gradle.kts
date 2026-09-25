@@ -19,6 +19,8 @@ kotlin {
             executable("echoServer") { entryPoint = "neton.io.net.echoServerMain" }
             // Same server, stop-the-world mark&sweep (no GC thread): bench variable for SPEC §17c.
             executable("echoServerStw") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "stwms") }
+            // Same server, no GC at all: bench-only upper bound for "what if allocation were free".
+            executable("echoServerNoGc") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "noop") }
             executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
         }
     }
