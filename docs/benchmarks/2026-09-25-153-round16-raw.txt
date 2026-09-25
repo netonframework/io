@@ -1,0 +1,34 @@
+# host=service load=1.94 rounds=10 secs=8 payload=128 pinned=core1
+# warmup
+# mode conns=12  (server conns qps p50_us)
+uring-sqe 12 92074 114.0
+uring-inline 12 88299 126.7
+geario-p1 12 109040 101.6
+uring-sqe 12 103603 98.6
+uring-inline 12 95575 115.8
+geario-p1 12 108710 101.1
+uring-sqe 12 100991 101.0
+uring-inline 12 94667 117.1
+geario-p1 12 123827 87.4
+uring-sqe 12 111397 89.6
+uring-inline 12 125809 85.5
+geario-p1 12 150718 72.9
+uring-sqe 12 124888 78.6
+uring-inline 12 109833 99.5
+geario-p1 12 128549 84.8
+uring-sqe 12 113183 87.9
+uring-inline 12 108667 100.2
+geario-p1 12 129324 84.8
+uring-sqe 12 114846 87.5
+uring-inline 12 98355 112.8
+geario-p1 12 108288 101.5
+uring-sqe 12 97872 104.4
+uring-inline 12 94019 117.4
+geario-p1 12 122097 88.4
+uring-sqe 12 111173 89.9
+uring-inline 12 106787 102.1
+geario-p1 12 118612 91.5
+uring-sqe 12 98429 104.2
+uring-inline 12 91109 122.5
+geario-p1 12 93702 118.7
+# done

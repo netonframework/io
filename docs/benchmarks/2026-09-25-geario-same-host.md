@@ -416,3 +416,16 @@ Raw: `2026-09-25-153-round15-raw.txt`. Same af7 binary; the knob is what a deplo
 against geario in round 14 an hour earlier — the paired ratio drifts by ~±5% between rounds on this
 host, so parity-in-one-round is "within noise of parity", not a lead. A longer final round with the
 chosen configuration follows round 16.
+
+## Round 16 (SPEC §17c step 8: inline `send(2)` before the SEND SQE) — rejected
+
+Raw: `2026-09-25-153-round16-raw.txt`. Same af8 binary, A/B by `NETON_IO_URING_INLINE_SEND=1`, pinned, 10 rounds.
+
+| server | median | paired |
+|---|---|---|
+| uring, SEND SQE (default) | 107,388 | vs geario 0.906 (2/10) |
+| uring, inline send(2) first | 96,965 | **vs SQE 0.948 (1/10)**; vs geario 0.847 |
+
+**Reading.** The syscall costs more than the park it removes; under `DEFER_TASKRUN` the SEND SQE is
+executed inside the `io_uring_enter` the loop makes anyway. Reverted (the doc keeps the result).
+io_uring suite with the variant: 22/22.
