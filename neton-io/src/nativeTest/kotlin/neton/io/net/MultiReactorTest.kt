@@ -18,7 +18,7 @@ class MultiReactorTest {
 
     @Test
     fun connectionsAreServedAcrossReactorsAndEchoCorrectly() {
-        val port = 39830
+        val port = 21830
         val stop = CompletableDeferred<Unit>()
         val threadsSeen = kotlin.concurrent.AtomicReference<Set<ULong>>(emptySet())
         // Server on its own thread (serveTcp blocks): 2 reactors, line echo, records handler thread.
@@ -58,7 +58,7 @@ class MultiReactorTest {
     @Test
     fun listenGroupServesInsideARunningReactorAndReturnsOnClose() = runReactor {
         val threads = kotlin.concurrent.AtomicReference<Set<ULong>>(emptySet())
-        val group = listenGroup("127.0.0.1", 39832, reactors = 2)
+        val group = listenGroup("127.0.0.1", 21832, reactors = 2)
         assertEquals(2, group.reactors)
         val serveJob = launch {
             group.serve { conn ->
@@ -71,7 +71,7 @@ class MultiReactorTest {
             }
         }
         val clients = (1..8).map { i -> launch {
-            val c = connect("127.0.0.1", 39832)
+            val c = connect("127.0.0.1", 21832)
             val f = Framed(Io(c), LineCodec, LineCodec)
             f.send("line-$i")
             assertEquals("line-$i", f.incoming().first())
@@ -89,9 +89,9 @@ class MultiReactorTest {
     fun listenGroupWithOneReactorStaysOnTheCallersThread() = runReactor {
         val me = currentThreadId()
         var handlerThread = 0uL
-        val group = listenGroup("127.0.0.1", 39833, reactors = 1)
+        val group = listenGroup("127.0.0.1", 21833, reactors = 1)
         val serveJob = launch { group.serve { conn -> handlerThread = currentThreadId(); conn.close() } }
-        val c = connect("127.0.0.1", 39833)
+        val c = connect("127.0.0.1", 21833)
         assertEquals(-1, c.read(neton.io.bytes.Buffer(8)))   // server closed it
         c.close()
         group.close()

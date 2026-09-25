@@ -30,10 +30,10 @@ class ParkCancellationTest {
 
     @Test
     fun parkedReadWakesOnCancelFromTheReactorThread() = runReactor {
-        val server = listen("127.0.0.1", 39860)
+        val server = listen("127.0.0.1", 21860)
         val accepted = CompletableDeferred<neton.io.core.IoStream>()
         launch { accepted.complete(server.accept()) }
-        val client = connect("127.0.0.1", 39860)
+        val client = connect("127.0.0.1", 21860)
         val conn = accepted.await()
         var outcome: Throwable? = null
         val reader = launch { try { conn.read(Buffer(16)) } catch (t: Throwable) { outcome = t; throw t } }
@@ -45,10 +45,10 @@ class ParkCancellationTest {
 
     @Test
     fun parkedReadWakesOnCancelFromAnotherThread() = runReactor {
-        val server = listen("127.0.0.1", 39861)
+        val server = listen("127.0.0.1", 21861)
         val accepted = CompletableDeferred<neton.io.core.IoStream>()
         launch { accepted.complete(server.accept()) }
-        val client = connect("127.0.0.1", 39861)
+        val client = connect("127.0.0.1", 21861)
         val conn = accepted.await()
         var outcome: Throwable? = null
         val reader = launch { try { conn.read(Buffer(16)) } catch (t: Throwable) { outcome = t; throw t } }
@@ -63,10 +63,10 @@ class ParkCancellationTest {
 
     @Test
     fun alreadyCancelledCoroutineDoesNotPark() = runReactor {
-        val server = listen("127.0.0.1", 39862)
+        val server = listen("127.0.0.1", 21862)
         val accepted = CompletableDeferred<neton.io.core.IoStream>()
         launch { accepted.complete(server.accept()) }
-        val client = connect("127.0.0.1", 39862)
+        val client = connect("127.0.0.1", 21862)
         val conn = accepted.await()
         var outcome: Throwable? = null
         val job = launch(start = CoroutineStart.UNDISPATCHED) {
@@ -81,10 +81,10 @@ class ParkCancellationTest {
     /** One coroutine, one stream, many parks: the reused cancellation handle must not get in the way. */
     @Test
     fun manyParksBySameCoroutineThenCancel() = runReactor {
-        val server = listen("127.0.0.1", 39863)
+        val server = listen("127.0.0.1", 21863)
         val accepted = CompletableDeferred<neton.io.core.IoStream>()
         launch { accepted.complete(server.accept()) }
-        val client = connect("127.0.0.1", 39863)
+        val client = connect("127.0.0.1", 21863)
         val conn = accepted.await()
         var echoed = 0
         val echo = launch {

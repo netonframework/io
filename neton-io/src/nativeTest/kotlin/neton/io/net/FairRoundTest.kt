@@ -24,10 +24,10 @@ class FairRoundTest {
     /** A reader deferred to the next round still gets the data that arrives. */
     @Test
     fun secondReadInTheSameRoundIsServedNextRound() = runReactor {
-        val server = listen("127.0.0.1", 39870)
+        val server = listen("127.0.0.1", 21870)
         val accepted = CompletableDeferred<IoStream>()
         launch { accepted.complete(server.accept()) }
-        val client = connect("127.0.0.1", 39870)
+        val client = connect("127.0.0.1", 21870)
         val conn = accepted.await()
         send(client, "a")
         val first = Buffer(); conn.read(first)                    // served this round
@@ -45,10 +45,10 @@ class FairRoundTest {
      */
     @Test
     fun closeFailsADeferredReader() = runReactor {
-        val server = listen("127.0.0.1", 39871)
+        val server = listen("127.0.0.1", 21871)
         val accepted = CompletableDeferred<IoStream>()
         launch { accepted.complete(server.accept()) }
-        val client = connect("127.0.0.1", 39871)
+        val client = connect("127.0.0.1", 21871)
         val conn = accepted.await()
         send(client, "a")
         conn.read(Buffer())                                        // served this round

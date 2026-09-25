@@ -34,26 +34,26 @@ class AddressTest {
     /** `localhost` may resolve to ::1 first; the IPv4-only listener must still be reached. */
     @Test
     fun connectByNameTriesEveryAddress() = runReactor {
-        val server = listen("127.0.0.1", 39850)
+        val server = listen("127.0.0.1", 21850)
         val srv = launch { echoOnce(server) }
-        assertEquals("by-name", roundTrip("localhost", 39850, "by-name"))
+        assertEquals("by-name", roundTrip("localhost", 21850, "by-name"))
         srv.join(); server.close()
     }
 
     @Test
     fun ipv6LoopbackEcho() = runReactor {
-        val server = listen("::1", 39851)
+        val server = listen("::1", 21851)
         val srv = launch { echoOnce(server) }
-        assertEquals("v6", roundTrip("::1", 39851, "v6"))
+        assertEquals("v6", roundTrip("::1", 21851, "v6"))
         srv.join(); server.close()
     }
 
     /** `::` listens dual-stack: an IPv4 client reaches it as a mapped address. */
     @Test
     fun dualStackListenerAcceptsIpv4() = runReactor {
-        val server = listen("::", 39852)
+        val server = listen("::", 21852)
         val srv = launch { echoOnce(server) }
-        assertEquals("v4-on-v6", roundTrip("127.0.0.1", 39852, "v4-on-v6"))
+        assertEquals("v4-on-v6", roundTrip("127.0.0.1", 21852, "v4-on-v6"))
         srv.join(); server.close()
     }
 
@@ -69,7 +69,7 @@ class AddressTest {
     fun unresolvableNameIsAConnectException() = runReactor {
         val host = "no-such-host.invalid"
         val faked = try {
-            resolve(host, 39853, passive = false).any { a ->
+            resolve(host, 21853, passive = false).any { a ->
                 // sockaddr_in keeps the IPv4 address at byte offset 4 on Linux and Apple alike.
                 !a.isIpv6 && a.bytes.size >= 8 && (a.bytes[4].toInt() and 0xFF) == 198 && ((a.bytes[5].toInt() and 0xFF) shr 1) == 9
             }
@@ -78,7 +78,7 @@ class AddressTest {
             println("SKIP unresolvableNameIsAConnectException: resolver is a fake-IP proxy ($host -> 198.18.0.0/15)")
             return@runReactor
         }
-        val ex = assertFailsWith<ConnectException> { connect(host, 39853) }
+        val ex = assertFailsWith<ConnectException> { connect(host, 21853) }
         assertTrue(host in ex.message!!, ex.message)
     }
 }

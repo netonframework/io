@@ -35,7 +35,7 @@ class EdgeTriggeredTest {
         // Several frames written in one burst, then a pause, then more: with an edge per burst
         // the reader must drain the first burst fully (not park after the first frame) and pick
         // up the second burst from a fresh edge.
-        val port = 39840
+        val port = 21840
         val server = listenRetrying(port)
         var got: List<String> = emptyList()
         val srv = launch {
@@ -57,7 +57,7 @@ class EdgeTriggeredTest {
     fun edgeThatArrivesWhileNobodyIsParkedIsNotLost() = runReactor {
         // The server is busy (delaying) when data arrives; the edge must be remembered so the
         // later read returns immediately instead of parking forever.
-        val port = 39841
+        val port = 21841
         val server = listenRetrying(port)
         var line = ""
         val srv = launch {
@@ -75,7 +75,7 @@ class EdgeTriggeredTest {
 
     @Test
     fun parkedReaderWakesOnPeerClose() = runReactor {
-        val port = 39842
+        val port = 21842
         val server = listenRetrying(port)
         var eof = 0
         val srv = launch {
