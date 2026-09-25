@@ -8,6 +8,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.toKString
 import platform.posix.POLLERR
 import platform.posix.POLLHUP
+import platform.posix.POLLNVAL
 import platform.posix.POLLIN
 import platform.posix.POLLOUT
 import platform.posix.getenv
@@ -56,11 +57,16 @@ internal class PollPoller : Poller {
             var count = 0
             for (i in 0 until m) {
                 val re = arr[i].revents.toInt()
-                val err = (re and (POLLERR or POLLHUP)) != 0
-                val readable = (re and POLLIN) != 0 || err
-                val writable = (re and POLLOUT) != 0
+                val fd = fds[i]
+                val err = (re and (POLLERR or POLLHUP or POLLNVAL)) != 0
+                // An error or hang-up wakes whichever side is armed; the woken call then sees the
+                // actual outcome (SO_ERROR for a connect, a failing send/recv). Reporting it as
+                // readable only left a parked writer — e.g. a connect refused on macOS, where
+                // poll() gives POLLHUP without POLLOUT — asleep forever, while the fd stayed in the
+                // write set and poll() kept returning it at once: a hang at 100% CPU.
+                val readable = (re and POLLIN) != 0 || (err && fd in readFds)
+                val writable = (re and POLLOUT) != 0 || (err && fd in writeFds)
                 if (readable || writable) {
-                    val fd = fds[i]
                     if (readable) readFds.remove(fd)
                     if (writable) writeFds.remove(fd)
                     onReady(fd, readable, writable)

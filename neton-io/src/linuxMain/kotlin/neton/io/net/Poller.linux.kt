@@ -7,7 +7,9 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import platform.linux.EPOLLERR
 import platform.linux.EPOLLET
+import platform.linux.EPOLLHUP
 import platform.linux.EPOLLIN
 import platform.linux.EPOLLONESHOT
 import platform.linux.EPOLLOUT
@@ -86,8 +88,12 @@ internal class EpollPoller : Poller {
             val ev = events[i]
             val fd = ev.data.fd
             val e = ev.events.toInt()
-            val readable = (e and EPOLLIN.toInt()) != 0
-            val writable = (e and EPOLLOUT.toInt()) != 0
+            // EPOLLERR / EPOLLHUP wake both sides (same rule as the poll(2) driver): the woken
+            // recv/send/SO_ERROR reports the actual outcome. With nothing parked, a readable edge
+            // only marks the fd ready and a writable one is ignored, so this is harmless.
+            val err = (e and (EPOLLERR.toInt() or EPOLLHUP.toInt())) != 0
+            val readable = (e and EPOLLIN.toInt()) != 0 || err
+            val writable = (e and EPOLLOUT.toInt()) != 0 || err
             onReady(fd, readable, writable)
             count++
         }
