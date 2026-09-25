@@ -397,3 +397,22 @@ kernel 80.6% / user 11.4% / **GC thread 7.9%** (6.5% kernel `sched_yield`/`__sch
 request is the two `suspendCancellableCoroutine` parks (multishot read, send) and their parent-job
 handles; kotlinx has no public reusable-continuation API. Linux tests after the bind-retry fix:
 epoll and polling 22/22 (io_uring 22/22 earlier) — three drivers green on the step-7 code.
+
+## Round 15 (GC target heap as *server* configuration, `NETON_IO_GC_TARGET_MB=64`) — pinned core 1, 12 conns, 10 rounds, paired
+
+Raw: `2026-09-25-153-round15-raw.txt`. Same af7 binary; the knob is what a deployed server would set
+(like a JVM heap flag) — it is not a library default.
+
+| server | median | paired vs default GC | paired vs geario |
+|---|---|---|---|
+| uring-af7 | 112,026 | — | 0.946 (3/10) |
+| uring-af7 + gc64 | 114,176 | **1.065 (8/10)** | **0.990 (5/10)** |
+| epoll-af7 | 111,234 | — | 0.936 (2/10) |
+| epoll-af7 + gc64 | 114,880 | 1.037 (6/10) | 0.916 (2/10) |
+| geario | 126,420 | | |
+
+**Reading.** With a 64 MiB target heap the uring driver is at parity with geario in this round
+(0.99, 5 wins of 10). Caveat that must travel with the number: the *same* af7 binary measured 0.863
+against geario in round 14 an hour earlier — the paired ratio drifts by ~±5% between rounds on this
+host, so parity-in-one-round is "within noise of parity", not a lead. A longer final round with the
+chosen configuration follows round 16.
