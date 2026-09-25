@@ -50,6 +50,56 @@ class MultiReactorTest {
         assertTrue(threadsSeen.value.size >= 2, "expected connections on >=2 reactor threads, saw ${threadsSeen.value.size}")
     }
 
+    /**
+     * SPEC §18.1: `listenGroup` inside an already running reactor (the msgtrans case). Handlers
+     * spread over >= 2 threads, `serve` returns after `close`, and the worker reactors exit once
+     * their connections are gone.
+     */
+    @Test
+    fun listenGroupServesInsideARunningReactorAndReturnsOnClose() = runReactor {
+        val threads = kotlin.concurrent.AtomicReference<Set<ULong>>(emptySet())
+        val group = listenGroup("127.0.0.1", 39832, reactors = 2)
+        assertEquals(2, group.reactors)
+        val serveJob = launch {
+            group.serve { conn ->
+                val t = currentThreadId()
+                while (true) { val cur = threads.value; if (threads.compareAndSet(cur, cur + t)) break }
+                try {
+                    val framed = Framed(Io(conn), LineCodec, LineCodec)
+                    framed.incoming().collect { framed.send(it) }
+                } finally { conn.close() }
+            }
+        }
+        val clients = (1..8).map { i -> launch {
+            val c = connect("127.0.0.1", 39832)
+            val f = Framed(Io(c), LineCodec, LineCodec)
+            f.send("line-$i")
+            assertEquals("line-$i", f.incoming().first())
+            c.close()
+        } }
+        clients.forEach { it.join() }
+        group.close()
+        serveJob.join()          // serve returned after close
+        group.awaitWorkers()     // and the worker reactor exited once its connections ended
+        assertTrue(threads.value.size >= 2, "expected handlers on >=2 threads, saw ${threads.value.size}")
+    }
+
+    /** SPEC §18.1: with one reactor there are no worker threads and handlers run on the caller's reactor. */
+    @Test
+    fun listenGroupWithOneReactorStaysOnTheCallersThread() = runReactor {
+        val me = currentThreadId()
+        var handlerThread = 0uL
+        val group = listenGroup("127.0.0.1", 39833, reactors = 1)
+        val serveJob = launch { group.serve { conn -> handlerThread = currentThreadId(); conn.close() } }
+        val c = connect("127.0.0.1", 39833)
+        assertEquals(-1, c.read(neton.io.bytes.Buffer(8)))   // server closed it
+        c.close()
+        group.close()
+        serveJob.join()
+        group.awaitWorkers()
+        assertEquals(me, handlerThread)
+    }
+
     private suspend fun tryConnectProbe(port: Int): Boolean =
         try { connect("127.0.0.1", port).also { it.close() }; true } catch (_: ConnectException) { false }
 }

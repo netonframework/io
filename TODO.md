@@ -3,8 +3,8 @@
 规则：每项先有 SPEC 条目；一次一个变量；Linux 结果以 153 为准（三驱动），macOS 本机；基准用成对交替轮次。
 
 ## 阶段 1
-- [ ] 18.1 `listenGroup` / `TcpServerGroup`（neton-io 公共 API），`serveTcp` 改为基于它
-- [ ] 18.1 测试：serve 在 close 后返回；handler 分布到 ≥2 线程；MultiReactorTest 改走新 API
+- [x] 18.1 `listenGroup` / `TcpServerGroup`（neton-io 公共 API），`serveTcp` 改为基于它
+- [x] 18.1 测试：serve 在 close 后返回；handler 分布到 ≥2 线程；单 reactor 留在调用线程（macOS；Linux 待 153）
 - [ ] msgtrans §10 `Transport.bind(..., reactors = N)`；连接作用域 = 目标 reactor 调度器 + SupervisorJob(父 = 服务作用域)
 - [ ] msgtrans §10 测试：多 reactor bind、连接分布、关闭服务时所有 reactor 上的连接都关闭
 - [ ] msgtrans framed/rpc 基准：1 vs 4 reactor（153，成对）
