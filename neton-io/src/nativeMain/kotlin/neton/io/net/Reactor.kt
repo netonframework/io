@@ -75,6 +75,29 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     private val tasks = ArrayDeque<Runnable>()
 
+    // ---- SPEC §19.3: resume queue for coroutines parked on I/O without a CancellableContinuation.
+    // A ring of (continuation, error) pairs drained by [drainTasks] ahead of ordinary tasks: queued
+    // (not resumed inline from the poll callback, which §17c step 4 measured slower), on this
+    // thread, and without allocating a Runnable or a DispatchedTask per resume.
+    private var resumeConts = arrayOfNulls<kotlin.coroutines.Continuation<Unit>>(256)
+    private var resumeErrs = arrayOfNulls<Throwable>(256)
+    private var resumeHead = 0
+    private var resumeCount = 0
+
+    /** Queue [cont] to be resumed (with [error] if non-null) on this reactor's next drain. Owner thread only. */
+    protected fun enqueueResume(cont: kotlin.coroutines.Continuation<Unit>, error: Throwable? = null) {
+        if (resumeCount == resumeConts.size) {
+            val n = resumeConts.size
+            val c2 = arrayOfNulls<kotlin.coroutines.Continuation<Unit>>(n * 2)
+            val e2 = arrayOfNulls<Throwable>(n * 2)
+            for (i in 0 until resumeCount) { c2[i] = resumeConts[(resumeHead + i) % n]; e2[i] = resumeErrs[(resumeHead + i) % n] }
+            resumeConts = c2; resumeErrs = e2; resumeHead = 0
+        }
+        val i = (resumeHead + resumeCount) % resumeConts.size
+        resumeConts[i] = cont; resumeErrs[i] = error
+        resumeCount++
+    }
+
     // ---- cross-thread dispatch: MPSC stack + self-pipe wakeup
     private class ExtNode(val block: Runnable, val next: ExtNode?)
     private val external = AtomicReference<ExtNode?>(null)
@@ -218,8 +241,18 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     protected fun drainTasks() {
         var n = 0L
-        while (tasks.isNotEmpty()) {
-            tasks.removeFirst().run()
+        while (true) {
+            if (resumeCount > 0) {
+                val i = resumeHead
+                val c = resumeConts[i]!!; val e = resumeErrs[i]
+                resumeConts[i] = null; resumeErrs[i] = null
+                resumeHead = (i + 1) % resumeConts.size; resumeCount--
+                // A raw (uninterceptd) continuation: runs the coroutine's state machine right here,
+                // which is correct because this *is* its dispatcher's thread (SPEC §19.3).
+                if (e == null) c.resumeWith(Result.success(Unit)) else c.resumeWith(Result.failure(e))
+            } else if (tasks.isNotEmpty()) {
+                tasks.removeFirst().run()
+            } else break
             n++
             if (taskBudget > 0 && n >= taskBudget) break
         }
@@ -247,7 +280,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
         fflush(stderr)
     }
 
-    protected fun hasTasks(): Boolean = tasks.isNotEmpty()
+    protected fun hasTasks(): Boolean = resumeCount > 0 || tasks.isNotEmpty()
 
     /** Read available bytes into [dst]; returns the count (>0) or -1 at EOF. Reactor thread only. */
     abstract suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int

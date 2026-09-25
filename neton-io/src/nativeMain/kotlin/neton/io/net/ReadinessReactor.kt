@@ -3,29 +3,40 @@ package neton.io.net
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.pin
-import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.suspendCancellableCoroutine
 import neton.io.bytes.Buffer
 import neton.io.core.ClosedException
 import neton.io.core.IoException
 import platform.posix.errno
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 
 /**
  * Readiness reactor backed by a [Poller] (kqueue/epoll/poll). A read waits for the fd to be
  * readable and then does the recv; the reactor blocks in the poller when idle (no busy poll).
  */
-@OptIn(ExperimentalForeignApi::class)
+@OptIn(ExperimentalForeignApi::class, InternalCoroutinesApi::class)
 internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     override val driverName: String get() = poller.name
 
     // Per-fd state, indexed by fd (SPEC §17c: no boxed keys, no hashing, nothing allocated per
     // request). fds are small dense ints; the arrays grow on demand and are never shrunk.
-    private var readWaiters = arrayOfNulls<CancellableContinuation<Unit>>(64)
-    private var writeWaiters = arrayOfNulls<CancellableContinuation<Unit>>(64)
+    // SPEC §19.3: parked coroutines are stored as their own raw continuations — no
+    // CancellableContinuation, no parent handle per park. Every path that resumes one (readiness,
+    // cancellation, close) takes it out of its slot first, so none can be resumed twice.
+    private var readWaiters = arrayOfNulls<Continuation<Unit>>(64)
+    private var writeWaiters = arrayOfNulls<Continuation<Unit>>(64)
+    // Cancellation is watched once per (fd, direction, coroutine Job), not once per park: the
+    // handle is reused for every park by the same coroutine and disposed on close or when another
+    // coroutine takes over that side of the stream.
+    private var readJobs = arrayOfNulls<Job>(64)
+    private var writeJobs = arrayOfNulls<Job>(64)
+    private var readCancelHandles = arrayOfNulls<DisposableHandle>(64)
+    private var writeCancelHandles = arrayOfNulls<DisposableHandle>(64)
     // SPEC §17: persistent edge-triggered read interest, and "an edge arrived with nobody parked".
     // A read on a persistent fd recv()s until EAGAIN, then clears the flag and parks; it never
     // recv()s speculatively.
@@ -42,6 +53,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         var n = persistent.size
         while (n <= fd) n *= 2
         readWaiters = readWaiters.copyOf(n); writeWaiters = writeWaiters.copyOf(n)
+        readJobs = readJobs.copyOf(n); writeJobs = writeJobs.copyOf(n)
+        readCancelHandles = readCancelHandles.copyOf(n); writeCancelHandles = writeCancelHandles.copyOf(n)
         persistent = persistent.copyOf(n); readyRead = readyRead.copyOf(n)
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
     }
@@ -59,18 +72,52 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         if (poller.persistentRead) { persistent[fd] = true; poller.watchRead(fd) }
     }
 
-    // No invokeOnCancellation here (SPEC §17c step 3): a cancelled continuation wakes itself with
-    // CancellationException and ignores any later resume, so a stale waiter in the slot is
-    // harmless — the next event on that fd resumes nothing, and the next park overwrites it. That
-    // saves a JobNode + closure per park and removes the cross-thread hop the handler needed.
-    private suspend fun waitReadable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
+    private suspend fun waitReadable(fd: Int): Unit = suspendCoroutineUninterceptedOrReturn { cont ->
+        watchCancellation(fd, write = false, cont)
         readWaiters[fd] = cont
         if (!persistent[fd]) poller.armRead(fd)
+        COROUTINE_SUSPENDED
     }
 
-    private suspend fun waitWritable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
+    private suspend fun waitWritable(fd: Int): Unit = suspendCoroutineUninterceptedOrReturn { cont ->
+        watchCancellation(fd, write = true, cont)
         writeWaiters[fd] = cont
         poller.armWrite(fd)
+        COROUTINE_SUSPENDED
+    }
+
+    /**
+     * Before parking: a coroutine that is already cancelled must not park (nothing would wake it),
+     * and its Job's cancellation must be able to wake it. The handler is registered on the first
+     * park of this coroutine on this side of [fd] and reused afterwards.
+     */
+    private fun watchCancellation(fd: Int, write: Boolean, cont: Continuation<Unit>) {
+        val job = cont.context[Job] ?: return
+        if (!job.isActive) throw job.getCancellationException()
+        val jobs = if (write) writeJobs else readJobs
+        if (jobs[fd] === job) return
+        val handles = if (write) writeCancelHandles else readCancelHandles
+        handles[fd]?.dispose()
+        jobs[fd] = job
+        // Cancellation may come from any thread; the waiter slots are reactor-thread state.
+        handles[fd] = job.invokeOnCompletion(onCancelling = true, invokeImmediately = false) {
+            postToReactor { onParkCancelled(fd, write, job) }
+        }
+    }
+
+    private fun onParkCancelled(fd: Int, write: Boolean, job: Job) {
+        if (fd >= readWaiters.size) return
+        val waiters = if (write) writeWaiters else readWaiters
+        val w = waiters[fd] ?: return
+        if (w.context[Job] !== job) return              // the slot now belongs to another coroutine
+        waiters[fd] = null
+        enqueueResume(w, job.getCancellationException())
+    }
+
+    private fun forgetCancellation(fd: Int) {
+        readCancelHandles[fd]?.dispose(); writeCancelHandles[fd]?.dispose()
+        readCancelHandles[fd] = null; writeCancelHandles[fd] = null
+        readJobs[fd] = null; writeJobs[fd] = null
     }
 
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
@@ -141,11 +188,11 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                     // the fd as ready instead of parking again (the edge is not repeated).
                     if (persistent[fd]) readyRead[fd] = true
                     val w = readWaiters[fd]
-                    if (w != null) { readWaiters[fd] = null; w.resume(Unit) }
+                    if (w != null) { readWaiters[fd] = null; enqueueResume(w) }
                 }
                 if (writable) {
                     val w = writeWaiters[fd]
-                    if (w != null) { writeWaiters[fd] = null; w.resume(Unit) }
+                    if (w != null) { writeWaiters[fd] = null; enqueueResume(w) }
                 }
             }
             if (woke) { onWake(); poller.armRead(wakeReadFd) }
@@ -156,8 +203,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     override fun closeStream(fd: Int) {
         checkOwner("close")
         ensureFd(fd)
-        readWaiters[fd]?.let { readWaiters[fd] = null; it.resumeWithException(ClosedException()) }
-        writeWaiters[fd]?.let { writeWaiters[fd] = null; it.resumeWithException(ClosedException()) }
+        readWaiters[fd]?.let { readWaiters[fd] = null; enqueueResume(it, ClosedException()) }
+        writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, ClosedException()) }
+        forgetCancellation(fd)
         persistent[fd] = false; readyRead[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         poller.forget(fd)
