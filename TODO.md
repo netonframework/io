@@ -19,10 +19,10 @@
 ## §19 工具链与运行时
 - [ ] 19.1 Kotlin 2.4.20 + coroutines 1.11.0（neton-io / msgtrans / pulsekit 同步），全部测试
 - [ ] 19.1 153 成对：2.4.20 对 2.4.0（同一代码）
-- [ ] 19.2 gc=pmcs
-- [ ] 19.2 gcMarkSingleThreaded=true
-- [ ] 19.2 preCodegenInlineThreshold=40
-- [ ] 19.2 -Xklib-ir-inliner=full
+- [x] 19.2 gc=pmcs：单核 1.034（9/12），四核 0.956 → 不采用
+- [x] 19.2 gcMarkSingleThreaded=true：二进制与基线逐字节相同（2.4.0/CMS 下无效）→ 不测
+- [x] 19.2 preCodegenInlineThreshold=40：单核 1.032（9/12）→ 用于服务端可执行文件
+- [x] 19.2 -Xklib-ir-inliner=full：0.992，无效 → 不采用
 - [x] 19.3 就绪驱动：续体队列 + 每流一次的取消登记（b5c441a；macOS 31/31、msgtrans 34/34；Linux 与基准在 153 队列）
 - [ ] 19.3 io_uring 驱动同上
 - [ ] 19.4 自适应读大小 + 回显按需缓冲（测每连接 RSS 与 64 KB 吞吐）
