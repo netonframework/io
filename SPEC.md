@@ -442,3 +442,38 @@ SHA-256/384、HKDF、ECDSA P-256 / RSA 验签）。
   - (a) 纯 Kotlin：没有外部依赖。但 Kotlin/Native 用不了 AES-NI / PCLMULQDQ 这类指令，AES-GCM 预计比 libcrypto 的汇编实现慢数倍；密钥相关代码的常量时间性需要逐函数审计。
   - (b) 薄调用平台 libcrypto（Linux 用 OpenSSL libcrypto，Apple 用 CommonCrypto/Security）：一次调用处理一整条记录（≤16 KB），没有运行时、没有线程交接，按上面的规则属于允许的薄 OS/系统库调用。
 - 建议 (b)，或 (b) 起步、之后按基准逐个替换成 Kotlin。**等用户决定。**
+
+## 19. 工具链与运行时层的性能（2026-09-26）
+
+**用户要求**：尽可能用 Kotlin/Native 最新特性换性能；只支持 Kotlin/Native，不为 JVM 妥协（三个仓库本来就只有 Native 目标）。
+
+**核实的事实**（Maven Central 与官方发布说明）：
+- 2.4.0（2026-06-03，当前使用）已带来 Native 的主要性能改动：CMS 并发标记成为默认 GC、LLVM 21、klib 编译期模块内内联。
+- 2.4.10（2026-07-14）：发布说明中**没有** Native 后端、运行时或编译器的改动（Wasm、Compose、工具链修复）。
+- 2.4.20（2026-09-07）为最新稳定版，包含 2.4.10；Native 改动是 Swift export 与 klib 增量编译（Beta），无运行时性能项。
+- kotlinx-coroutines 1.11.0：无 Native 性能改动；`CoroutineDispatcher` 作为上下文键被弃用（neton-io 已用 `ContinuationInterceptor`）。
+
+结论：升级工具链本身预计不带来运行时收益，但要升到 **2.4.20 + coroutines 1.11.0**（最新，并为之后的版本铺路），并按单变量测一次确认不退步。真正的杠杆是下面还没试过的编译/运行时选项，以及只做 Native 才能做的挂起路径改造。
+
+### 19.1 工具链升级（单变量）
+neton-io、msgtrans、pulsekit 同时升到 Kotlin 2.4.20、coroutines 1.11.0（复合构建必须同一版本）。验收：三仓库全部测试（macOS + 153 三驱动）；153 单核成对轮次 2.4.20 对 2.4.0 同一代码，比值应在 [0.97, 1.03] 内或更好。
+
+### 19.2 编译/运行时选项 A/B（每次一个变量，单核钉扎成对 + 四核）
+| 选项 | 依据 |
+|---|---|
+| `-Xbinary=gc=pmcs` | CMS 的并发标记线程在单核钉扎时与 reactor 抢同一个核（§17c 剖析：GC 线程 7–16%，大量 `sched_yield`）；PMCS 暂停更长，但总开销可能更低 |
+| `-Xbinary=gcMarkSingleThreaded=true` | 并行标记的辅助线程在核不够时空转让出 |
+| `-Xbinary=preCodegenInlineThreshold=40` | 代码生成前的 IR 内联（官方推荐值 40）；热路径是大量小函数与协程状态机 |
+| `-Xklib-ir-inliner=full` | 跨模块内联（实验）：msgtrans → neton-io → kotlinx-coroutines 的调用都跨模块 |
+
+胜出的选项写进 echoServer / 服务端二进制的构建配置；库不设置进程级 GC 参数（选项属于可执行文件，不属于库）。
+
+### 19.3 挂起路径改造：去掉每次 park 的 `CancellableContinuation`（架构）
+§17c 剖析里剩下的用户态成本是每次 park 的 `CancellableContinuationImpl` 分配、`installParentHandle`（JobNode）、以及 `DispatchedTask` 簿记。设计：
+- park 用 `suspendCoroutineUninterceptedOrReturn` 直接保存协程自己的状态机续体，不分配 `CancellableContinuation`；
+- 就绪时把续体放进 reactor 的续体队列（数组环形队列，不分配 `Runnable`），在 `drainTasks` 里直接 `resume`——仍在本线程、仍排队（不重蹈 §17c 步骤 4 内联恢复的覆辙）；
+- 取消：每个流**一次性**登记所属 Job 的取消回调（`invokeOnCompletion(onCancelling = true)`），而不是每次 park 登记；取消时经 `postToReactor` 用 `CancellationException` 恢复该流上挂着的续体。
+- 契约不变：close 唤醒 park、取消唤醒 park、归属检查、`InFlightLifetimeTest`。
+- 先做就绪驱动，再做 io_uring；各自单变量成对测。
+
+验收：全部测试（macOS + 153 三驱动 + msgtrans）；单核钉扎成对比值相对改造前 ≥ 1.03 才保留。

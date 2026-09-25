@@ -15,3 +15,13 @@
 
 ## 待决
 - [ ] 18.5 密码学原语：纯 Kotlin 还是薄调用 libcrypto（用户决定；阶段 2 等待）
+
+## §19 工具链与运行时
+- [ ] 19.1 Kotlin 2.4.20 + coroutines 1.11.0（neton-io / msgtrans / pulsekit 同步），全部测试
+- [ ] 19.1 153 成对：2.4.20 对 2.4.0（同一代码）
+- [ ] 19.2 gc=pmcs
+- [ ] 19.2 gcMarkSingleThreaded=true
+- [ ] 19.2 preCodegenInlineThreshold=40
+- [ ] 19.2 -Xklib-ir-inliner=full
+- [ ] 19.3 就绪驱动：续体队列 + 每流一次的取消登记
+- [ ] 19.3 io_uring 驱动同上
