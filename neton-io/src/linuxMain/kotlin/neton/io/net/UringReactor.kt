@@ -251,11 +251,10 @@ internal class UringReactor : Reactor() {
             if (msEof[fd]) return -1
             if (msErr[fd] != 0) { val e = msErr[fd]; msErr[fd] = 0; throw IoException("io_uring recv failed: ${errnoMessage(e)}", e) }
             if (!msArmed[fd]) armMultishot(fd)
-            suspendCancellableCoroutine<Unit> { cont ->
-                readers[fd] = cont
-                // The multishot op stays armed across a cancelled read; only the parked reader is dropped.
-                cont.invokeOnCancellation { postToReactor { if (readers[fd] === cont) readers[fd] = null } }
-            }
+            // No invokeOnCancellation (step 7): the multishot op stays armed across a cancelled read,
+            // and a cancelled continuation ignores the resume the next chunk would give it; the
+            // slot is overwritten by the next park. Same lazy cleanup as the readiness path.
+            suspendCancellableCoroutine<Unit> { cont -> readers[fd] = cont }
         }
     }
 
@@ -396,7 +395,16 @@ internal class UringReactor : Reactor() {
      * Submit [opcode] and suspend until its CQE. [pinned] (if any) is owned by the op from here on
      * and is released only by [reap] when the CQE arrives — also after cancellation.
      */
-    private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pin: PinRef?): Int {
+    /**
+     * [cancelOnAbort]: whether cancelling the awaiting coroutine should also ask the kernel to
+     * cancel the op (SPEC §17c step 7). Needed where a stale completion would be harmful — a plain
+     * recv could consume bytes meant for a later read on the same fd, an accept would leak the
+     * accepted fd, a connect poll would be re-armed twice. Not needed for SEND: a cancelled send
+     * either did or did not transmit its bytes (exactly as with a lost cancel race today), the
+     * buffer stays pinned until the CQE, and the CQE just resumes a cancelled continuation
+     * (ignored). Skipping the handler saves a JobNode + closure per op.
+     */
+    private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pin: PinRef?, cancelOnAbort: Boolean = true): Int {
         val idx = takeSlot()
         val slot = slots[idx]!!
         slot.fd = fd; slot.pin = pin
@@ -406,7 +414,7 @@ internal class UringReactor : Reactor() {
         prepSqe(opcode, fd, addr, len, opFlags, ud)
         return suspendCancellableCoroutine { cont ->
             slot.cont = cont
-            cont.invokeOnCancellation {
+            if (cancelOnAbort) cont.invokeOnCancellation {
                 // May run on any thread, and both the slot table and the SQ ring are reactor-thread
                 // state, so hop back before touching them (P1-3).
                 postToReactor {
@@ -437,7 +445,7 @@ internal class UringReactor : Reactor() {
         while (src.readableBytes > 0) {
             val len = src.readableBytes
             val pin = pinFor(fd, src.backingArray())
-            val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin)
+            val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin, cancelOnAbort = false)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
             src.consume(res); total += res
         }

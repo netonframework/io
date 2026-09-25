@@ -355,3 +355,20 @@ core; on four cores epoll ×4 leads geario by ~10% while uring ×4 trails epoll 
 not yet profiled with the new code. Acceptance of SPEC §17c (paired ratio ≥ 1.0 on one core) is
 **not met**; the honest state after 13 rounds is: multi-core parity exceeded with epoll, single-core
 at 0.85–0.92 with either driver.
+
+### Profiles after round 13 (cpu-clock + `perf trace -s`, 3 s windows; `prof13.sh` on 153)
+
+| server | kernel (reactor) | user (reactor) | GC thread | syscalls in 3 s |
+|---|---|---|---|---|
+| uring-ms, pinned | 79.8% | 11.5% | **8.5%** (`sched_yield` 48k) | `io_uring_enter` 28,287 |
+| geario, pinned | 90.6% | 9.1% | — | `io_uring_enter` 31,820 + eventfd read/write 31.8k each |
+| uring-ms ×4 | 73.9% (+6.9% nf_tables) | 16.7% | 1.0% | `io_uring_enter` 43–70k per reactor |
+| epoll ×4 | 83.1% | 13.8% | 0.4% | recvfrom 93–126k, sendto 69–89k per reactor |
+
+**Reading.** On one core the uring driver now issues *fewer* `io_uring_enter` than geario and
+matches its kernel share per request; what is left is the Kotlin side again: the GC thread is back
+at 8.5% because the uring path still allocates an `invokeOnCancellation` node + closure per park
+(`readMultishot`) and per submitted op (`submit`), on top of the unavoidable continuation. That is
+step 7. The uring ×4 deficit vs epoll ×4 shows as higher user share (`reap`, `prepSqe`) and
+`exit_to_user_mode_loop` 4.4%; it is not the priority — the target is geario, which epoll ×4
+already exceeds on four cores.
