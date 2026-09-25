@@ -163,3 +163,44 @@ identical setup and gets 276k, so the comparison stays fair, but the number is a
 The per-core pinned gap (neton ~104k vs geario ~127–132k, 1.25×) is therefore *not* readiness-path
 syscall count. Next: count syscalls per request on both servers (`strace -c`) and profile the
 pinned reactor (`perf`) before touching anything else.
+
+## Profiling the pinned single-core gap (perf on 153) — raw in `2026-09-25-153-profile-pinned-raw.txt`
+
+Tools that work on this KVM guest: `perf trace -s` (syscall counts) and `perf record -e cpu-clock`
+(software sampling). Hardware counters are garbage here (`instructions` 3.8e16), so `perf stat`
+cycles/instructions and cycle-based `perf record` are unusable; `strace -c` slows the server so
+much that it changes the regime (clients always ahead, 8 `epoll_wait` per 43k requests).
+
+**1. geario is an io_uring server on this host — in every round.** `server-geario` syscalls in a
+3 s window: `io_uring_enter` 36,537, eventfd `read`/`write` 36.5k each, nothing else — ~0.27
+syscalls per request. Its source confirms it: `default_reactor()` prefers
+`uring::Reactor::new(2048)` (`COOP_TASKRUN | SINGLE_ISSUER | DEFER_TASKRUN`, batched
+`submit_and_wait`) and falls back to polling only if setup fails. So "geario polling" in rounds
+1–6 was uring too (which is why it always matched `geario-uring-real`); the labels stay as
+recorded, the interpretation changes: **the per-core target is an io_uring server**.
+
+**2. neton syscalls per request** (same window): epoll: recvfrom 1.87 (0.87 EAGAIN), sendto 1,
+epoll_wait 0.075 (~13 events per wait) ≈ 2.95/request. io_uring: `io_uring_enter` 38,570 per 3 s —
+about the same count as geario — so **neton-uring is not losing on syscalls**.
+
+**3. Where the pinned core goes** (`perf record -e cpu-clock`, 3 s, all pinned to core 1; the
+sampling itself costs every server ~10–20%):
+
+| server | kernel, reactor thread | user, reactor thread | **GC thread** | qps under perf |
+|---|---|---|---|---|
+| geario (uring) | 93.1% | 6.8% (+0.2% libc) | — | 106k |
+| neton epoll | 78.9% | 11.7% (+1.9% libc) | **7.4%** | 95k |
+| neton io_uring | 68.3% | 15.4% (+0.2% libc) | **16.1%** | 105k |
+
+Top kernel symbol for all three is `_raw_spin_unlock_irqrestore` under `sock_def_readable`
+(24–28%: waking the client thread on the other core — the cost of the benchmark's own client) and
+`nft_do_chain` (~5%: firewalld's nftables on loopback). Both are paid equally by every server.
+
+**Reading.** Per request, neton-uring already spends *less* kernel time than geario. The whole
+remaining deficit is on the Kotlin/Native side: a "Main GC thread" that burns 7–16% of the pinned
+core (`sched_yield` 15–54k per 3 s, `__schedule`/`do_sched_yield` in the profile) plus 12–15% user
+time against geario's 7%. So the next single-variable experiments are runtime-side, not
+syscall-side: GC configuration (fixed larger target heap; stop-the-world GC with no separate
+thread), then an allocation-free hot path. Only after that is the uring driver's own setup
+(`COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN`, multishot recv, provided buffers) worth a round —
+the kernel supports them (features 0x1ffff, last_op 57, `IORING_RECV_MULTISHOT` in the UAPI).

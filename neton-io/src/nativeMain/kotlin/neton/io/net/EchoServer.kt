@@ -28,6 +28,12 @@ fun echoServerMain(args: Array<String>) {
         ?: platform.posix.getenv("NETON_IO_REACTORS")?.toKString()?.toIntOrNull()
         ?: 1
     val runSeconds = platform.posix.getenv("NETON_IO_RUN_SECONDS")?.toKString()?.toIntOrNull()
+    // Bench knob (SPEC §17c): fix the GC target heap instead of letting the runtime autotune it.
+    platform.posix.getenv("NETON_IO_GC_TARGET_MB")?.toKString()?.toLongOrNull()?.let { mb ->
+        @OptIn(kotlin.native.runtime.NativeRuntimeApi::class)
+        run { kotlin.native.runtime.GC.autotune = false; kotlin.native.runtime.GC.targetHeapBytes = mb shl 20 }
+        println("gc target heap = $mb MiB (autotune off)")
+    }
     println("echo-server listening on $host:$port reactors=$reactors")
     if (reactors <= 1) {
         runReactor {

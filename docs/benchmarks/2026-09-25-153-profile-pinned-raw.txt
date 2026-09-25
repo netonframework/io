@@ -1,0 +1,75 @@
+== neton-uring by comm,dso
+    68.33%  echoServer-et.k  [kernel.kallsyms] 
+    15.38%  echoServer-et.k  echoServer-et.kexe
+    13.20%  Main GC thread   [kernel.kallsyms] 
+     1.95%  Main GC thread   libc.so.6         
+     0.94%  Main GC thread   echoServer-et.kexe
+     0.19%  echoServer-et.k  libc.so.6         
+== neton-uring top symbols
+    23.78%  [k] _raw_spin_unlock_irqrestore
+     5.71%  [k] nft_do_chain
+     4.65%  [k] __schedule
+     4.60%  [k] do_sched_yield
+     2.19%  [k] syscall_enter_from_user_mode
+     1.77%  [.] __sched_yield
+     1.65%  [.] kfun:neton.io.net.UringReactor.prepSqe#internal
+     1.11%  [k] pvclock_clocksource_read_nowd
+     0.93%  [k] tcp_sendmsg_locked
+== neton-epoll by comm,dso
+    78.94%  echoServer-et.k  [kernel.kallsyms] 
+    11.70%  echoServer-et.k  echoServer-et.kexe
+     6.20%  Main GC thread   [kernel.kallsyms] 
+     1.91%  echoServer-et.k  libc.so.6         
+     0.79%  Main GC thread   libc.so.6         
+     0.45%  Main GC thread   echoServer-et.kexe
+== neton-epoll top symbols
+    25.84%  [k] _raw_spin_unlock_irqrestore
+     5.20%  [k] nft_do_chain
+     2.22%  [k] do_sched_yield
+     2.09%  [k] syscall_enter_from_user_mode
+     2.01%  [k] __schedule
+     1.67%  [k] tcp_sendmsg_locked
+     1.64%  [k] net_rx_action
+     1.21%  [k] __tcp_transmit_skb
+     1.13%  [k] tcp_rcv_established
+     1.03%  [.] kfun:neton.io.net.ReadinessReactor.$readCOROUTINE$0.invokeSuspend#internal
+     1.03%  [k] tcp_v4_rcv
+     0.96%  [k] __fget_light
+     0.91%  [k] skb_release_data
+== geario by comm,dso
+    93.05%  main:worker:0  [kernel.kallsyms]
+     6.75%  main:worker:0  server-geario    
+     0.20%  main:worker:0  libc.so.6        
+== geario top symbols
+    28.14%  [k] _raw_spin_unlock_irqrestore
+     5.32%  [k] nft_do_chain
+     1.78%  [k] net_rx_action
+     1.66%  [k] tcp_sendmsg_locked
+     1.53%  [k] tcp_v4_rcv
+     1.37%  [k] tcp_rcv_established
+     1.35%  [k] skb_release_data
+     1.32%  [k] rep_movs_alternative
+     1.14%  [k] __tcp_transmit_skb
+     1.14%  [k] tcp_clean_rtx_queue.constprop.0
+     1.09%  [k] tcp_ack
+     1.03%  [k] __skb_datagram_iter
+     1.01%  [k] ip_send_check
+     1.00%  [.] _RNCNvXs1_NtNtCs6OQ4RtMvOWg_6geario7service5chainINtB7_12ServiceChainINtNtB9_7map_err6MapErrNCNCNCINvNtNtNtBb_6server3net7factory22create_factory_serviceNtNtB1C_5state8NoConfigNCNCNvCs8vlv611SWf4_13server_geario4main0s_0INtNtB9_10fn_service9FnServiceNCNCNCB2P_s_000NtNtNtBb_2io2io2IouNtNtNtCsgxBkk5gSRhY_4core2io5error5ErrorEB3v_E00s_0INtNtB9_3map3MapNCB1t_0B3v_uEuEuB4e_EINtB9_7ServiceuB4e_E4call0B2T_
+     1.00%  [k] pvclock_clocksource_read_nowd
+     0.98%  [k] io_arm_poll_handler
+== perf trace summaries
+-- perftrace-neton.txt
+   recvfrom          203806  95307   647.338     0.002     0.003     0.942      0.16%
+   sendto            108966      0  1005.440     0.005     0.009     0.167      0.09%
+   sched_yield        15103      0    40.145     0.002     0.003     0.076      0.34%
+   epoll_wait          8143      0    40.054     0.003     0.005     0.663      2.26%
+-- perftrace-neton-uring.txt
+   sched_yield        54092      0   174.820     0.002     0.003     0.029      0.13%
+   io_uring_enter     38570      0  1999.881     0.000     0.052     0.338      0.13%
+   futex                285      0  2617.820     0.000     9.185    49.779     12.01%
+   gettid               228      0     0.768     0.002     0.003     0.015      2.67%
+   futex                228      0    27.061     0.002     0.119     0.508     11.06%
+-- perftrace-geario.txt
+   io_uring_enter     36537      0  2113.787     0.000     0.058     0.283      0.10%
+   write              36534      0   120.292     0.003     0.003     0.054      0.11%
+   read               36484      9   109.972     0.002     0.003     0.019      0.11%
