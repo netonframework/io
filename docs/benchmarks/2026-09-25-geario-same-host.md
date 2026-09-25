@@ -429,3 +429,38 @@ Raw: `2026-09-25-153-round16-raw.txt`. Same af8 binary, A/B by `NETON_IO_URING_I
 **Reading.** The syscall costs more than the park it removes; under `DEFER_TASKRUN` the SEND SQE is
 executed inside the `io_uring_enter` the loop makes anyway. Reverted (the doc keeps the result).
 io_uring suite with the variant: 22/22.
+
+## Round 17 — final acceptance for SPEC §17c (af7 code = every kept step; 20 paired rounds on one core, 6 on four)
+
+Raw: `2026-09-25-153-round17-raw.txt`. Host load 0.24 at start. Same client, 128 B, 8 s per run,
+servers alternating so each group of four shares the host state.
+
+**One core** (`taskset -c 1`, 1 reactor, 12 conns, 20 rounds)
+
+| server | median qps | mean | min..max | p50 | paired vs geario: median / mean / wins |
+|---|---|---|---|---|---|
+| neton io_uring + GC target 64 MiB | 119,178 | 120,572 | 105.9k..136.6k | 87.5 µs | **0.949 / 0.945 / 6 of 20** |
+| neton epoll + GC target 64 MiB | 116,145 | 117,244 | 99.3k..131.0k | 97.8 µs | 0.895 / 0.917 / 4 of 20 |
+| neton io_uring, default GC | 113,187 | 112,661 | 88.3k..128.9k | 88.4 µs | 0.880 / 0.877 / 1 of 20 |
+| geario (io_uring) | 127,572 | 128,855 | 107.0k..151.1k | 85.8 µs | — |
+
+**Four cores** (unpinned, 4 reactors / 4 workers, 12 conns, 6 rounds)
+
+| server | median qps | p50 | paired vs geario: median / wins |
+|---|---|---|---|
+| neton epoll ×4 (GC 64) | **310,994** | 10.8 µs | **1.155 / 6 of 6** |
+| neton io_uring ×4 (GC 64) | 224,478 | 44.9 µs | 0.888 / 0 of 6 |
+| geario ×4 | 267,263 | 37.6 µs | — |
+
+**Verdict against SPEC §17c.**
+- Four cores: **met.** neton epoll ×4 beats geario in every paired round (median 1.155×).
+- One core: **not met.** Best configuration (io_uring + a 64 MiB GC target heap) is 0.95 of
+  geario paired, ahead in 6 of 20 rounds; with the default GC 0.88. The gap is small now (~5%) but
+  consistent, and it is the Kotlin/Native runtime: the GC thread and the coroutine park/resume
+  machinery per request, which have no equivalent in geario.
+- The ~10 µs p50 for epoll ×4 remains a property of server and client sharing four cores (on-core
+  hand-off, see round 6b), not evidence of a faster reactor; geario runs under the identical setup.
+
+Progress over the day, same host and method (one core, 12 conns, neton / geario paired):
+start ~0.72 (104k vs 144k) → multi-reactor n/a on one core → allocation-free paths ~0.85 →
+uring ring flags + multishot recv + lazy cancellation ~0.88 → plus GC target heap **0.95**.
