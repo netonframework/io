@@ -125,3 +125,41 @@ per-core difference to geario (1.27× pinned). SPEC §17's acceptance line expec
 EAGAIN") — draining to EAGAIN *guarantees* one EAGAIN per burst. Removing it needs the short-read
 rule (a recv that returns fewer bytes than requested counts as drained; safe under EPOLLET/EV_CLEAR
 because every new arrival raises a fresh edge), which is the next single-variable step (§17b).
+
+## Round 6 / 6b (SPEC §17b short-read rule) — rejected
+
+`neton-sr` = §17 plus "recv shorter than offered ⇒ drained, clear the flag, no EAGAIN recv" (7cceced).
+Raw: `2026-09-25-153-round6-raw.txt`, `2026-09-25-153-round6b-raw.txt`.
+
+| operating point | neton-et | neton-sr | geario |
+|---|---|---|---|
+| pinned core 1, 1 reactor, 12 conn | 102,870 | 105,396 | 126,885 |
+| unpinned, 1 reactor, 12 conn (6b, 4 rounds) | 100–128k | 101–133k | — |
+| unpinned, 4 reactors, 12 conn | 327,560 | **217,513** | 276,078 |
+| unpinned, 4 reactors, 48 conn | 340,492 | **237,522** | 297,696 |
+
+STATS pinned (part C): sr has `reads` 870,503 ≈ `writes` 870,490, `reads_would_block` 0 — the wasted
+recv is gone — and throughput is unchanged. STATS unpinned ×4 (6b), per reactor:
+
+| | et-4 (reactor 0) | sr-4 (reactor 0) |
+|---|---|---|
+| writes (= requests) | 667,251 | 518,866 |
+| events / task runs | 60,891 / 60,896 | 518,873 / 518,878 |
+| polls | 39,945 | 195,575 |
+| reads_would_block | 60,884 | 0 |
+
+**Reading.** Under `et`, one wake serves ~11 requests: after a successful recv the ready flag stays
+set, and the next recv finds the *next* request already queued. That happens because the host is
+oversubscribed (4 reactors + 12 client threads on 4 cores): `send()` sync-wakes the client thread,
+which preempts the reactor, does its recv/send and blocks; the reactor resumes and its recv hits.
+`sr` parks after every short read and pays one `epoll_wait` per request (polls ≈ requests), hence
+−33%. Pinned to one core there is no such ping-pong (both variants see one EAGAIN per request) and
+the removed recv is worth nothing measurable. Decision: keep drain-to-EAGAIN; §17b reverted.
+This also explains the ~10 µs p50 at 4 reactors (request/response completes by on-core hand-off),
+and it means the 4-reactor 330k figure partly reflects this scheduler effect — geario runs under the
+identical setup and gets 276k, so the comparison stays fair, but the number is a property of
+"server and client share 4 cores", not of the reactor alone.
+
+The per-core pinned gap (neton ~104k vs geario ~127–132k, 1.25×) is therefore *not* readiness-path
+syscall count. Next: count syscalls per request on both servers (`strace -c`) and profile the
+pinned reactor (`perf`) before touching anything else.

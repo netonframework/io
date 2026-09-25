@@ -84,8 +84,7 @@ internal expect fun suppressSigpipe(fd: Int)
 internal expect val SEND_FLAGS: Int
 
 /** Number of bytes read into [buf] when [result] is OK. */
-/** [requested] is the room the recv was offered; `count < requested` means the socket was drained. */
-internal class ReadOutcome(val result: IoResult, val count: Int, val requested: Int = 0)
+internal class ReadOutcome(val result: IoResult, val count: Int)
 
 /**
  * Non-blocking read straight into [buf]'s backing memory — no intermediate array. Reserves
@@ -100,7 +99,7 @@ internal fun readInto(fd: Int, buf: Buffer, chunk: Int): ReadOutcome {
     return when {
         n > 0 -> {
             buf.commitWrite(n)
-            ReadOutcome(IoResult.OK, n, cap)
+            ReadOutcome(IoResult.OK, n)
         }
         n == 0 -> ReadOutcome(IoResult.EOF, 0)
         errno == EINTR -> ReadOutcome(IoResult.WOULD_BLOCK, 0)

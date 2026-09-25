@@ -1,0 +1,110 @@
+# host=service kernel=5.14.0-687.44.1.el9_8.x86_64 io_uring_disabled=0 cores=4 load=0.15 rounds=8 secs=8 payload=128
+# md5 5ae22c2b457b07f19a51e89fd76006e5  echoServer-et.kexe 15c5b7e743f2eeda8575d5b5c85ecac3  echoServer-sr.kexe 
+# part A: pinned core 1, 1 reactor
+# warmup
+# mode conns=1  (server conns qps p50_us)
+neton-et-1 1 33952 26.8
+neton-sr-1 1 31710 27.5
+geario-p1 1 33339 27.8
+neton-et-1 1 32544 27.6
+neton-sr-1 1 33103 27.6
+geario-p1 1 32990 28.2
+neton-et-1 1 30127 28.4
+neton-sr-1 1 34294 26.7
+geario-p1 1 33064 28.0
+neton-et-1 1 33373 27.2
+neton-sr-1 1 33214 27.4
+geario-p1 1 32717 28.4
+neton-et-1 1 32337 27.6
+neton-sr-1 1 32325 27.8
+geario-p1 1 31598 28.8
+neton-et-1 1 33065 27.1
+neton-sr-1 1 33731 27.2
+geario-p1 1 33812 27.8
+neton-et-1 1 31414 27.9
+neton-sr-1 1 33589 27.2
+geario-p1 1 32448 28.3
+neton-et-1 1 34272 26.8
+neton-sr-1 1 34532 26.7
+geario-p1 1 31985 28.1
+# mode conns=12  (server conns qps p50_us)
+neton-et-1 12 116270 91.5
+neton-sr-1 12 110110 98.7
+geario-p1 12 127281 85.5
+neton-et-1 12 102908 105.1
+neton-sr-1 12 105711 102.3
+geario-p1 12 126489 85.7
+neton-et-1 12 110506 96.3
+neton-sr-1 12 123125 86.6
+geario-p1 12 136757 79.5
+neton-et-1 12 102833 105.5
+neton-sr-1 12 105082 103.1
+geario-p1 12 107978 101.5
+neton-et-1 12 96252 114.2
+neton-sr-1 12 97593 113.1
+geario-p1 12 113182 97.4
+neton-et-1 12 91859 119.8
+neton-sr-1 12 100997 108.8
+geario-p1 12 130802 83.4
+neton-et-1 12 111539 95.4
+neton-sr-1 12 114506 93.2
+geario-p1 12 128243 84.8
+neton-et-1 12 96612 113.4
+neton-sr-1 12 94971 115.2
+geario-p1 12 110690 99.3
+# part B: unpinned, 4 reactors
+# warmup
+# mode conns=12  (server conns qps p50_us)
+neton-et-4 12 331823 10.7
+neton-sr-4 12 259624 39.8
+geario 12 289183 37.0
+neton-et-4 12 310389 10.8
+neton-sr-4 12 207520 51.1
+geario 12 274743 37.5
+neton-et-4 12 318027 10.7
+neton-sr-4 12 223680 41.4
+geario 12 309418 36.1
+neton-et-4 12 301421 10.8
+neton-sr-4 12 202261 50.5
+geario 12 266350 37.5
+neton-et-4 12 333319 10.6
+neton-sr-4 12 234339 43.4
+geario 12 277413 36.4
+neton-et-4 12 326260 10.7
+neton-sr-4 12 218404 47.8
+geario 12 236334 44.9
+neton-et-4 12 334404 10.8
+neton-sr-4 12 216622 47.5
+geario 12 292465 35.7
+neton-et-4 12 328860 10.8
+neton-sr-4 12 206890 49.7
+geario 12 249984 42.7
+# mode conns=48  (server conns qps p50_us)
+neton-et-4 48 336884 10.5
+neton-sr-4 48 265041 151.8
+geario 48 327408 133.9
+neton-et-4 48 347292 10.5
+neton-sr-4 48 223981 175.7
+geario 48 252767 174.1
+neton-et-4 48 339061 10.6
+neton-sr-4 48 208410 197.7
+geario 48 289795 147.9
+neton-et-4 48 341922 10.7
+neton-sr-4 48 208290 194.8
+geario 48 271933 163.9
+neton-et-4 48 318766 10.7
+neton-sr-4 48 211505 202.4
+geario 48 277900 157.8
+neton-et-4 48 345669 10.4
+neton-sr-4 48 266530 122.4
+geario 48 326842 137.8
+neton-et-4 48 344482 10.5
+neton-sr-4 48 251064 164.2
+geario 48 314214 136.0
+neton-et-4 48 337951 10.5
+neton-sr-4 48 251852 176.7
+geario 48 305598 140.3
+# part C: NETON_IO_STATS, SR binary, pinned, 1 reactor, 12 conns, 8 s
+neton-sr-1-stats 12 108807 100.8
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":87123,"tasks_run":870528,"max_tasks_in_round":12,"polls":87122,"polls_zero_timeout":0,"polls_no_events":1,"events":870512,"max_events_in_poll":12,"reads":870503,"read_bytes":111422720,"reads_would_block":0,"writes":870490,"write_bytes":111422720,"writes_would_block":0}
+# done

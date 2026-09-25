@@ -1,0 +1,32 @@
+# host=service load=0.46 rounds=4 secs=8 payload=128
+# warmup
+# mode conns=12 unpinned (server conns qps p50_us)
+neton-et-1u 12 127895 91.6
+neton-sr-1u 12 133055 87.4
+neton-et-4 12 356772 10.4
+neton-sr-4 12 259108 39.9
+neton-et-1u 12 118647 99.5
+neton-sr-1u 12 128786 89.1
+neton-et-4 12 321196 10.8
+neton-sr-4 12 194105 54.0
+neton-et-1u 12 100741 117.8
+neton-sr-1u 12 105995 110.0
+neton-et-4 12 339734 10.6
+neton-sr-4 12 212913 49.3
+neton-et-1u 12 102911 115.0
+neton-sr-1u 12 101105 116.1
+neton-et-4 12 327431 10.8
+neton-sr-4 12 245319 42.8
+# stats et-4 unpinned 12 conns
+neton-et-4-stats 12 343757 10.5
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":39945,"tasks_run":60896,"max_tasks_in_round":3,"polls":39944,"polls_zero_timeout":0,"polls_no_events":0,"events":60891,"max_events_in_poll":3,"reads":728138,"read_bytes":85408128,"reads_would_block":60884,"writes":667251,"write_bytes":85408128,"writes_would_block":0}
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":46677,"tasks_run":67234,"max_tasks_in_round":4,"polls":46676,"polls_zero_timeout":0,"polls_no_events":0,"events":67229,"max_events_in_poll":3,"reads":718705,"read_bytes":83389440,"reads_would_block":67222,"writes":651480,"write_bytes":83389440,"writes_would_block":0}
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":9263,"tasks_run":14107,"max_tasks_in_round":4,"polls":9262,"polls_zero_timeout":0,"polls_no_events":0,"events":14102,"max_events_in_poll":3,"reads":703532,"read_bytes":88247552,"reads_would_block":14095,"writes":689434,"write_bytes":88247552,"writes_would_block":0}
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":97963,"tasks_run":152122,"max_tasks_in_round":4,"polls":97962,"polls_zero_timeout":0,"polls_no_events":0,"events":152114,"max_events_in_poll":3,"reads":894133,"read_bytes":94979840,"reads_would_block":152099,"writes":742030,"write_bytes":94979840,"writes_would_block":0}
+# stats sr-4 unpinned 12 conns
+neton-sr-4-stats 12 251291 42.0
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":195576,"tasks_run":518878,"max_tasks_in_round":3,"polls":195575,"polls_zero_timeout":0,"polls_no_events":0,"events":518873,"max_events_in_poll":3,"reads":518869,"read_bytes":66414848,"reads_would_block":0,"writes":518866,"write_bytes":66414848,"writes_would_block":0}
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":239495,"tasks_run":523600,"max_tasks_in_round":3,"polls":239494,"polls_zero_timeout":0,"polls_no_events":0,"events":523595,"max_events_in_poll":3,"reads":523591,"read_bytes":67019264,"reads_would_block":0,"writes":523588,"write_bytes":67019264,"writes_would_block":0}
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":216161,"tasks_run":489270,"max_tasks_in_round":5,"polls":216160,"polls_zero_timeout":0,"polls_no_events":0,"events":489264,"max_events_in_poll":3,"reads":489261,"read_bytes":62625024,"reads_would_block":0,"writes":489258,"write_bytes":62625024,"writes_would_block":0}
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":210167,"tasks_run":478723,"max_tasks_in_round":3,"polls":210166,"polls_zero_timeout":0,"polls_no_events":0,"events":478715,"max_events_in_poll":3,"reads":478702,"read_bytes":61273344,"reads_would_block":0,"writes":478698,"write_bytes":61273344,"writes_would_block":0}
+# done

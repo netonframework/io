@@ -336,10 +336,10 @@ fun serveTcp(host: String, port: Int, reactors: Int = cpuCount(), handler: suspe
 
 **结果（2026-09-25，153 第 5 轮，`docs/benchmarks/2026-09-25-geario-same-host.md`）**：polls/req 0.10（每次 `epoll_wait` 约 10 个事件），但吞吐仅 +2–4%（在抖动范围内）。原验收写的"reads_would_block/req 从 ~1 降到 ~0"是错的：第 2 条"recv 直到 EAGAIN"本身保证每个 burst 一次 EAGAIN，实测每请求恰好 1 次（1,525,923 recv / 762,578 请求）。这一次多余的 recv 就是与 geario 单核差距（1.27×）的全部来源，由 §17b 处理。
 
-### 17b. 短读即排空（short-read rule）
+### 17b. 短读即排空（short-read rule）— 已试验，**否决**
 
-**改动**：`recv` 返回的字节数小于提供的空间（`ReadOutcome.requested`）即视为套接字已排空：清就绪位并返回，不再多做一次必然 EAGAIN 的 recv。返回满额时保持就绪位，下次 read 继续 recv。
+**改动（已回退）**：`recv` 返回字节数小于提供空间即视为排空，清就绪位、不再做一次必然 EAGAIN 的 recv。
 
-**为什么安全**：EPOLLET / EV_CLEAR 对每次新数据到达都会再产生一次边沿（内核 `sk_data_ready` → 重新入就绪队列 / knote 重新激活），与用户态是否已把队列读空无关。因此 recv 之后、park 之前到达的数据一定带来新事件，不会丢唤醒；最坏情况是多一次 EAGAIN（无害）。poll(2) 驱动不常驻，不受影响；io_uring 不受影响。
+**结果（2026-09-25，153 第 6/6b 轮）**：单核钉扎 105k vs 103k（无差别，STATS 证实 EAGAIN recv 已归零：870,503 reads / 870,490 writes）；**4 reactor 放开 217k vs 328k（−33%，8/8 轮一致）**。原因由 6b 的每 reactor STATS 给出：§17 版本 667k 请求只用了 61k 次事件/唤醒——成功 recv 后就绪位保持，下一次 recv 直接读到下一个请求。这在 4 核跑 4 reactor + 12 客户端线程的过载场景下成立：`send()` 同步唤醒客户端线程并抢占 reactor，客户端在此期间收发完毕再阻塞，reactor 恢复后 recv 立即命中。短读规则每个请求都 park，退化为每请求一次 `epoll_wait`（STATS：polls ≈ 请求数）。这也解释了 4 reactor 下"物理上反常"的 ~10 µs p50（请求-应答在同核直接交接完成）。
 
-**验收**：单变量 153 第 6 轮（§17 二进制 vs §17b 二进制，epoll），单核钉扎与 4 reactor；`NETON_IO_STATS` 的 reads_would_block/req 应从 1 降到 ~0，reads/req 从 2 降到 ~1。正确性：macOS 全套 + `EdgeTriggeredTest`（满额读后仍需继续读的情形由 `coalescedFramesAreDrainedAcrossBursts` 覆盖）。
+**结论**：保留"读到 EAGAIN 为止"；那一次 EAGAIN recv 成本极低（单核数据无差别）而在争用下换来机会性批处理。就绪路径的 syscall 数不是单核差距的来源，下一步用 strace/perf 找真正的差距（见 §17c）。
