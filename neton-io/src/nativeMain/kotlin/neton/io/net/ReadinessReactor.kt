@@ -33,6 +33,13 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     // Cancellation is watched once per (fd, direction, coroutine Job), not once per park: the
     // handle is reused for every park by the same coroutine and disposed on close or when another
     // coroutine takes over that side of the stream.
+    // SPEC §19.5 fairness: the poll round in which each fd last had a successful recv, and the
+    // readers deferred to the next round because they already had theirs in this one.
+    private var servedRound = IntArray(64)
+    private var round = 1
+    private var deferredConts = arrayOfNulls<Continuation<Unit>>(64)
+    private var deferredFds = IntArray(64)
+    private var deferredCount = 0
     private var readJobs = arrayOfNulls<Job>(64)
     private var writeJobs = arrayOfNulls<Job>(64)
     private var readCancelHandles = arrayOfNulls<DisposableHandle>(64)
@@ -54,6 +61,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         while (n <= fd) n *= 2
         readWaiters = readWaiters.copyOf(n); writeWaiters = writeWaiters.copyOf(n)
         readJobs = readJobs.copyOf(n); writeJobs = writeJobs.copyOf(n)
+        servedRound = servedRound.copyOf(n)
         readCancelHandles = readCancelHandles.copyOf(n); writeCancelHandles = writeCancelHandles.copyOf(n)
         persistent = persistent.copyOf(n); readyRead = readyRead.copyOf(n)
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
@@ -120,10 +128,30 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         readJobs[fd] = null; writeJobs[fd] = null
     }
 
+    /**
+     * SPEC §19.5: park until the next poll round. Used by a reader whose connection already had a
+     * successful recv in this round, so every ready connection is served once before any is served
+     * twice. Without it, a client thread woken by our send() onto this core refilled its socket at
+     * once and drain-to-EAGAIN served the same connection again and again (Jain 0.29-0.40).
+     */
+    private suspend fun deferToNextRound(fd: Int): Unit = suspendCoroutineUninterceptedOrReturn { cont ->
+        if (deferredCount == deferredConts.size) {
+            deferredConts = deferredConts.copyOf(deferredCount * 2); deferredFds = deferredFds.copyOf(deferredCount * 2)
+        }
+        deferredConts[deferredCount] = cont; deferredFds[deferredCount] = fd; deferredCount++
+        COROUTINE_SUSPENDED
+    }
+
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
         ensureFd(fd)
         while (true) {
             if (persistent[fd] && !readyRead[fd]) { waitReadable(fd); continue }
+            if (servedRound[fd] == round) {
+                deferToNextRound(fd)
+                // A deferred reader is not in a waiter slot, so cancellation is checked here.
+                kotlin.coroutines.coroutineContext[Job]?.let { if (!it.isActive) throw it.getCancellationException() }
+                continue
+            }
             val cap = dst.reserve(chunk)                 // may replace the backing array: pin after
             val n = recvPinned(fd, pinFor(fd, dst.backingArray()), dst.writerIndex(), cap)
             stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
@@ -131,7 +159,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                 // Deliberately no short-read rule here (SPEC §17b, rejected): keeping the ready
                 // flag set after a successful recv lets the next read() pick up a request that
                 // arrived meanwhile without a poll round; the EAGAIN recv it costs is cheap.
-                n > 0 -> { dst.commitWrite(n); return n }
+                n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; return n }
                 n == EOF_RESULT -> return -1
                 n == WOULD_BLOCK -> { readyRead[fd] = false; waitReadable(fd) }
                 else -> { val e = errno; throw IoException("read failed: ${errnoMessage(e)}", e) }
@@ -179,7 +207,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             drainTasks()
             if (root.isCompleted) break
 
-            val timeout = if (hasTasks()) 0 else nextTimerMillis()
+            val timeout = if (hasTasks() || deferredCount > 0) 0 else nextTimerMillis()
             var woke = false
             val n = poller.poll(timeout) { fd, readable, writable ->
                 if (fd == wakeReadFd) { woke = true; return@poll }
@@ -198,6 +226,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             }
             if (woke) { onWake(); poller.armRead(wakeReadFd) }
             countPoll(timeout == 0, n)
+            // New round: readers deferred in the last one get their turn now (SPEC §19.5).
+            round++
+            for (i in 0 until deferredCount) { enqueueResume(deferredConts[i]!!); deferredConts[i] = null }
+            deferredCount = 0
         }
     }
 
@@ -207,6 +239,19 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         readWaiters[fd]?.let { readWaiters[fd] = null; enqueueResume(it, ClosedException()) }
         writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, ClosedException()) }
         forgetCancellation(fd)
+        // A reader deferred to the next round must not run recv on this fd number, which the
+        // kernel may hand to a new connection: fail it now like a parked reader.
+        var i = 0
+        while (i < deferredCount) {
+            if (deferredFds[i] == fd) {
+                val c = deferredConts[i]!!
+                deferredCount--
+                deferredConts[i] = deferredConts[deferredCount]; deferredFds[i] = deferredFds[deferredCount]
+                deferredConts[deferredCount] = null
+                enqueueResume(c, ClosedException())
+            } else i++
+        }
+        servedRound[fd] = 0
         persistent[fd] = false; readyRead[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         poller.forget(fd)
