@@ -372,3 +372,18 @@ at 8.5% because the uring path still allocates an `invokeOnCancellation` node + 
 step 7. The uring ×4 deficit vs epoll ×4 shows as higher user share (`reap`, `prepSqe`) and
 `exit_to_user_mode_loop` 4.4%; it is not the priority — the target is geario, which epoll ×4
 already exceeds on four cores.
+
+## Round 14 (SPEC §17c step 7: no cancellation node on the uring hot path, b0d32bb) — paired
+
+Raw: `2026-09-25-153-round14-raw.txt`.
+
+| operating point | af6 (step 6) | af7 (step 7) | paired af7/af6 | vs geario |
+|---|---|---|---|---|
+| pinned core 1, 12 conns, 10 rounds | 108,061 | 110,482 | 1.031 (6/10) | 0.863 (0/10); geario 125,028 |
+| unpinned ×4, 12 conns, 4 rounds | — | 236,624 | — | 0.963 (1/4); epoll ×4 317,096 = **1.245 (4/4)** vs geario 263,532 |
+
+**Reading.** Marginal (+3%, 6/10); kept because it only removes allocations. Linux tests: io_uring
+22/22; epoll and polling each lost `EdgeTriggeredTest` to `bind: Address already in use` on the
+test's fixed port right after the previous driver's run — a test-harness flake (fixed by a bind
+retry in the test, not a reactor change). Standing after 14 rounds: four cores — epoll ×4 is 1.25×
+geario paired; one core — uring 0.86, epoll 0.85–0.92 of geario.

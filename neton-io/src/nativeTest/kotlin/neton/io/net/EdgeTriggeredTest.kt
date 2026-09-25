@@ -19,13 +19,24 @@ import kotlin.test.assertEquals
  */
 class EdgeTriggeredTest {
 
+    // A connection from the previous test binary (another driver's run, seconds earlier) can still
+    // hold the port; SO_REUSEADDR does not cover that case and it surfaced as a flaky EADDRINUSE
+    // on 153 when the three driver suites run back to back. Retry the bind for a short while.
+    private suspend fun listenRetrying(port: Int): TcpListener {
+        var last: Throwable? = null
+        repeat(50) {
+            try { return listen("127.0.0.1", port) } catch (e: IllegalStateException) { last = e; delay(100) }
+        }
+        throw last!!
+    }
+
     @Test
     fun coalescedFramesAreDrainedAcrossBursts() = runReactor {
         // Several frames written in one burst, then a pause, then more: with an edge per burst
         // the reader must drain the first burst fully (not park after the first frame) and pick
         // up the second burst from a fresh edge.
         val port = 39840
-        val server = listen("127.0.0.1", port)
+        val server = listenRetrying(port)
         var got: List<String> = emptyList()
         val srv = launch {
             val c = server.accept()
@@ -47,7 +58,7 @@ class EdgeTriggeredTest {
         // The server is busy (delaying) when data arrives; the edge must be remembered so the
         // later read returns immediately instead of parking forever.
         val port = 39841
-        val server = listen("127.0.0.1", port)
+        val server = listenRetrying(port)
         var line = ""
         val srv = launch {
             val c = server.accept()
@@ -65,7 +76,7 @@ class EdgeTriggeredTest {
     @Test
     fun parkedReaderWakesOnPeerClose() = runReactor {
         val port = 39842
-        val server = listen("127.0.0.1", port)
+        val server = listenRetrying(port)
         var eof = 0
         val srv = launch {
             val c: IoStream = server.accept()
