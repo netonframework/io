@@ -84,6 +84,27 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     private var resumeHead = 0
     private var resumeCount = 0
 
+    // Same, for completion-driver ops whose result is an Int (byte count, fd) — a separate ring so the
+    // value needs no box on the way through.
+    private var intConts = arrayOfNulls<kotlin.coroutines.Continuation<Int>>(64)
+    private var intVals = IntArray(64)
+    private var intErrs = arrayOfNulls<Throwable>(64)
+    private var intHead = 0
+    private var intCount = 0
+
+    /** Queue [cont] to be resumed with [value] (or [error] if non-null) on the next drain. Owner thread only. */
+    protected fun enqueueResumeInt(cont: kotlin.coroutines.Continuation<Int>, value: Int, error: Throwable? = null) {
+        if (intCount == intConts.size) {
+            val n = intConts.size
+            val c2 = arrayOfNulls<kotlin.coroutines.Continuation<Int>>(n * 2); val v2 = IntArray(n * 2); val e2 = arrayOfNulls<Throwable>(n * 2)
+            for (i in 0 until intCount) { val j = (intHead + i) % n; c2[i] = intConts[j]; v2[i] = intVals[j]; e2[i] = intErrs[j] }
+            intConts = c2; intVals = v2; intErrs = e2; intHead = 0
+        }
+        val i = (intHead + intCount) % intConts.size
+        intConts[i] = cont; intVals[i] = value; intErrs[i] = error
+        intCount++
+    }
+
     /** Queue [cont] to be resumed (with [error] if non-null) on this reactor's next drain. Owner thread only. */
     protected fun enqueueResume(cont: kotlin.coroutines.Continuation<Unit>, error: Throwable? = null) {
         if (resumeCount == resumeConts.size) {
@@ -250,6 +271,12 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
                 // A raw (uninterceptd) continuation: runs the coroutine's state machine right here,
                 // which is correct because this *is* its dispatcher's thread (SPEC §19.3).
                 if (e == null) c.resumeWith(Result.success(Unit)) else c.resumeWith(Result.failure(e))
+            } else if (intCount > 0) {
+                val i = intHead
+                val c = intConts[i]!!; val v = intVals[i]; val e = intErrs[i]
+                intConts[i] = null; intErrs[i] = null
+                intHead = (i + 1) % intConts.size; intCount--
+                if (e == null) c.resumeWith(Result.success(v)) else c.resumeWith(Result.failure(e))
             } else if (tasks.isNotEmpty()) {
                 tasks.removeFirst().run()
             } else break
@@ -280,7 +307,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
         fflush(stderr)
     }
 
-    protected fun hasTasks(): Boolean = resumeCount > 0 || tasks.isNotEmpty()
+    protected fun hasTasks(): Boolean = resumeCount > 0 || intCount > 0 || tasks.isNotEmpty()
 
     /** Read available bytes into [dst]; returns the count (>0) or -1 at EOF. Reactor thread only. */
     abstract suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int

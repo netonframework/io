@@ -14,9 +14,12 @@ import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.toLong
 import kotlinx.cinterop.value
-import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.plus
@@ -95,7 +98,7 @@ import kotlin.coroutines.resume
  * if some never arrive the buffers are intentionally leaked (kept pinned), never freed under the
  * kernel. Cancellation must originate on the reactor thread (the reactor is single-threaded).
  */
-@OptIn(ExperimentalForeignApi::class)
+@OptIn(ExperimentalForeignApi::class, InternalCoroutinesApi::class)
 internal class UringReactor : Reactor() {
 
     private val ringFd: Int
@@ -125,7 +128,9 @@ internal class UringReactor : Reactor() {
     // ---- in-flight ops: a slot table instead of a HashMap<ULong, …> (SPEC §17c: no boxed keys, no
     // per-op objects). user_data = slot index << 32 | generation; the generation makes a stale CQE
     // for a reused slot harmless. Control ops (wake poll, timeout, cancel) use CONTROL_BASE + n.
-    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: CancellableContinuation<Int>? = null; var multishot = false }
+    // SPEC §19.3 (io_uring half): the awaiting coroutine is stored as its raw continuation; every path
+    // that resumes it (CQE, close, cancellation) takes it out of the slot first.
+    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: Continuation<Int>? = null; var multishot = false; var cancelOnAbort = true }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -173,7 +178,7 @@ internal class UringReactor : Reactor() {
     private var msArmed = BooleanArray(64)
     private var msEof = BooleanArray(64)
     private var msErr = IntArray(64)
-    private var readers = arrayOfNulls<CancellableContinuation<Unit>>(64)
+    private var readers = arrayOfNulls<Continuation<Unit>>(64)
     private var starved = IntArray(64); private var starvedCount = 0   // fds waiting for a free pool buffer
 
     private fun ensureMsFd(fd: Int) {
@@ -232,7 +237,7 @@ internal class UringReactor : Reactor() {
         else if (res < 0 && -res != ENOBUFS && -res != ECANCELED) msErr[fd] = -res
         if ((flags and NETON_IORING_CQE_F_MORE.toUInt()) == 0u) { msArmed[fd] = false; releaseSlot(idx, slot) }
         val r = readers[fd]
-        if (r != null) { readers[fd] = null; r.resume(Unit) }
+        if (r != null) { readers[fd] = null; enqueueResume(r) }
     }
 
     private suspend fun readMultishot(fd: Int, dst: Buffer): Int {
@@ -251,10 +256,12 @@ internal class UringReactor : Reactor() {
             if (msEof[fd]) return -1
             if (msErr[fd] != 0) { val e = msErr[fd]; msErr[fd] = 0; throw IoException("io_uring recv failed: ${errnoMessage(e)}", e) }
             if (!msArmed[fd]) armMultishot(fd)
-            // No invokeOnCancellation (step 7): the multishot op stays armed across a cancelled read,
-            // and a cancelled continuation ignores the resume the next chunk would give it; the
-            // slot is overwritten by the next park. Same lazy cleanup as the readiness path.
-            suspendCancellableCoroutine<Unit> { cont -> readers[fd] = cont }
+            // The multishot op stays armed across a cancelled read; only the parked reader is woken.
+            suspendCoroutineUninterceptedOrReturn<Unit> { cont ->
+                watchCancellation(fd, cont)
+                readers[fd] = cont
+                COROUTINE_SUSPENDED
+            }
         }
     }
 
@@ -264,6 +271,62 @@ internal class UringReactor : Reactor() {
     private class PinRef(val array: ByteArray, val pinned: Pinned<ByteArray>) { var refs = 0; var retired = false
         fun release() { if (retired && refs == 0) pinned.unpin() } }
     private var pinRefs = arrayOfNulls<PinRef>(64)
+
+    // Cancellation is watched once per (fd, coroutine Job): two watches per fd, because a stream's
+    // read loop and write loop are usually different coroutines. On cancellation (any thread) the
+    // handler hops to the reactor and wakes that job's parked continuations on that fd.
+    private var watchJobA = arrayOfNulls<Job>(64); private var watchHandleA = arrayOfNulls<DisposableHandle>(64)
+    private var watchJobB = arrayOfNulls<Job>(64); private var watchHandleB = arrayOfNulls<DisposableHandle>(64)
+
+    private fun ensureWatch(fd: Int) {
+        if (fd < watchJobA.size) return
+        var n = watchJobA.size
+        while (n <= fd) n *= 2
+        watchJobA = watchJobA.copyOf(n); watchHandleA = watchHandleA.copyOf(n)
+        watchJobB = watchJobB.copyOf(n); watchHandleB = watchHandleB.copyOf(n)
+    }
+
+    /** Before parking on [fd]: refuse if already cancelled, and make sure cancellation can wake us. */
+    private fun watchCancellation(fd: Int, cont: Continuation<*>) {
+        val job = cont.context[Job] ?: return
+        if (!job.isActive) throw job.getCancellationException()
+        ensureWatch(fd)
+        if (watchJobA[fd] === job || watchJobB[fd] === job) return
+        val handle = job.invokeOnCompletion(onCancelling = true, invokeImmediately = false) {
+            postToReactor { onJobCancelled(fd, job) }
+        }
+        if (watchJobA[fd] == null) { watchJobA[fd] = job; watchHandleA[fd] = handle }
+        else if (watchJobB[fd] == null) { watchJobB[fd] = job; watchHandleB[fd] = handle }
+        else { watchHandleA[fd]?.dispose(); watchJobA[fd] = watchJobB[fd]; watchHandleA[fd] = watchHandleB[fd]; watchJobB[fd] = job; watchHandleB[fd] = handle }
+    }
+
+    /**
+     * [job] was cancelled: wake its continuations parked on [fd] with CancellationException. The op
+     * itself stays in flight (its buffer stays pinned) until its CQE; ops that must not complete
+     * behind the caller's back (plain recv, accept, connect poll) are also cancelled in the kernel.
+     */
+    private fun onJobCancelled(fd: Int, job: Job) {
+        val ex = job.getCancellationException()
+        if (fd < readers.size) {
+            val r = readers[fd]
+            if (r != null && r.context[Job] === job) { readers[fd] = null; enqueueResume(r, ex) }
+        }
+        for (i in slots.indices) {
+            val slot = slots[i] ?: continue
+            if (!slot.live || slot.fd != fd) continue
+            val c = slot.cont ?: continue
+            if (c.context[Job] !== job) continue
+            slot.cont = null
+            enqueueResumeInt(c, 0, ex)
+            if (slot.cancelOnAbort) requestCancel((i.toULong() shl 32) or slot.gen.toULong())
+        }
+    }
+
+    private fun forgetWatches(fd: Int) {
+        if (fd >= watchJobA.size) return
+        watchHandleA[fd]?.dispose(); watchHandleB[fd]?.dispose()
+        watchHandleA[fd] = null; watchHandleB[fd] = null; watchJobA[fd] = null; watchJobB[fd] = null
+    }
 
     private fun ensureFd(fd: Int) {
         if (fd < pinRefs.size) return
@@ -411,18 +474,17 @@ internal class UringReactor : Reactor() {
         if (pin != null) pin.refs++
         val gen = slot.gen
         val ud = (idx.toULong() shl 32) or gen.toULong()
-        prepSqe(opcode, fd, addr, len, opFlags, ud)
-        return suspendCancellableCoroutine { cont ->
-            slot.cont = cont
-            if (cancelOnAbort) cont.invokeOnCancellation {
-                // May run on any thread, and both the slot table and the SQ ring are reactor-thread
-                // state, so hop back before touching them (P1-3).
-                postToReactor {
-                    // Drop the waiter but keep the slot (and its pin): the kernel still owns the
-                    // buffer until this op's CQE. Ask the kernel to cancel; the CQE says when it is over.
-                    if (slot.live && slot.gen == gen) { slot.cont = null; requestCancel(ud) }
-                }
+        slot.cancelOnAbort = cancelOnAbort
+        return suspendCoroutineUninterceptedOrReturn { cont ->
+            // Refuses to park (throws) if already cancelled — before the SQE exists, so nothing leaks.
+            try { watchCancellation(fd, cont) } catch (t: Throwable) {
+                if (pin != null) pin.refs--
+                releaseSlot(idx, slot)
+                throw t
             }
+            prepSqe(opcode, fd, addr, len, opFlags, ud)
+            slot.cont = cont
+            COROUTINE_SUSPENDED
         }
     }
 
@@ -467,7 +529,7 @@ internal class UringReactor : Reactor() {
             val cont = slot.cont
             if (cont == null && !slot.multishot) continue
             slot.cont = null
-            cont?.resumeWithException(ClosedException())
+            if (cont != null) enqueueResumeInt(cont, 0, ClosedException())
             requestCancel((i.toULong() shl 32) or slot.gen.toULong())
         }
         if (multishot && fd < msArmed.size) {
@@ -475,10 +537,11 @@ internal class UringReactor : Reactor() {
             // chunks nobody read go back to the pool; the parked reader fails like any other waiter.
             while (rqCount[fd] > 0) reprovide((rqPop(fd) shr 32).toInt())
             msEof[fd] = false; msErr[fd] = 0
-            readers[fd]?.let { readers[fd] = null; it.resumeWithException(ClosedException()) }
+            readers[fd]?.let { readers[fd] = null; enqueueResume(it, ClosedException()) }
             var i = 0
             while (i < starvedCount) { if (starved[i] == fd) starved[i] = starved[--starvedCount] else i++ }
         }
+        forgetWatches(fd)
         retirePin(fd)
         closeFd(fd)
     }
@@ -552,8 +615,8 @@ internal class UringReactor : Reactor() {
             val cont = slot.cont                           // null if the awaiter was cancelled/closed
             releaseSlot(idx, slot)
             if (cont == null) continue
-            if (res < 0) cont.resumeWithException(IoException("io_uring op failed: ${errnoMessage(-res)}", -res))
-            else cont.resume(res)
+            if (res < 0) enqueueResumeInt(cont, 0, IoException("io_uring op failed: ${errnoMessage(-res)}", -res))
+            else enqueueResumeInt(cont, res)
         }
         neton_store32(cqBase, cqHeadOff, tail)
         return n
