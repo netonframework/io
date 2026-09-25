@@ -30,6 +30,15 @@ package = neton.io.uring
 #define NETON_IORING_OP_SEND     26
 #define NETON_IORING_OP_ASYNC_CANCEL 14
 #define NETON_IORING_OP_TIMEOUT  11
+#define NETON_IORING_OP_RECV     27
+#define NETON_IORING_OP_PROVIDE_BUFFERS 31
+
+/* sqe.flags / sqe.ioprio bits and cqe.flags bits for multishot recv with provided buffers */
+#define NETON_IOSQE_BUFFER_SELECT   (1U << 2)
+#define NETON_IORING_RECV_MULTISHOT (1U << 1)
+#define NETON_IORING_CQE_F_BUFFER   (1U << 0)
+#define NETON_IORING_CQE_F_MORE     (1U << 1)
+#define NETON_IORING_CQE_BUFFER_SHIFT 16
 
 struct neton_kernel_timespec { int64_t tv_sec; long long tv_nsec; };
 

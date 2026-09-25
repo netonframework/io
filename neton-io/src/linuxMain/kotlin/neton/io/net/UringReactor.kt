@@ -17,6 +17,10 @@ import kotlinx.cinterop.value
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.plus
+import kotlinx.cinterop.reinterpret
 import neton.io.bytes.Buffer
 import neton.io.core.ClosedException
 import neton.io.core.IoException
@@ -34,6 +38,13 @@ import neton.io.uring.NETON_IORING_OP_POLL_ADD
 import neton.io.uring.NETON_IORING_OP_READ
 import neton.io.uring.NETON_IORING_OP_SEND
 import neton.io.uring.NETON_IORING_OP_TIMEOUT
+import neton.io.uring.NETON_IORING_OP_RECV
+import neton.io.uring.NETON_IORING_OP_PROVIDE_BUFFERS
+import neton.io.uring.NETON_IOSQE_BUFFER_SELECT
+import neton.io.uring.NETON_IORING_RECV_MULTISHOT
+import neton.io.uring.NETON_IORING_CQE_F_BUFFER
+import neton.io.uring.NETON_IORING_CQE_F_MORE
+import neton.io.uring.NETON_IORING_CQE_BUFFER_SHIFT
 import neton.io.uring.neton_kernel_timespec
 import neton.io.uring.NETON_MSG_NOSIGNAL
 import neton.io.uring.NETON_POLLIN
@@ -55,6 +66,11 @@ import platform.posix.fprintf
 import platform.posix.stderr
 import platform.posix.getenv
 import platform.posix.memset
+import platform.posix.memcpy
+import platform.posix.malloc
+import platform.posix.free
+import platform.posix.ENOBUFS
+import platform.posix.ECANCELED
 import platform.posix.mmap
 import platform.posix.munmap
 import kotlin.coroutines.resume
@@ -104,12 +120,12 @@ internal class UringReactor : Reactor() {
 
     /** True when the ring was created with COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN. */
     private var modernSetup = false
-    override val driverName: String get() = if (modernSetup) "iouring+defer" else "iouring"
+    override val driverName: String get() = (if (modernSetup) "iouring+defer" else "iouring") + (if (multishot) "+multishot" else "")
 
     // ---- in-flight ops: a slot table instead of a HashMap<ULong, …> (SPEC §17c: no boxed keys, no
     // per-op objects). user_data = slot index << 32 | generation; the generation makes a stale CQE
     // for a reused slot harmless. Control ops (wake poll, timeout, cancel) use CONTROL_BASE + n.
-    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: CancellableContinuation<Int>? = null }
+    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: CancellableContinuation<Int>? = null; var multishot = false }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -135,9 +151,112 @@ internal class UringReactor : Reactor() {
     }
 
     private fun releaseSlot(idx: Int, slot: Slot) {
-        slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1
+        slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false
         freeSlots[freeTop++] = idx
         liveOps--
+    }
+
+    // ---- SPEC §17c step 6: multishot recv with provided buffers. One IORING_OP_RECV|MULTISHOT per
+    // connection stays armed and completes once per arriving chunk into a kernel-selected buffer
+    // from a pool this reactor provided (IORING_OP_PROVIDE_BUFFERS). read() copies the chunk into
+    // the caller's Buffer and gives the pool buffer back. Per request this replaces "submit recv →
+    // EAGAIN → arm poll → wake → recv" with "wake → recv → CQE" inside the kernel, and no recv SQE.
+    // NETON_IO_URING_MULTISHOT=0 disables it (A/B); NETON_IO_URING_BUFS / _BUFSZ size the pool.
+    private val multishot: Boolean
+    private val bufCount: Int
+    private val bufSize: Int
+    private var bufBase: CPointer<ByteVar>? = null
+    private var freeBufs = 0
+    // per fd: queue of completed chunks (bid shl 32 | len), the parked reader, terminal state
+    private var rq = arrayOfNulls<LongArray>(64)
+    private var rqHead = IntArray(64); private var rqCount = IntArray(64)
+    private var msArmed = BooleanArray(64)
+    private var msEof = BooleanArray(64)
+    private var msErr = IntArray(64)
+    private var readers = arrayOfNulls<CancellableContinuation<Unit>>(64)
+    private var starved = IntArray(64); private var starvedCount = 0   // fds waiting for a free pool buffer
+
+    private fun ensureMsFd(fd: Int) {
+        if (fd < msArmed.size) return
+        var n = msArmed.size
+        while (n <= fd) n *= 2
+        rq = rq.copyOf(n); rqHead = rqHead.copyOf(n); rqCount = rqCount.copyOf(n)
+        msArmed = msArmed.copyOf(n); msEof = msEof.copyOf(n); msErr = msErr.copyOf(n)
+        readers = readers.copyOf(n); starved = starved.copyOf(n)
+    }
+
+    private fun rqPush(fd: Int, bid: Int, len: Int) {
+        var q = rq[fd]
+        if (q == null) { q = LongArray(16); rq[fd] = q }
+        if (rqCount[fd] == q.size) {
+            val bigger = LongArray(q.size * 2)
+            for (i in 0 until rqCount[fd]) bigger[i] = q[(rqHead[fd] + i) % q.size]
+            rq[fd] = bigger; rqHead[fd] = 0; q = bigger
+        }
+        q[(rqHead[fd] + rqCount[fd]) % q.size] = (bid.toLong() shl 32) or len.toLong()
+        rqCount[fd]++
+    }
+
+    private fun rqPop(fd: Int): Long {
+        val q = rq[fd]!!
+        val v = q[rqHead[fd]]
+        rqHead[fd] = (rqHead[fd] + 1) % q.size; rqCount[fd]--
+        return v
+    }
+
+    /** Give pool buffer [bid] back to the kernel (one SQE, no syscall of its own). */
+    private fun reprovide(bid: Int) {
+        prepSqe(NETON_IORING_OP_PROVIDE_BUFFERS, 1, (bufBase!! + bid * bufSize)!!.toLong(), bufSize, 0, controlUd(), off = bid.toULong(), bufGroup = BUF_GROUP)
+        freeBufs++
+        if (starvedCount > 0) { val f = starved[--starvedCount]; if (!msArmed[f] && !msEof[f]) armMultishot(f) }
+    }
+
+    private fun armMultishot(fd: Int) {
+        if (freeBufs == 0) { starved[starvedCount++] = fd; return }
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.multishot = true
+        prepSqe(NETON_IORING_OP_RECV, fd, 0L, 0, 0, (idx.toULong() shl 32) or slot.gen.toULong(),
+            sqeFlags = NETON_IOSQE_BUFFER_SELECT.toInt(), ioprio = NETON_IORING_RECV_MULTISHOT.toInt(), bufGroup = BUF_GROUP)
+        msArmed[fd] = true
+    }
+
+    /** A CQE for a multishot recv slot: queue the chunk (or record EOF/error), keep or drop the arm, wake the reader. */
+    private fun onMultishotCqe(idx: Int, slot: Slot, res: Int, flags: UInt) {
+        val fd = slot.fd
+        if (res > 0 && (flags and NETON_IORING_CQE_F_BUFFER.toUInt()) != 0u) {
+            freeBufs--
+            rqPush(fd, (flags shr NETON_IORING_CQE_BUFFER_SHIFT).toInt(), res)
+            stats?.let { it.reads++; it.readBytes += res }
+        } else if (res == 0) msEof[fd] = true
+        else if (res < 0 && -res != ENOBUFS && -res != ECANCELED) msErr[fd] = -res
+        if ((flags and NETON_IORING_CQE_F_MORE.toUInt()) == 0u) { msArmed[fd] = false; releaseSlot(idx, slot) }
+        val r = readers[fd]
+        if (r != null) { readers[fd] = null; r.resume(Unit) }
+    }
+
+    private suspend fun readMultishot(fd: Int, dst: Buffer): Int {
+        ensureMsFd(fd)
+        while (true) {
+            if (rqCount[fd] > 0) {
+                val e = rqPop(fd)
+                val bid = (e shr 32).toInt(); val len = (e and 0xFFFF_FFFFL).toInt()
+                dst.reserve(len)
+                val pin = pinFor(fd, dst.backingArray())
+                memcpy(pin.pinned.addressOf(dst.writerIndex()), bufBase!! + bid * bufSize, len.convert())
+                dst.commitWrite(len)
+                reprovide(bid)
+                return len
+            }
+            if (msEof[fd]) return -1
+            if (msErr[fd] != 0) { val e = msErr[fd]; msErr[fd] = 0; throw IoException("io_uring recv failed: ${errnoMessage(e)}", e) }
+            if (!msArmed[fd]) armMultishot(fd)
+            suspendCancellableCoroutine<Unit> { cont ->
+                readers[fd] = cont
+                // The multishot op stays armed across a cancelled read; only the parked reader is dropped.
+                cont.invokeOnCancellation { postToReactor { if (readers[fd] === cont) readers[fd] = null } }
+            }
+        }
     }
 
     // ---- pins: one per fd for the buffer last used on it, ref-counted by the ops that own it. The
@@ -209,13 +328,43 @@ internal class UringReactor : Reactor() {
         cqMaskOff = params.cq_off.ring_mask
         cqesOff = params.cq_off.cqes
         nativeHeap.free(params.ptr.rawValue)
+
+        // Provided-buffer pool for multishot recv. Registered synchronously (one blocking enter) so
+        // that an unsupported kernel is detected here and reads fall back to plain recv SQEs.
+        val wantMs = getenv("NETON_IO_URING_MULTISHOT")?.toKString() != "0"
+        bufCount = getenv("NETON_IO_URING_BUFS")?.toKString()?.toIntOrNull() ?: DEFAULT_BUFS
+        bufSize = getenv("NETON_IO_URING_BUFSZ")?.toKString()?.toIntOrNull() ?: DEFAULT_BUFSZ
+        var ok = false
+        if (wantMs) {
+            val base = malloc((bufCount.toLong() * bufSize).convert())?.reinterpret<ByteVar>()
+            if (base != null) {
+                bufBase = base
+                val ud = controlUd()
+                prepSqe(NETON_IORING_OP_PROVIDE_BUFFERS, bufCount, base.toLong(), bufSize, 0, ud, off = 0uL, bufGroup = BUF_GROUP)
+                neton_uring_enter(ringFd, pending(), 1u, NETON_IORING_ENTER_GETEVENTS.toUInt())
+                // Reap by hand: the CQE for `ud` tells whether the kernel accepted the pool.
+                val mask = neton_load32(cqBase, cqMaskOff)
+                var head = neton_load32(cqBase, cqHeadOff)
+                val tail = neton_load32(cqBase, cqTailOff)
+                while (head != tail) {
+                    val cqe = neton_cqe_at(cqBase, cqesOff, head and mask)!!.pointed
+                    if (cqe.user_data == ud) ok = cqe.res >= 0
+                    head += 1u
+                }
+                neton_store32(cqBase, cqHeadOff, tail)
+                if (!ok) { free(base); bufBase = null }
+            }
+        }
+        multishot = ok
+        freeBufs = if (ok) bufCount else 0
     }
 
     private fun nowMs(): Long = reactorNowMs()
 
     private fun pending(): UInt = neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff)
 
-    private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, ud: ULong): ULong {
+    private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, ud: ULong,
+                        off: ULong = 0uL, sqeFlags: Int = 0, ioprio: Int = 0, bufGroup: Int = 0): ULong {
         // Make room if the SQ is full: submit pending SQEs so the kernel consumes them (advancing
         // sq_head). Loop because a submit may be partial; reap if the CQ is full and blocks submits.
         while (pending() >= sqEntries) {
@@ -233,6 +382,10 @@ internal class UringReactor : Reactor() {
         sqe.addr = addr.toULong()
         sqe.len = len.toUInt()
         sqe.op_flags = opFlags.toUInt()
+        sqe.off = off
+        sqe.flags = sqeFlags.toUByte()
+        sqe.ioprio = ioprio.toUShort()
+        sqe.buf_index = bufGroup.toUShort()      // union with buf_group in the UAPI
         sqe.user_data = ud
         neton_array_at(sqBase, sqArrayOff, index)!!.pointed.value = index
         neton_store32(sqBase, sqTailOff, tail + 1u)
@@ -271,6 +424,7 @@ internal class UringReactor : Reactor() {
     }
 
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
+        if (multishot) return readMultishot(fd, dst)
         val cap = dst.reserve(chunk)                 // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val res = submit(NETON_IORING_OP_READ, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pin)
@@ -302,10 +456,20 @@ internal class UringReactor : Reactor() {
         for (i in slots.indices) {
             val slot = slots[i] ?: continue
             if (!slot.live || slot.fd != fd) continue
-            val cont = slot.cont ?: continue
+            val cont = slot.cont
+            if (cont == null && !slot.multishot) continue
             slot.cont = null
-            cont.resumeWithException(ClosedException())
+            cont?.resumeWithException(ClosedException())
             requestCancel((i.toULong() shl 32) or slot.gen.toULong())
+        }
+        if (multishot && fd < msArmed.size) {
+            // The armed multishot op is cancelled above like any slot (its CQE releases the slot);
+            // chunks nobody read go back to the pool; the parked reader fails like any other waiter.
+            while (rqCount[fd] > 0) reprovide((rqPop(fd) shr 32).toInt())
+            msEof[fd] = false; msErr[fd] = 0
+            readers[fd]?.let { readers[fd] = null; it.resumeWithException(ClosedException()) }
+            var i = 0
+            while (i < starvedCount) { if (starved[i] == fd) starved[i] = starved[--starvedCount] else i++ }
         }
         retirePin(fd)
         closeFd(fd)
@@ -375,6 +539,7 @@ internal class UringReactor : Reactor() {
             val idx = (ud shr 32).toInt()
             val slot = slots.getOrNull(idx) ?: continue
             if (!slot.live || slot.gen != ud.toUInt()) continue   // stale generation: unknown op
+            if (slot.multishot) { onMultishotCqe(idx, slot, res, cqe.flags); continue }
             slot.pin?.let { it.refs--; it.release() }      // the kernel is done with the buffer
             val cont = slot.cont                           // null if the awaiter was cancelled/closed
             releaseSlot(idx, slot)
@@ -416,11 +581,15 @@ internal class UringReactor : Reactor() {
         munmap(cqBase, cqMapLen.convert())
         munmap(sqBase, sqMapLen.convert())
         nativeHeap.free(timeoutSpec.ptr.rawValue)
+        bufBase?.let { free(it) }
         closeWakePipe()
     }
 
     private companion object {
         const val DEFAULT_DEPTH: UInt = 4096u
+        const val BUF_GROUP = 1
+        const val DEFAULT_BUFS = 512
+        const val DEFAULT_BUFSZ = 16 * 1024
         const val SIZEOF_SQE: UInt = 64u
         const val SIZEOF_CQE: UInt = 16u
         const val DRAIN_ROUNDS = 1000
