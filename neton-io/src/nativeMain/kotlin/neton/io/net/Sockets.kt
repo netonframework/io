@@ -11,7 +11,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.toKString
-import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.value
 import neton.io.bytes.Buffer
 import platform.posix.EAGAIN
@@ -36,8 +36,6 @@ import platform.posix.socklen_tVar
 import platform.posix.strerror
 
 /** Outcome of a non-blocking socket op. */
-internal enum class IoResult { OK, WOULD_BLOCK, EOF, ERROR }
-
 /** Open a listening TCP socket bound to [host]:[port] (platform-specific address setup). */
 internal expect fun tcpListen(host: String, port: Int, backlog: Int = 1024): Int
 
@@ -83,49 +81,31 @@ internal expect fun suppressSigpipe(fd: Int)
 /** Flags for send(2) on this platform (MSG_NOSIGNAL on Linux, nothing on Apple). */
 internal expect val SEND_FLAGS: Int
 
-/** Number of bytes read into [buf] when [result] is OK. */
-internal class ReadOutcome(val result: IoResult, val count: Int)
-
 /**
- * Non-blocking read straight into [buf]'s backing memory — no intermediate array. Reserves
- * up to [chunk] writable bytes, receives into them, and commits the count.
+ * Non-blocking recv into [pinned] at [offset], at most [len] bytes. Returns the byte count (>0),
+ * [EOF_RESULT] on a clean peer close, [WOULD_BLOCK] (EAGAIN/EINTR) or [IO_ERROR] (errno is kept).
+ * The caller commits the count into its [Buffer]; nothing is allocated here (SPEC §17c).
  */
 @OptIn(ExperimentalForeignApi::class)
-internal fun readInto(fd: Int, buf: Buffer, chunk: Int): ReadOutcome {
-    val cap = buf.reserve(chunk)
-    val n = buf.backingArray().usePinned { pinned ->
-        recv(fd, pinned.addressOf(buf.writerIndex()), cap.convert(), 0).toInt()
-    }
+internal fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
+    val n = recv(fd, pinned.addressOf(offset), len.convert(), 0).toInt()
     return when {
-        n > 0 -> {
-            buf.commitWrite(n)
-            ReadOutcome(IoResult.OK, n)
-        }
-        n == 0 -> ReadOutcome(IoResult.EOF, 0)
-        errno == EINTR -> ReadOutcome(IoResult.WOULD_BLOCK, 0)
-        errno == EAGAIN || errno == EWOULDBLOCK -> ReadOutcome(IoResult.WOULD_BLOCK, 0)
-        else -> ReadOutcome(IoResult.ERROR, 0)
+        n > 0 -> n
+        n == 0 -> EOF_RESULT
+        errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR -> WOULD_BLOCK
+        else -> IO_ERROR
     }
 }
 
-/**
- * Non-blocking write straight from [buf]'s readable region — no intermediate array. Sends
- * as much as the kernel accepts and consumes it. Returns bytes written, or [WOULD_BLOCK]/[IO_ERROR].
- */
+/** Non-blocking send of [len] bytes from [pinned] at [offset]. Returns bytes sent, or [WOULD_BLOCK]/[IO_ERROR]. */
 @OptIn(ExperimentalForeignApi::class)
-internal fun writeFrom(fd: Int, buf: Buffer): Int {
-    val len = buf.readableBytes
-    if (len == 0) return 0
-    val n = buf.backingArray().usePinned { pinned ->
-        send(fd, pinned.addressOf(buf.readerIndex()), len.convert(), SEND_FLAGS).toInt()
-    }
-    if (n > 0) {
-        buf.consume(n)
-        return n
-    }
+internal fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
+    val n = send(fd, pinned.addressOf(offset), len.convert(), SEND_FLAGS).toInt()
+    if (n > 0) return n
     return if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) WOULD_BLOCK else IO_ERROR
 }
 
+internal const val EOF_RESULT = 0
 internal const val WOULD_BLOCK = -1
 internal const val IO_ERROR = -2
 
