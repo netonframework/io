@@ -34,7 +34,7 @@ package = neton.io.uring
 #define NETON_IORING_OP_PROVIDE_BUFFERS 31
 
 /* sqe.flags / sqe.ioprio bits and cqe.flags bits for multishot recv with provided buffers */
-#define NETON_IOSQE_BUFFER_SELECT   (1U << 2)
+#define NETON_IOSQE_BUFFER_SELECT   (1U << 5)
 #define NETON_IORING_RECV_MULTISHOT (1U << 1)
 #define NETON_IORING_CQE_F_BUFFER   (1U << 0)
 #define NETON_IORING_CQE_F_MORE     (1U << 1)
