@@ -302,3 +302,21 @@ are now identical and both ~0.85 of geario (paired). uring ×4 is still far behi
 naive ring (no `COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN`) has the kernel's task_work and io-wq
 interrupt/compete with the four reactor threads. geario sets exactly those flags; that is the next
 uring variable. Linux tests for 67e0ce9: io_uring / epoll / polling 22/22 each.
+
+## Rounds 10–11 (SPEC §17c steps 3 and 4) — pinned core 1, 12 conns, 10 rounds alternating, paired
+
+Raw: `2026-09-25-153-round10-raw.txt`, `2026-09-25-153-round11-raw.txt`.
+
+| round | variable | medians | paired ratio (wins) |
+|---|---|---|---|
+| 10 | af3 = af2 + no per-park `invokeOnCancellation` node (324f4e8) | af2 94,926 · af3 96,140 · geario 107,314 | af3/af2 **1.037 (8/10)**; af3/geario 0.919 (0/10) |
+| 11 | af4 = af3 + `resumeUndispatched` from the poll callback (d69f6eb) | af3 109,956 · af4 110,417 · geario 134,918 | af4/af3 **0.967 (3/10)**; af3/geario 0.853 (2/10) |
+
+**Reading.** Step 3 is a small real gain and stays. Step 4 is not (0.967, 3/10) and is reverted
+(commit after 84525ce): resuming inline inside the poll callback serialises each connection's
+recv→send→park per event, whereas queueing the resumes lets the loop finish the event batch first;
+the dispatcher hop it saved is cheaper than what it cost. After step 3 the epoll reactor is at
+0.85–0.92 of geario paired. The epoll path is now at its syscall floor (recv, send, one EAGAIN
+recv, 0.1 epoll_wait per request, ~3 syscalls vs geario's 0.27 through io_uring), so the remaining
+single-core gap is expected to close through the io_uring driver, not through more user-space work
+on the readiness path. Round 12 (ring setup flags) is the first step there.

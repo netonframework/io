@@ -1,0 +1,35 @@
+# host=service load=1.55 rounds=10 secs=8 payload=128 pinned=core1
+# md5 1fc734f7bd85a08bdf3edc38ee995d94  echoServer-af3.kexe 104c779c216793f0bc38735a7bfc2ea0  echoServer-af4.kexe 
+# warmup
+# mode conns=12  (server conns qps p50_us)
+epoll-af3 12 107661 103.0
+epoll-af4 12 101952 109.1
+geario-p1 12 107578 101.6
+epoll-af3 12 95747 116.3
+epoll-af4 12 104891 104.9
+geario-p1 12 131594 82.8
+epoll-af3 12 127256 86.1
+epoll-af4 12 121675 88.2
+geario-p1 12 122724 88.4
+epoll-af3 12 109185 101.6
+epoll-af4 12 103364 105.6
+geario-p1 12 146127 74.6
+epoll-af3 12 125644 86.3
+epoll-af4 12 119040 91.6
+geario-p1 12 140986 76.6
+epoll-af3 12 107727 102.5
+epoll-af4 12 101982 109.1
+geario-p1 12 134876 78.6
+epoll-af3 12 126798 86.2
+epoll-af4 12 123888 88.1
+geario-p1 12 134959 81.8
+epoll-af3 12 110728 100.6
+epoll-af4 12 111304 100.0
+geario-p1 12 126503 85.8
+epoll-af3 12 108077 102.8
+epoll-af4 12 109530 101.3
+geario-p1 12 138090 77.6
+epoll-af3 12 124745 87.2
+epoll-af4 12 123372 88.2
+geario-p1 12 150303 72.6
+# done
