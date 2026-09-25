@@ -387,3 +387,13 @@ Raw: `2026-09-25-153-round14-raw.txt`.
 test's fixed port right after the previous driver's run — a test-harness flake (fixed by a bind
 retry in the test, not a reactor change). Standing after 14 rounds: four cores — epoll ×4 is 1.25×
 geario paired; one core — uring 0.86, epoll 0.85–0.92 of geario.
+
+### Profile after step 7 (uring, pinned; `prof14.data`)
+
+kernel 80.6% / user 11.4% / **GC thread 7.9%** (6.5% kernel `sched_yield`/`__schedule` + 0.9% libc
++ 0.5%). User symbols: `prepSqe` 1.8%, `reap` 0.8%, `pending` 0.6%, then the coroutine machinery —
+`CancellableContinuationImpl.installParentHandle`, `resumeImpl`, `DispatchedTask.run`,
+`CombinedContext.get`, `interceptContinuation` — and the allocator/sweeper. What still allocates per
+request is the two `suspendCancellableCoroutine` parks (multishot read, send) and their parent-job
+handles; kotlinx has no public reusable-continuation API. Linux tests after the bind-retry fix:
+epoll and polling 22/22 (io_uring 22/22 earlier) — three drivers green on the step-7 code.
