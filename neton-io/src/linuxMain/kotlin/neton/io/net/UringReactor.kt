@@ -10,6 +10,7 @@ import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.pin
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.toLong
 import kotlinx.cinterop.value
@@ -21,6 +22,9 @@ import neton.io.core.ClosedException
 import neton.io.core.IoException
 import kotlin.coroutines.resumeWithException
 import neton.io.uring.NETON_IORING_ENTER_GETEVENTS
+import neton.io.uring.NETON_IORING_SETUP_COOP_TASKRUN
+import neton.io.uring.NETON_IORING_SETUP_DEFER_TASKRUN
+import neton.io.uring.NETON_IORING_SETUP_SINGLE_ISSUER
 import neton.io.uring.NETON_IORING_OFF_CQ_RING
 import neton.io.uring.NETON_IORING_OFF_SQES
 import neton.io.uring.NETON_IORING_OFF_SQ_RING
@@ -98,7 +102,9 @@ internal class UringReactor : Reactor() {
     private val cqMaskOff: UInt
     private val cqesOff: UInt
 
-    override val driverName: String get() = "iouring"
+    /** True when the ring was created with COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN. */
+    private var modernSetup = false
+    override val driverName: String get() = if (modernSetup) "iouring+defer" else "iouring"
 
     // ---- in-flight ops: a slot table instead of a HashMap<ULong, …> (SPEC §17c: no boxed keys, no
     // per-op objects). user_data = slot index << 32 | generation; the generation makes a stale CQE
@@ -164,7 +170,23 @@ internal class UringReactor : Reactor() {
     init {
         val depth = getenv("NETON_IO_URING_DEPTH")?.toKString()?.toUIntOrNull() ?: DEFAULT_DEPTH
         val params = nativeHeap.alloc<neton_io_uring_params>()
-        ringFd = neton_uring_setup(depth, params.ptr)
+        // SPEC §17c step 5: the ring setup ntex/geario use. COOP_TASKRUN + DEFER_TASKRUN keep
+        // completion task_work off the reactor's interrupt path (it runs inside our own
+        // io_uring_enter instead), SINGLE_ISSUER tells the kernel only this thread submits.
+        // Older kernels reject the flags with EINVAL: fall back to a plain ring. NETON_IO_URING_SETUP=legacy
+        // forces the plain ring (A/B).
+        val wantModern = getenv("NETON_IO_URING_SETUP")?.toKString() != "legacy"
+        var fd = -1
+        if (wantModern) {
+            params.flags = (NETON_IORING_SETUP_COOP_TASKRUN or NETON_IORING_SETUP_SINGLE_ISSUER or NETON_IORING_SETUP_DEFER_TASKRUN).toUInt()
+            fd = neton_uring_setup(depth, params.ptr)
+        }
+        if (fd < 0) {
+            memset(params.ptr, 0, sizeOf<neton_io_uring_params>().convert())
+            fd = neton_uring_setup(depth, params.ptr)
+            modernSetup = false
+        } else modernSetup = true
+        ringFd = fd
         check(ringFd >= 0) { "io_uring_setup failed (fd=$ringFd)" }
 
         val prot = PROT_READ or PROT_WRITE
@@ -326,8 +348,10 @@ internal class UringReactor : Reactor() {
                 if (timeoutUd == 0uL || deadline < timeoutDeadlineMs) { armTimeout(timerMs); timeoutDeadlineMs = deadline }
             }
             val toSubmit = pending()
-            val flags = if (mc > 0u) NETON_IORING_ENTER_GETEVENTS.toUInt() else 0u
-            neton_uring_enter(ringFd, toSubmit, mc, flags)
+            // GETEVENTS on every enter, also when not blocking (min_complete 0 returns at once):
+            // under DEFER_TASKRUN completion task_work only runs inside such an enter, and a loop
+            // that always has tasks pending would otherwise never see its CQEs.
+            neton_uring_enter(ringFd, toSubmit, mc, NETON_IORING_ENTER_GETEVENTS.toUInt())
             countPoll(mc == 0u, reap())
         }
     }

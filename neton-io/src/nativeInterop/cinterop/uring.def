@@ -39,6 +39,11 @@ struct neton_kernel_timespec { int64_t tv_sec; long long tv_nsec; };
 /* io_uring_enter flags */
 #define NETON_IORING_ENTER_GETEVENTS 1
 
+/* io_uring_setup flags (kernel 5.19 / 6.0+; setup fails with EINVAL on older kernels) */
+#define NETON_IORING_SETUP_COOP_TASKRUN   (1U << 8)
+#define NETON_IORING_SETUP_SINGLE_ISSUER  (1U << 12)
+#define NETON_IORING_SETUP_DEFER_TASKRUN  (1U << 13)
+
 /* poll events */
 #define NETON_POLLIN  0x001
 #define NETON_POLLOUT 0x004
