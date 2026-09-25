@@ -62,7 +62,6 @@ import platform.posix.MAP_SHARED
 import platform.posix.PROT_READ
 import platform.posix.PROT_WRITE
 import platform.posix.close
-import platform.posix.errno
 import platform.posix.fprintf
 import platform.posix.stderr
 import platform.posix.getenv
@@ -441,23 +440,11 @@ internal class UringReactor : Reactor() {
         return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF (errors throw)
     }
 
-    // SPEC §17c step 8 (A/B, NETON_IO_URING_INLINE_SEND=1): try a non-blocking send(2) first and
-    // submit a SEND SQE only when the socket is full. Trades one syscall per write for a park
-    // (continuation + parent handle + CQE) — measured, not assumed.
-    private val inlineSend: Boolean = getenv("NETON_IO_URING_INLINE_SEND")?.toKString() == "1"
-
     override suspend fun write(fd: Int, src: Buffer): Int {
         var total = 0
         while (src.readableBytes > 0) {
             val len = src.readableBytes
             val pin = pinFor(fd, src.backingArray())
-            if (inlineSend) {
-                val n = sendPinned(fd, pin.pinned, src.readerIndex(), len)
-                stats?.let { it.writes++; if (n > 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
-                if (n > 0) { src.consume(n); total += n; continue }
-                if (n != WOULD_BLOCK) { val e = errno; throw IoException("write failed: ${errnoMessage(e)}", e) }
-                // full: fall through to the SQE path, which parks until the kernel has sent
-            }
             val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin, cancelOnAbort = false)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
             src.consume(res); total += res
