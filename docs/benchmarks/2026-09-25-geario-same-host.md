@@ -337,3 +337,21 @@ io_uring_enter per loop round, so it does the same syscall work as its epoll sib
 bookkeeping. geario's 0.27 syscalls/request come from *what* it submits, not only from the flags:
 multishot recv with provided buffers (one SQE arms a connection for many messages) is the next
 uring step (§17c step 6). ×4 uring remains far below ×4 epoll for the same reason plus io-wq.
+
+## Round 13 (SPEC §17c step 6: multishot recv + provided buffers, 3f6d008/6da57d3) — same binary, A/B by `NETON_IO_URING_MULTISHOT=0`
+
+Raw: `2026-09-25-153-round13-raw.txt`. Driver names at run start: `iouring+defer+multishot` / `iouring+defer`.
+Linux tests with this code: io_uring / epoll / polling 22/22 each (the first attempt shipped
+`IOSQE_BUFFER_SELECT` as bit 2 = `IOSQE_IO_LINK`, every multishot recv failed with EINVAL; fixed in 6da57d3).
+
+| operating point | no multishot | multishot | paired ms/noms | vs geario |
+|---|---|---|---|---|
+| pinned core 1, 12 conns, 10 rounds | 100,452 | **106,706** | **1.073 (8/10)** | 0.882 (0/10); geario 124,298 |
+| unpinned ×4, 12 conns, 4 rounds | 240,434 | **257,145** | **1.067 (4/4)** | 0.858 (0/4); geario 300,021; epoll ×4 329,148 |
+
+**Reading.** The biggest single uring gain so far and it stays. On one core the uring driver is now
+at 0.88 of geario paired (epoll: 0.85–0.92), so neither driver has reached parity on a single
+core; on four cores epoll ×4 leads geario by ~10% while uring ×4 trails epoll ×4 by 22% for reasons
+not yet profiled with the new code. Acceptance of SPEC §17c (paired ratio ≥ 1.0 on one core) is
+**not met**; the honest state after 13 rounds is: multi-core parity exceeded with epoll, single-core
+at 0.85–0.92 with either driver.
