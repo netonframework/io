@@ -479,3 +479,16 @@ neton-io、msgtrans、pulsekit 同时升到 Kotlin 2.4.20、coroutines 1.11.0（
 - 先做就绪驱动，再做 io_uring；各自单变量成对测。
 
 验收：全部测试（macOS + 153 三驱动 + msgtrans）；单核钉扎成对比值相对改造前 ≥ 1.03 才保留。
+
+### 19.4 每连接内存：自适应读大小（2026-09-26）
+
+**依据**：§18.3 矩阵中 1000 连接时 neton 每连接约 130 KB，geario 约 22 KB。库内原因：`ReactorStream` 每次读都
+`reserve(64 KB)`，任何被读入的缓冲区（包括 msgtrans 所用 `Framed` 的读缓冲）首次读取就长到 64–128 KB 并终身持有。
+对 PulseKit 接入（大量几乎空闲的 SDK 长连接）这是最主要的内存成本：1 万连接约 0.6–1.3 GB 空置缓冲。
+
+**改动**：每个流自适应读大小（Netty `AdaptiveRecvByteBufAllocator` 的思路）：初始 2 KB；一次读填满了所给空间就翻倍；
+连续两次读不到四分之一就减半；上限 64 KB、下限 2 KB。`reserve` 仍会用上缓冲区已有的全部空闲空间，所以这只限制不必要的增长。
+io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `echoServer` 同时改用默认初始容量的 `Buffer()`（不再预分配 64 KB），
+与 geario 回显按需持有缓冲的做法一致——这是基准的变量，单独记录。
+
+**验收**：全部测试；1000 连接 128 B 下每连接 RSS 显著下降；64 KB 载荷吞吐不低于改动前（成对）。

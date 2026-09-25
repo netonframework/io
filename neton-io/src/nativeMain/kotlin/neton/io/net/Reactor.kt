@@ -349,17 +349,33 @@ internal expect fun createReactor(): Reactor
 internal class ReactorStream(
     private val fd: Int,
     private val reactor: Reactor,
-    private val readChunk: Int = 64 * 1024,
+    private val maxReadChunk: Int = 64 * 1024,
 ) : neton.io.core.IoStream {
     private var closed = false
+
+    // SPEC §19.4: adaptive read size. Reserving the maximum on every read made every buffer a
+    // connection reads into grow to 64-128 KB on its first read and keep it for life. Start small,
+    // double when a read fills what it was offered, halve after two consecutive reads that used
+    // less than a quarter. `reserve` still offers all free space the buffer already has.
+    private var readGuess = MIN_READ_CHUNK
+    private var smallReads = 0
 
     init { reactor.registerStream(fd) }
 
     override suspend fun read(dst: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("read")
-        return reactor.read(fd, dst, readChunk)
+        val n = reactor.read(fd, dst, readGuess)
+        if (n >= readGuess) {
+            if (readGuess < maxReadChunk) readGuess = (readGuess * 2).coerceAtMost(maxReadChunk)
+            smallReads = 0
+        } else if (n in 1 until readGuess / 4 && readGuess > MIN_READ_CHUNK) {
+            if (++smallReads >= 2) { readGuess /= 2; smallReads = 0 }
+        } else smallReads = 0
+        return n
     }
+
+    private companion object { const val MIN_READ_CHUNK = 2 * 1024 }
 
     override suspend fun write(src: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()

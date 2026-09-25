@@ -58,7 +58,8 @@ fun echoServerMain(args: Array<String>) {
 }
 
 private suspend fun echoConnection(conn: IoStream) {
-    val buf = Buffer(64 * 1024)
+    // Default initial capacity, grown on demand (SPEC §19.4) — geario's echo holds buffers the same way.
+    val buf = Buffer()
     try {
         while (true) {
             buf.clear()
