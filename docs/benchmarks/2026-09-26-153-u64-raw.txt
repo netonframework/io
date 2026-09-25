@@ -1,0 +1,18 @@
+# io_uring 64 KB diagnosis (1 reactor, unpinned, 1 conn)
+uring-ms 1 65536 qps=25 p50=41000.0 p99=42013.0 cmin= cmed= cmax= zero= jain=
+uring-noms 1 65536 qps=17268 p50=54.4 p99=88.3 cmin= cmed= cmax= zero= jain=
+uring-ms-buf64k 1 65536 qps=15209 p50=62.1 p99=100.7 cmin= cmed= cmax= zero= jain=
+uring-legacy 1 65536 qps=25 p50=41001.9 p99=41997.1 cmin= cmed= cmax= zero= jain=
+uring-noms-legacy 1 65536 qps=13657 p50=76.5 p99=114.9 cmin= cmed= cmax= zero= jain=
+epoll 1 65536 qps=15960 p50=57.0 p99=105.0 cmin= cmed= cmax= zero= jain=
+uring-ms 1 65536 qps=25 p50=41000.7 p99=41986.1 cmin= cmed= cmax= zero= jain=
+uring-noms 1 65536 qps=13583 p50=77.3 p99=114.5 cmin= cmed= cmax= zero= jain=
+uring-ms-buf64k 1 65536 qps=13108 p50=71.0 p99=124.4 cmin= cmed= cmax= zero= jain=
+uring-legacy 1 65536 qps=25 p50=41001.3 p99=41993.1 cmin= cmed= cmax= zero= jain=
+uring-noms-legacy 1 65536 qps=14436 p50=65.5 p99=111.4 cmin= cmed= cmax= zero= jain=
+epoll 1 65536 qps=13979 p50=75.6 p99=110.5 cmin= cmed= cmax= zero= jain=
+# stats, uring multishot, 64 KB
+qps         25
+p99         41935.7 us
+NETON_IO_STATS {"driver":"iouring+defer+multishot","task_budget":256,"rounds":381,"tasks_run":384,"max_tasks_in_round":2,"polls":380,"polls_zero_timeout":0,"polls_no_events":0,"events":905,"max_events_in_poll":4,"reads":300,"read_bytes":4915200,"reads_would_block":0,"writes":300,"write_bytes":4915200,"writes_would_block":0}
+# done

@@ -1,0 +1,14 @@
+# fairness (echo-client-fair), unpinned x4, 128 B, 8 s
+epoll-4 100 128 qps=346769 p50=10.8 p99=66.1 cmin=20 cmed=7623 cmax=145436 zero=0 jain=0.392
+uring-4 100 128 qps=245550 p50=358.6 p99=1045.0 cmin=15052 cmed=20834 cmax=22336 zero=0 jain=0.984
+geario-4 100 128 qps=280212 p50=323.4 p99=975.6 cmin=15564 cmed=22839 cmax=28488 zero=0 jain=0.974
+epoll-4 1000 128 qps=343107 p50=10.9 p99=22.0 cmin=1 cmed=3 cmax=32306 zero=0 jain=0.285
+uring-4 1000 128 qps=184544 p50=5094.2 p99=10867.2 cmin=1193 cmed=1437 cmax=2519 zero=0 jain=0.984
+geario-4 1000 128 qps=197616 p50=5060.2 p99=8162.0 cmin=1479 cmed=1578 cmax=1777 zero=0 jain=0.997
+epoll-4 100 128 qps=341798 p50=10.9 p99=22.2 cmin=20 cmed=21206 cmax=166028 zero=0 jain=0.399
+uring-4 100 128 qps=242823 p50=376.1 p99=1005.5 cmin=16141 cmed=19430 cmax=22513 zero=0 jain=0.992
+geario-4 100 128 qps=272709 p50=350.8 p99=737.5 cmin=15142 cmed=21740 cmax=23845 zero=0 jain=0.997
+epoll-4 1000 128 qps=355529 p50=10.6 p99=21.4 cmin=2 cmed=4 cmax=22876 zero=0 jain=0.319
+uring-4 1000 128 qps=217840 p50=4368.3 p99=9077.8 cmin=1366 cmed=1771 cmax=2378 zero=0 jain=0.987
+geario-4 1000 128 qps=232468 p50=4037.0 p99=7504.9 cmin=1311 cmed=1994 cmax=2490 zero=0 jain=0.954
+# done

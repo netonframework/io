@@ -1,5 +1,11 @@
 # neton-io vs geario, same host, same client (2026-09-25)
 
+> **Correction (2026-09-26).** Every multi-core ("×4", unpinned) result for the neton **epoll** driver in this
+> document — rounds 4–17, including round 17's "1.155× geario" — was produced by very unfair service: measured
+> per connection at 100–1000 connections, most connections were nearly starved (Jain index 0.29–0.40). Those
+> figures are withdrawn; see `2026-09-26-matrix1.md` ("Fairness measured"). Single-core (pinned) rounds are not
+> affected by this finding as far as is known, but will be re-checked with the fairness client.
+
 Goal: a fair, reproducible baseline for the "match geario" program. Everything the earlier README
 table could not control is controlled here: one host, one client binary, identical parameters,
 alternating rounds.

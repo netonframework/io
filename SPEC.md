@@ -361,7 +361,7 @@ fun serveTcp(host: String, port: Int, reactors: Int = cpuCount(), handler: suspe
 - 步骤 7 uring 热路径去掉取消回调节点（b0d32bb，仅 SEND 与 multishot 读者的 park；plain recv/accept/connect 仍保留内核取消）→ 第 14 轮：+3.1%（6/10），保留。四核：epoll ×4 成对 **1.245× geario（4/4）**。单核：uring 0.86、epoll 0.85–0.92。
 - 第 15 轮：GC 目标堆作为**服务端配置**（`NETON_IO_GC_TARGET_MB=64`，等价于 JVM 堆参数，不是库默认）：uring +6.5%（8/10），与 geario 成对 0.99（5/10）；同一二进制在第 14 轮为 0.86——成对比值在本机逐轮漂移约 ±5%，"单轮持平"只能读作"在噪声内持平"。
 - 步骤 8 uring 先内联 `send(2)` 再回退 SQE（dde23b1）→ 第 16 轮 0.948（1/10），**否决并回退**（2ceb9d6）：多一次 syscall 比省下的 park 更贵，DEFER_TASKRUN 下 SEND SQE 本就在必经的 `io_uring_enter` 内执行。
-- 第 17 轮：最终验收。**四核达标**：epoll ×4 成对 1.155× geario（6/6），311k vs 267k。**单核未达标**：最佳配置 io_uring + GC 目标堆 64 MiB 为 geario 的 0.949（20 轮中 6 胜），默认 GC 0.880（1/20），epoll + GC 64 为 0.895。剩余约 5% 在 Kotlin/Native 运行时（GC 线程 + 每请求的协程 park/resume），geario 无对应开销。
+- 第 17 轮：最终验收。~~**四核达标**：epoll ×4 成对 1.155× geario（6/6），311k vs 267k。~~ **撤回（2026-09-26）**：逐连接统计显示 epoll 驱动在多核负载下严重不公平（Jain 0.29–0.40，1000 连接时中位连接 8 秒只完成 3–4 个请求），该吞吐来自饿死多数连接，见 §19.5。**单核未达标**：最佳配置 io_uring + GC 目标堆 64 MiB 为 geario 的 0.949（20 轮中 6 胜），默认 GC 0.880（1/20），epoll + GC 64 为 0.895。剩余约 5% 在 Kotlin/Native 运行时（GC 线程 + 每请求的协程 park/resume），geario 无对应开销。
 - 单核剩余手段（未做，按预期收益排序）：(a) 每连接复用 continuation、绕开 `suspendCancellableCoroutine` 的每次分配（需自写 Continuation 实现，风险高）；(b) 批量 CQE 的恢复合并；(c) 评估 `-Xbinary=gc=cms` 之外的 GC 调度参数。
 - 方法修正：验收改为**与 geario 交替的成对轮次**（逐轮比值的中位数与胜场），单轮中位数对比不作数（153 主机一小时内漂移 ±30%）。
 
@@ -492,3 +492,21 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 与 geario 回显按需持有缓冲的做法一致——这是基准的变量，单独记录。
 
 **验收**：全部测试；1000 连接 128 B 下每连接 RSS 显著下降；64 KB 载荷吞吐不低于改动前（成对）。
+
+### 19.5 就绪驱动的公平性（2026-09-26，阻断级）
+
+**事实**：`echo-client-fair` 测得 epoll ×4 在 100/1000 连接下 Jain 指数 0.39/0.29–0.32，1000 连接时中位连接 8 秒仅完成 3–4 个请求；io_uring ×4 与 geario 均为 0.95–1.00。此前所有"epoll ×4 胜过 geario"的数字因此撤回。
+
+**机制**：`send()` 唤醒的客户端线程被调度到 reactor 所在核并立即发出下一个请求；reactor 的"读到 EAGAIN 为止"随即在同一连接上读到它并再次服务——少数连接对独占核（与第 6b 轮"一次唤醒服务约 11 个请求"一致）。
+
+**改动**：每个连接每一轮只读一次。就绪 fd 上的读若本轮已成功读过一次，就把自己排到恢复队列末尾再读（不额外 `epoll_wait`、不分配），于是同一轮内所有就绪连接轮流被服务。
+
+**验收**：`echo-client-fair` 在 100 / 1000 连接下 Jain ≥ 0.95（与 geario 同档）；在此前提下再比吞吐。单核钉扎也用公平客户端复核。
+
+### 19.6 TCP_NODELAY（2026-09-26）
+
+**事实**：neton-io 从未设置 `TCP_NODELAY`；geario 对每个流都设置。io_uring multishot（16 KB 缓冲）下 64 KB 回显被拆成四次写，每次写尾的不满段被 Nagle 扣住、等对端延迟 ACK，单连接只有 25 qps（p50 41 ms）。任何分多次写出的响应（包括 msgtrans 分段写出的包）都受影响。
+
+**改动**：accept 与 connect 得到的 TCP 流默认设置 `TCP_NODELAY`（与 geario、Go 标准库一致）。
+
+**验收**：io_uring multishot 64 KB 单连接恢复到与 epoll 同档；全部测试。
