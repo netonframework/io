@@ -510,3 +510,16 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 **改动**：accept 与 connect 得到的 TCP 流默认设置 `TCP_NODELAY`（与 geario、Go 标准库一致）。
 
 **验收**：io_uring multishot 64 KB 单连接恢复到与 epoll 同档；全部测试。**已达成**：25 → 11,172 qps（p50 86 µs）。
+
+### 19.7 进度小结（2026-09-26，全部为公平客户端、成对轮次）
+
+| 改动 | 结果 |
+|---|---|
+| §19.2 `preCodegenInlineThreshold=40`（服务端可执行文件） | 单核 +3.2%（9/12） |
+| §19.3 就绪驱动去掉每次 park 的 `CancellableContinuation` | 单核 +6.6%（10/12） |
+| §19.3 io_uring 同上 | 单核 +7.2%（9/12），×4 +6.7%（4/4） |
+| §19.4 自适应读大小 | 1000 连接 RSS 134.6 → 15.9 MB（每连接 16 KB，低于 geario） |
+| §19.5 公平服务 | epoll Jain 0.29–0.40 → 0.99；此前"多核领先"撤回 |
+| §19.6 TCP_NODELAY | io_uring 64 KB 25 → 11,172 qps |
+
+与 geario（成对中位数）：单核 epoll 0.964、io_uring 0.946；×4/100 连接 epoll 0.949、io_uring 0.965；×4/1000 连接 epoll 0.964（v20）。
