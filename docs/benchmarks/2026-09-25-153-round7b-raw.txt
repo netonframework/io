@@ -1,0 +1,109 @@
+# host=service kernel=5.14.0-687.44.1.el9_8.x86_64 cores=4 load=0.14 rounds=8 secs=8 payload=128 pinned=core1
+# md5 73e3e1669d77214f44c49f518c74cd4a  echoServer-gc.kexe 2eaad9938670deae62aad98f7ffb196e  echoServer-nogc.kexe 
+# warmup
+# mode conns=12  (server conns qps p50_us)
+epoll-gc64 12 119307 92.2
+epoll-nogc 12 125330 91.8
+uring-gc64 12 107799 97.5
+uring-nogc 12 127817 90.0
+geario 12 149606 73.5
+epoll-gc64 12 122305 91.9
+epoll-nogc 12 126312 90.9
+uring-gc64 12 102539 104.7
+uring-nogc 12 113290 102.2
+geario 12 125547 86.5
+epoll-gc64 12 112683 100.8
+epoll-nogc 12 131439 88.3
+uring-gc64 12 115420 92.1
+uring-nogc 12 128711 89.5
+geario 12 129148 84.3
+epoll-gc64 12 107311 105.5
+epoll-nogc 12 114487 102.8
+uring-gc64 12 103242 103.5
+uring-nogc 12 114882 100.3
+geario 12 130759 83.0
+epoll-gc64 12 105362 107.0
+epoll-nogc 12 125848 91.9
+uring-gc64 12 115574 91.9
+uring-nogc 12 126557 90.2
+geario 12 124573 86.7
+epoll-gc64 12 115012 97.9
+epoll-nogc 12 128949 89.8
+uring-gc64 12 112945 93.4
+uring-nogc 12 114952 100.5
+geario 12 129031 84.9
+epoll-gc64 12 106947 105.3
+epoll-nogc 12 109681 105.8
+uring-gc64 12 91696 118.6
+uring-nogc 12 99810 117.1
+geario 12 99066 113.4
+epoll-gc64 12 85240 133.2
+epoll-nogc 12 92296 127.4
+uring-gc64 12 92774 117.5
+uring-nogc 12 104709 111.8
+geario 12 117996 94.0
+# profiles by thread/dso (cpu-clock, 3 s window)
+epoll-gc64 profile-run qps 93959
+== epoll-gc64
+    82.31%  echoServer-gc.k  [kernel.kallsyms] 
+    12.18%  echoServer-gc.k  echoServer-gc.kexe
+     2.81%  Main GC thread   [kernel.kallsyms] 
+     1.87%  echoServer-gc.k  libc.so.6         
+     0.43%  Main GC thread   echoServer-gc.kexe
+     0.40%  Main GC thread   libc.so.6         
+== epoll-gc64 user symbols
+     0.87%  [.] kfun:kotlin.collections.HashMap.findKey#internal
+     0.83%  [.] kfun:neton.io.net.ReadinessReactor.$readCOROUTINE$0.invokeSuspend#internal
+     0.77%  [.] __libc_recv
+     0.65%  [.] kfun:neton.io.net.$echoConnectionCOROUTINE$0.invokeSuspend#internal
+     0.58%  [.] kfun:neton.io.net.ReadinessReactor.$writeCOROUTINE$1.invokeSuspend#internal
+     0.58%  [.] kotlin::alloc::CustomAllocator::Allocate(kotlin::alloc::AllocationSize)
+     0.47%  [.] kfun:kotlinx.coroutines.CoroutineDispatcher#interceptContinuation(kotlin.coroutines.Continuation<0:0>){0§<kotlin.Any?>}kotlin.coroutines.Continuation<0:0>
+     0.41%  [.] __send
+     0.41%  [.] kfun:kotlin.collections.HashMap#addKey(1:0){}kotlin.Int
+     0.38%  [.] bool kotlin::alloc::FixedBlockPage::Sweep<kotlin::alloc::ObjectSweepTraits>(kotlin::alloc::ObjectSweepTraits::GCSweepScope&, kotlin::alloc::SegregatedFinalizerQueue<kotlin::alloc::AtomicStack<kotlin::alloc::ExtraObjectCell> >&)
+     0.38%  [.] kfun:kotlinx.coroutines.DispatchedTask#run(){}
+     0.35%  [.] __sched_yield
+     0.34%  [.] kfun:neton.io.net.Reactor#checkOwner(kotlin.String){}
+     0.33%  [.] kfun:kotlin.coroutines.CombinedContext#get(kotlin.coroutines.CoroutineContext.Key<0:0>){0§<kotlin.coroutines.CoroutineContext.Element>}0:0?
+epoll-nogc profile-run qps 98142
+== epoll-nogc
+    86.55%  echoServer-nogc  [kernel.kallsyms]   
+    11.35%  echoServer-nogc  echoServer-nogc.kexe
+     2.09%  echoServer-nogc  libc.so.6           
+== epoll-nogc user symbols
+     1.13%  [.] kfun:kotlin.collections.HashMap.findKey#internal
+     0.89%  [.] __libc_recv
+     0.79%  [.] kfun:neton.io.net.ReadinessReactor.$readCOROUTINE$0.invokeSuspend#internal
+     0.69%  [.] __send
+     0.61%  [.] kotlin::alloc::CustomAllocator::AllocateInFixedBlockPage(unsigned int)
+     0.53%  [.] kfun:neton.io.net.ReadinessReactor.$writeCOROUTINE$1.invokeSuspend#internal
+     0.52%  [.] kfun:kotlinx.coroutines.DispatchedTask#run(){}
+     0.51%  [.] kfun:neton.io.net.$echoConnectionCOROUTINE$0.invokeSuspend#internal
+     0.47%  [.] kfun:neton.io.net.ReadinessReactor.waitReadable#internal
+     0.39%  [.] kfun:kotlin.coroutines.CombinedContext#get(kotlin.coroutines.CoroutineContext.Key<0:0>){0§<kotlin.coroutines.CoroutineContext.Element>}0:0?
+     0.35%  [.] kfun:kotlin.coroutines.native.internal.BaseContinuationImpl#resumeWith(kotlin.Result<kotlin.Any?>){}
+     0.35%  [.] kfun:kotlinx.cinterop.Pinned#<init>(1:0){}
+     0.30%  [.] kfun:neton.io.net.Reactor#checkOwner(kotlin.String){}
+     0.30%  [.] kfun:neton.io.net.Reactor#drainTasks(){}
+uring-nogc profile-run qps 108437
+== uring-nogc
+    84.02%  echoServer-nogc  [kernel.kallsyms]   
+    15.81%  echoServer-nogc  echoServer-nogc.kexe
+     0.17%  echoServer-nogc  libc.so.6           
+== uring-nogc user symbols
+     2.30%  [.] kfun:neton.io.net.UringReactor.prepSqe#internal
+     1.05%  [.] kotlin::alloc::CustomAllocator::AllocateInFixedBlockPage(unsigned int)
+     0.70%  [.] kfun:neton.io.net.UringReactor.submit#internal
+     0.66%  [.] kfun:kotlin.coroutines.CombinedContext#get(kotlin.coroutines.CoroutineContext.Key<0:0>){0§<kotlin.coroutines.CoroutineContext.Element>}0:0?
+     0.50%  [.] kfun:neton.io.net.UringReactor.reap#internal
+     0.49%  [.] kfun:kotlinx.coroutines.DispatchedTask#run(){}
+     0.48%  [.] kfun:kotlin.coroutines.native.internal.BaseContinuationImpl#resumeWith(kotlin.Result<kotlin.Any?>){}
+     0.40%  [.] kfun:kotlinx.coroutines.JobSupport#removeNode(kotlinx.coroutines.JobNode){}
+     0.39%  [.] kfun:neton.io.net.Reactor#dispatch(kotlin.coroutines.CoroutineContext;kotlinx.coroutines.Runnable){}
+     0.39%  [.] kfun:neton.io.net.UringReactor.$writeCOROUTINE$1.invokeSuspend#internal
+     0.38%  [.] kfun:neton.io.net.Reactor#checkOwner(kotlin.String){}
+     0.36%  [.] kfun:neton.io.net.$echoConnectionCOROUTINE$0.invokeSuspend#internal
+     0.35%  [.] kfun:kotlin.collections.HashMap#addKey(1:0){}kotlin.Int
+     0.35%  [.] kfun:kotlinx.coroutines.CancellableContinuationImpl#resumeImpl(0:0;kotlin.Int;kotlin.Function3<kotlin.Throwable,0:0,kotlin.coroutines.CoroutineContext,kotlin.Unit>?){0§<kotlin.Any?>}
+# done

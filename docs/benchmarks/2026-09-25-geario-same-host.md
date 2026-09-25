@@ -220,3 +220,25 @@ was noisier than in rounds 5–6 (geario 120k here vs 127–132k), so compare wi
 gains nothing (the work moves into the mutator). GC *settings* do not close the gap; the GC has
 to be given less to do. Next: bound the prize with `-Xbinary=gc=noop` (no collection at all —
 fine for an 8 s run) before spending effort on an allocation-free hot path.
+
+## Round 7b (GC upper bound: `-Xbinary=gc=noop`) — pinned core 1, 1 reactor, 12 conns, medians of 8
+
+Raw: `2026-09-25-153-round7b-raw.txt` (profiles by thread at the end of the file).
+
+| driver | gc64 | **nogc** | geario |
+|---|---|---|---|
+| epoll | 109,997 (85.2k..122.3k) | **125,589** (92.3k..131.4k) | 127,289 (99.1k..149.6k) |
+| io_uring | 105,520 (91.7k..115.6k) | 114,917 (99.8k..128.7k) | — |
+
+Profiles (cpu-clock): epoll-gc64 — GC thread 3.6%, user 12.2%; epoll-nogc — no GC thread, user
+11.4%, kernel 86.6%; uring-nogc — user 15.8%, kernel 84.0%. Top user symbols with GC off:
+`HashMap.findKey`/`addKey` (boxed `Int` fd keys in the waiter map / ready set), the allocator
+(`CustomAllocator::Allocate*`), `Pinned.<init>` (one pin per recv/send), the coroutine park/resume
+path (`DispatchedTask.run`, `BaseContinuationImpl.resumeWith`, `JobSupport.removeNode` from
+`invokeOnCancellation`), and on uring `prepSqe`/`submit`/`reap`.
+
+**Reading.** With GC cost removed, neton epoll is at geario's level on one core (125.6k vs 127.3k,
+well inside the spread). GC is therefore the entire remaining per-core gap, and it is fed by
+5–8 small allocations per request. SPEC §17c step 2 (allocation-free hot path: fd-indexed arrays
+instead of boxed-key hash maps, no `ReadOutcome` object, cached pins, no per-park cancellation
+node) is the change to make; `gc=noop` is a bench bound, not a configuration.
