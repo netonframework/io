@@ -242,3 +242,22 @@ well inside the spread). GC is therefore the entire remaining per-core gap, and 
 5–8 small allocations per request. SPEC §17c step 2 (allocation-free hot path: fd-indexed arrays
 instead of boxed-key hash maps, no `ReadOutcome` object, cached pins, no per-park cancellation
 node) is the change to make; `gc=noop` is a bench bound, not a configuration.
+
+## Round 8 (SPEC §17c step 2: allocation-free readiness path, 839be9e) — medians
+
+Raw: `2026-09-25-153-round8-raw.txt`. `et` = previous binary (default GC), `af` = allocation-free
+(fd-indexed arrays, Int-returning recv/send, cached pins), `af-gc64` = af + `NETON_IO_GC_TARGET_MB=64`,
+`nogc` = previous code with `gc=noop`.
+
+| operating point | et | af | af-gc64 | nogc | geario |
+|---|---|---|---|---|---|
+| pinned core 1, 1 reactor, 12 conn (8 rounds) | 102,838 | **112,239** | **116,200** | 110,638 | 112,920 (102.1k..150.9k) |
+| unpinned, 4 reactors, 12 conn (4 rounds) | 332,610 | **340,253** | — | — | 293,544 |
+
+**Reading.** Removing the per-request allocations is worth +9% on one core and brings the epoll
+reactor to geario's median in the same round; with a fixed 64 MiB target heap it is 3% above.
+This is parity inside a ±15% spread, not a demonstrated lead — a two-server alternating
+confirmation follows (round 8b). The GC target heap stays a bench knob: a library must not set
+process-wide GC parameters. What remains on the Kotlin side per request: one
+`suspendCancellableCoroutine` + `invokeOnCancellation` node per park, and the dispatcher hop on
+resume; on io_uring, the `InFlight` object, the boxed `ULong` key and one pin per op (next step).

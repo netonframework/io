@@ -1,0 +1,61 @@
+# host=service kernel=5.14.0-687.44.1.el9_8.x86_64 cores=4 load=0.27 rounds=8 secs=8 payload=128
+# md5 73e3e1669d77214f44c49f518c74cd4a  echoServer-gc.kexe e6af1a311400a6875a289ab7ec2d02a3  echoServer-af.kexe 2eaad9938670deae62aad98f7ffb196e  echoServer-nogc.kexe 
+# part A: pinned core 1, 1 reactor
+# warmup
+# mode conns=12  (server conns qps p50_us)
+epoll-et 12 102243 105.1
+epoll-af 12 107613 101.0
+epoll-af-gc64 12 110302 102.7
+epoll-nogc 12 103681 114.1
+geario-p1 12 112123 98.5
+epoll-et 12 108057 100.2
+epoll-af 12 124375 85.9
+epoll-af-gc64 12 118621 94.8
+epoll-nogc 12 118827 98.1
+geario-p1 12 113718 96.9
+epoll-et 12 92788 117.9
+epoll-af 12 94961 115.6
+epoll-af-gc64 12 92139 124.3
+epoll-nogc 12 92262 127.5
+geario-p1 12 102101 108.1
+epoll-et 12 90149 119.7
+epoll-af 12 102156 107.5
+epoll-af-gc64 12 114154 99.9
+epoll-nogc 12 122717 93.9
+geario-p1 12 127172 85.6
+epoll-et 12 104716 103.8
+epoll-af 12 116865 91.4
+epoll-af-gc64 12 130010 86.0
+epoll-nogc 12 109124 108.2
+geario-p1 12 114241 96.3
+epoll-et 12 111837 94.6
+epoll-af 12 123430 86.7
+epoll-af-gc64 12 125531 87.8
+epoll-nogc 12 112151 104.1
+geario-p1 12 106059 103.3
+epoll-et 12 91557 119.3
+epoll-af 12 93114 117.9
+epoll-af-gc64 12 89421 127.8
+epoll-nogc 12 93259 126.1
+geario-p1 12 109406 100.4
+epoll-et 12 103433 103.5
+epoll-af 12 123833 86.3
+epoll-af-gc64 12 118245 96.8
+epoll-nogc 12 117907 100.5
+geario-p1 12 150895 72.5
+# part B: unpinned, 4 reactors
+# warmup
+# mode conns=12  (server conns qps p50_us)
+epoll-et-4 12 322359 10.7
+epoll-af-4 12 291098 11.1
+geario 12 314029 36.0
+epoll-et-4 12 314601 10.8
+epoll-af-4 12 338026 10.5
+geario 12 279620 39.7
+epoll-et-4 12 347415 10.5
+epoll-af-4 12 354412 10.3
+geario 12 296301 38.0
+epoll-et-4 12 342860 10.5
+epoll-af-4 12 342480 10.3
+geario 12 290786 33.6
+# done
