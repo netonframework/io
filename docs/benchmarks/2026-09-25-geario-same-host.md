@@ -261,3 +261,26 @@ confirmation follows (round 8b). The GC target heap stays a bench knob: a librar
 process-wide GC parameters. What remains on the Kotlin side per request: one
 `suspendCancellableCoroutine` + `invokeOnCancellation` node per park, and the dispatcher hop on
 resume; on io_uring, the `InFlight` object, the boxed `ULong` key and one pin per op (next step).
+
+## Round 8b (two-server confirmation, pinned core 1, 12 conns, 12 rounds alternating) — corrects round 8
+
+Raw: `2026-09-25-153-round8b-raw.txt`. Only `neton-af` (epoll, allocation-free, default GC) and
+geario, alternating, so each pair shares the host's state.
+
+| | median | mean | min..max | p50 |
+|---|---|---|---|---|
+| neton-af | 117,990 | 117,037 | 105.9k..125.7k | 90.0 µs |
+| geario | **147,274** | 139,560 | 100.9k..151.7k | 74.2 µs |
+
+Paired per-round ratio neton/geario: 0.78 0.84 0.81 0.83 0.87 0.75 0.86 0.82 0.95 0.73 1.05 0.87 —
+median **0.83**, neton ahead in 1 of 12.
+
+**Reading.** Round 8's "at geario's median" was geario on a noisy stretch (112.9k there; its quiet
+level is 141–147k, as in round 3). The allocation-free path's own gain (+9–14% vs the previous
+binary) stands; the remaining single-core gap is ~1.2×, not zero. The `nogc` bound of round 7b
+(125.6k) was likewise measured against a depressed geario and should be read as "GC-free neton ≈
+125k", i.e. still below geario's 147k: after the GC there is a genuine user-space cost left —
+the coroutine park/resume machinery (one `CancellableContinuationImpl` + `invokeOnCancellation`
+node per park, the dispatcher hop on resume) and the remaining GC work those allocations cause.
+From here on, paired alternating rounds against geario are the acceptance method; a
+single-round comparison of medians is not.

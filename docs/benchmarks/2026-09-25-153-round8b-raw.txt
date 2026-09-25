@@ -1,0 +1,28 @@
+# host=service load=2.33 rounds=12 secs=8 payload=128 pinned=core1
+# warmup
+# mode conns=12  (server conns qps p50_us)
+neton-af 12 118084 90.0
+geario-p1 12 151034 72.5
+neton-af 12 125373 86.1
+geario-p1 12 149949 72.7
+neton-af 12 117896 90.0
+geario-p1 12 144669 74.6
+neton-af 12 123817 86.4
+geario-p1 12 148827 73.8
+neton-af 12 113456 95.9
+geario-p1 12 130012 84.2
+neton-af 12 113497 96.3
+geario-p1 12 151658 72.2
+neton-af 12 125656 85.4
+geario-p1 12 146746 74.5
+neton-af 12 123164 86.5
+geario-p1 12 151109 73.1
+neton-af 12 121031 88.2
+geario-p1 12 127395 85.1
+neton-af 12 108161 100.4
+geario-p1 12 147801 73.8
+neton-af 12 105949 99.6
+geario-p1 12 100892 110.7
+neton-af 12 108362 100.8
+geario-p1 12 124624 86.3
+# done
