@@ -284,3 +284,21 @@ the coroutine park/resume machinery (one `CancellableContinuationImpl` + `invoke
 node per park, the dispatcher hop on resume) and the remaining GC work those allocations cause.
 From here on, paired alternating rounds against geario are the acceptance method; a
 single-round comparison of medians is not.
+
+## Round 9 (SPEC §17c step 2 on io_uring: slot table + ref-counted pins, 67e0ce9) — paired
+
+Raw: `2026-09-25-153-round9-raw.txt`. Pinned core 1, 12 conns, 8 rounds; then unpinned ×4, 4 rounds.
+
+| server | median | min..max | paired vs … |
+|---|---|---|---|
+| uring-old (default GC, HashMap ops) | 94,637 | 80.1k..107.4k | — |
+| uring-af2 | 101,966 | 87.5k..112.5k | vs uring-old **1.054** (7/8); vs geario 0.835 (0/8); vs epoll-af2 0.999 (4/8) |
+| epoll-af2 | 103,900 | 87.5k..117.2k | vs geario 0.851 (0/8) |
+| geario | 117,140 | 100.1k..136.9k | |
+| uring-af2 ×4 (unpinned) | 233,986 | | epoll-af2 ×4 339,486; geario 300,389 |
+
+**Reading.** Allocation-free op tracking is worth +5% on uring; on one core the two neton drivers
+are now identical and both ~0.85 of geario (paired). uring ×4 is still far behind epoll ×4: the
+naive ring (no `COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN`) has the kernel's task_work and io-wq
+interrupt/compete with the four reactor threads. geario sets exactly those flags; that is the next
+uring variable. Linux tests for 67e0ce9: io_uring / epoll / polling 22/22 each.

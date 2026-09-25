@@ -1,0 +1,53 @@
+# host=service load=1.86 rounds=8 secs=8 payload=128
+# md5 73e3e1669d77214f44c49f518c74cd4a  echoServer-gc.kexe 2d357dee2772b9750a6a7d8b487353a5  echoServer-af2.kexe 
+# part A: pinned core 1, 1 reactor
+# warmup
+# mode conns=12  (server conns qps p50_us)
+uring-old 12 98868 101.3
+uring-af2 12 112503 89.1
+epoll-af2 12 105037 103.1
+geario-p1 12 131878 83.4
+uring-old 12 106868 91.8
+uring-af2 12 111371 89.5
+epoll-af2 12 117245 90.8
+geario-p1 12 136941 79.5
+uring-old 12 107447 91.2
+uring-af2 12 102425 100.7
+epoll-af2 12 101794 107.2
+geario-p1 12 106043 103.3
+uring-old 12 80070 129.7
+uring-af2 12 87507 118.7
+epoll-af2 12 104892 103.2
+geario-p1 12 108926 100.8
+uring-old 12 86361 118.0
+uring-af2 12 90250 116.2
+epoll-af2 12 87526 126.5
+geario-p1 12 100116 111.6
+uring-old 12 84885 120.5
+uring-af2 12 101806 100.9
+epoll-af2 12 109519 100.4
+geario-p1 12 130089 83.8
+uring-old 12 97021 103.2
+uring-af2 12 102125 100.8
+epoll-af2 12 102909 105.7
+geario-p1 12 125070 86.6
+uring-old 12 92253 106.6
+uring-af2 12 97273 104.6
+epoll-af2 12 92364 117.9
+geario-p1 12 109210 102.0
+# part B: unpinned, 4 reactors
+# warmup
+# mode conns=12  (server conns qps p50_us)
+uring-af2-4 12 204995 48.5
+epoll-af2-4 12 337153 10.5
+geario 12 307133 33.5
+uring-af2-4 12 243514 41.9
+epoll-af2-4 12 353975 10.3
+geario 12 336977 33.5
+uring-af2-4 12 236735 38.5
+epoll-af2-4 12 325920 10.4
+geario 12 293645 35.8
+uring-af2-4 12 231237 42.2
+epoll-af2-4 12 341819 10.4
+geario 12 289439 36.7
+# done
