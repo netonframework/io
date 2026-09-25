@@ -366,3 +366,79 @@ fun serveTcp(host: String, port: Int, reactors: Int = cpuCount(), handler: suspe
 - 方法修正：验收改为**与 geario 交替的成对轮次**（逐轮比值的中位数与胜场），单轮中位数对比不作数（153 主机一小时内漂移 ±30%）。
 
 **验收**：钉扎单核 12 连接、与 geario 交替 ≥ 10 轮，逐轮比值中位数 ≥ 1.0（epoll 或 io_uring 任一驱动）；4 reactor 放开同法 ≥ geario（epoll 已达标：第 8/9 轮 ≈ 340k vs 294–300k）。
+
+## 18. 全栈 Kotlin/Native 路线（2026-09-26 决定）
+
+**规则（用户决定）**：所有底层核心——I/O 与多路复用、TLS 协议、HTTP/1.1、HTTP/2、WebSocket、DNS 协议——用
+Kotlin/Native 实现；数据路径上**不得有外部运行时或引擎**（Tokio / hyper / geario 经 FFI）。**允许**对操作系统的薄调用
+（syscall、libc 的 `getaddrinfo` 等）：neton-io 本身每次 recv/send 就是 cinterop 调用，这类调用单次成本低、无线程交接。
+跨语言的真正损耗在于两个运行时并存：线程交接（Tokio 线程 ↔ Kotlin 线程）、缓冲区跨边界拷贝或 pin、回调往返。
+
+**待决（见 18.5）**：密码学原语是否也必须用 Kotlin 实现。阶段 2（TLS）在此决定之前不开工。
+
+### 18.0 阶段
+
+| 阶段 | 内容 | 依赖 |
+|---|---|---|
+| 1 | msgtrans 多 reactor（18.1 + msgtrans SPEC §10）；地址：IPv6 + 域名解析（18.2）；压测矩阵（18.3） | — |
+| 2 | TLS 1.3（再 1.2），包装 `IoStream` | 18.5 决定 |
+| 3 | HTTP/1.1 服务端 + 客户端 codec；Neton `HttpAdapter` 基于 neton-io 的实现；与 hyper4k、geario-http 同接口同机压测 | 阶段 1 |
+| 4 | WebSocket（服务端 + 客户端）；msgtrans `WebSocketClientTransport` 落地 | 阶段 3（升级握手） |
+| 5 | HTTP/2（先 h2c，后 TLS + ALPN） | 阶段 2、3 |
+| 6 | UDP；纯 Kotlin DNS 客户端；QUIC（远期） | — |
+| 7 | Windows IOCP 驱动（有 Windows 部署需求时） | — |
+
+每个阶段都带基准：与 geario / geario-http 同机、交替、成对比值（§17c 方法）。单核剩余约 5%（§17c 第 17 轮）暂缓。
+
+### 18.1 公共多 reactor 服务 API（阶段 1）
+
+§16 的 `ReactorGroup` 是 internal，`serveTcp` 会阻塞调用线程并自建 reactor，无法用在"已在 reactor 内"的调用方
+（msgtrans `Transport.bind`）。新增：
+
+```kotlin
+/** 在当前 reactor 内调用：当前 reactor 为 0 号（负责 accept），另起 reactors-1 个工作 reactor。 */
+suspend fun listenGroup(host: String, port: Int, reactors: Int = cpuCount()): TcpServerGroup
+
+class TcpServerGroup {
+    /** accept 循环；每个连接在其目标 reactor 上以新协程运行 handler。被 close() 结束时正常返回。 */
+    suspend fun serve(handler: suspend (IoStream) -> Unit)
+    /** 关闭监听；工作 reactor 在其上的连接协程全部结束后退出。只能在 0 号 reactor 上调用。 */
+    fun close()
+    val reactors: Int
+}
+```
+
+契约：
+- `reactors > 1` 时 handler 运行在与调用方不同的线程上；handler 拿到的 `IoStream` 以及它创建的一切归该 reactor 所有（§16 亲和性）。handler 访问共享状态时的线程安全由调用方负责。
+- `reactors == 1` 时不起工作线程，等价于 `listen` + accept + 本地 `launch`。
+- `serveTcp` 改为基于它实现，行为不变。
+
+验收：`MultiReactorTest` 改走新 API 并保持通过；新增测试：`serve` 在 `close()` 后返回；handler 分布到 ≥ 2 个线程；三驱动 + macOS。
+
+### 18.2 地址：IPv6 与域名解析（阶段 1）
+
+- IPv6 字面量：`listen("::", port)`、`connect("::1", port)`；`listen("::")` 为双栈（`IPV6_V6ONLY=0`）。
+- 域名：`connect(host, port)` 接受主机名。实现：`getaddrinfo` 在专用解析 Worker 线程上执行（薄 OS 调用，符合规则；它会阻塞，所以不能在 reactor 线程上调用），结果经目标 reactor 的 `dispatch` 送回；依次尝试各地址，全部失败才抛 `ConnectException`（Happy Eyeballs 以后再做）。
+- 纯 Kotlin DNS 客户端需要 UDP，归阶段 6。
+- 验收：`connect("localhost")`；IPv6 回环回显；无法解析的主机名得到 `ConnectException` 而不是崩溃；三驱动 + macOS。
+
+### 18.3 压测矩阵（阶段 1）
+
+回显之外的工作点，全部同机、交替、成对：
+- 连接数 1 / 12 / 100 / 1000；载荷 128 B / 4 KB / 64 KB；
+- 指标：qps、p50、p99、服务端 RSS（算出每连接内存）、CPU；
+- msgtrans framed / rpc：1 reactor 对 4 reactor。
+
+客户端：沿用 geario 的 `bench-echo/client`（每连接一个线程，1000 连接内可用）；1 万连接以上需要异步客户端，另行处理。
+本节只记录数据、不设通过线，唯一硬指标是 msgtrans 4 reactor 在 12 连接及以上 ≥ 2× 单 reactor。
+
+### 18.5 待决：密码学原语
+
+TLS 分两层：协议层（握手状态机、记录层、密钥调度、X.509 证书链校验）和原语层（AES-GCM、ChaCha20-Poly1305、X25519、
+SHA-256/384、HKDF、ECDSA P-256 / RSA 验签）。
+
+- **协议层一定用 Kotlin 实现**（符合规则，也是工作量主体）。
+- **原语层两种选择**：
+  - (a) 纯 Kotlin：没有外部依赖。但 Kotlin/Native 用不了 AES-NI / PCLMULQDQ 这类指令，AES-GCM 预计比 libcrypto 的汇编实现慢数倍；密钥相关代码的常量时间性需要逐函数审计。
+  - (b) 薄调用平台 libcrypto（Linux 用 OpenSSL libcrypto，Apple 用 CommonCrypto/Security）：一次调用处理一整条记录（≤16 KB），没有运行时、没有线程交接，按上面的规则属于允许的薄 OS/系统库调用。
+- 建议 (b)，或 (b) 起步、之后按基准逐个替换成 Kotlin。**等用户决定。**
