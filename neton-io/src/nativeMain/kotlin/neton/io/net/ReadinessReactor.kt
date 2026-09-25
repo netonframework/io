@@ -136,21 +136,16 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val n = poller.poll(timeout) { fd, readable, writable ->
                 if (fd == wakeReadFd) { woke = true; return@poll }
                 if (fd >= persistent.size) return@poll   // never registered here (cannot happen; be safe)
-                // SPEC §17c step 4: resume the parked coroutine *here*, on the reactor thread,
-                // instead of queueing a dispatched task for it. We are already on the dispatcher's
-                // thread, so no hop is lost; what is saved is a queue round trip and the
-                // DispatchedTask bookkeeping per event. The coroutine runs inline until its next
-                // suspension (typically its next park) — the same amount of work, one step earlier.
                 if (readable) {
                     // Persistent fds: record the edge *before* resuming, so the resumed read() sees
                     // the fd as ready instead of parking again (the edge is not repeated).
                     if (persistent[fd]) readyRead[fd] = true
                     val w = readWaiters[fd]
-                    if (w != null) { readWaiters[fd] = null; with(w) { resumeUndispatched(Unit) } }
+                    if (w != null) { readWaiters[fd] = null; w.resume(Unit) }
                 }
                 if (writable) {
                     val w = writeWaiters[fd]
-                    if (w != null) { writeWaiters[fd] = null; with(w) { resumeUndispatched(Unit) } }
+                    if (w != null) { writeWaiters[fd] = null; w.resume(Unit) }
                 }
             }
             if (woke) { onWake(); poller.armRead(wakeReadFd) }
