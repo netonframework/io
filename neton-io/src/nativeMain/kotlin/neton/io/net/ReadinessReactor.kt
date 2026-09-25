@@ -59,15 +59,17 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         if (poller.persistentRead) { persistent[fd] = true; poller.watchRead(fd) }
     }
 
+    // No invokeOnCancellation here (SPEC §17c step 3): a cancelled continuation wakes itself with
+    // CancellationException and ignores any later resume, so a stale waiter in the slot is
+    // harmless — the next event on that fd resumes nothing, and the next park overwrites it. That
+    // saves a JobNode + closure per park and removes the cross-thread hop the handler needed.
     private suspend fun waitReadable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
         readWaiters[fd] = cont
-        cont.invokeOnCancellation { postToReactor { if (readWaiters[fd] === cont) readWaiters[fd] = null } }
         if (!persistent[fd]) poller.armRead(fd)
     }
 
     private suspend fun waitWritable(fd: Int): Unit = suspendCancellableCoroutine { cont ->
         writeWaiters[fd] = cont
-        cont.invokeOnCancellation { postToReactor { if (writeWaiters[fd] === cont) writeWaiters[fd] = null } }
         poller.armWrite(fd)
     }
 
