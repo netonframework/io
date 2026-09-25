@@ -320,3 +320,20 @@ the dispatcher hop it saved is cheaper than what it cost. After step 3 the epoll
 recv, 0.1 epoll_wait per request, ~3 syscalls vs geario's 0.27 through io_uring), so the remaining
 single-core gap is expected to close through the io_uring driver, not through more user-space work
 on the readiness path. Round 12 (ring setup flags) is the first step there.
+
+## Round 12 (SPEC §17c step 5: io_uring ring flags) — same binary, A/B by `NETON_IO_URING_SETUP=legacy`
+
+Raw: `2026-09-25-153-round12-raw.txt`. `defer` = `COOP_TASKRUN|SINGLE_ISSUER|DEFER_TASKRUN` (+ GETEVENTS on
+every enter); `legacy` = plain ring. Driver names confirmed at run start (`iouring+defer` / `iouring`).
+
+| operating point | legacy | defer | paired defer/legacy | vs geario |
+|---|---|---|---|---|
+| pinned core 1, 12 conns, 10 rounds | 98,271 | 101,607 | **1.039 (7/10)** | 0.823 (0/10); geario 112,803 |
+| unpinned ×4, 12 conns, 4 rounds | 214,078 | 232,786 | 1.017 (3/4) | 0.811 (0/4); geario 278,392; epoll ×4 299,360 |
+
+**Reading.** The flags help a little and stay (with fallback), but they do not change the picture:
+neton-uring still submits one SQE and reaps one CQE per recv and per send, and pays an
+io_uring_enter per loop round, so it does the same syscall work as its epoll sibling plus the ring
+bookkeeping. geario's 0.27 syscalls/request come from *what* it submits, not only from the flags:
+multishot recv with provided buffers (one SQE arms a connection for many messages) is the next
+uring step (§17c step 6). ×4 uring remains far below ×4 epoll for the same reason plus io-wq.

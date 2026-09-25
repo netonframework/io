@@ -1,0 +1,56 @@
+# host=service load=1.28 rounds=10 secs=8 payload=128
+# md5 e2b76fafb0debf6ede7fc930e0212017  echoServer-af5.kexe 
+# driver names: "driver":"iouring+defer" / legacy: "driver":"iouring"
+# part A: pinned core 1, 1 reactor
+# warmup
+# mode conns=12  (server conns qps p50_us)
+uring-legacy 12 101411 101.0
+uring-defer 12 105878 95.8
+geario-p1 12 148933 73.3
+uring-legacy 12 109660 90.5
+uring-defer 12 113405 89.4
+geario-p1 12 138708 77.6
+uring-legacy 12 111236 90.6
+uring-defer 12 108523 92.5
+geario-p1 12 131062 83.7
+uring-legacy 12 101485 101.2
+uring-defer 12 97336 106.5
+geario-p1 12 110766 99.5
+uring-legacy 12 97493 104.1
+uring-defer 12 106898 95.1
+geario-p1 12 112366 106.8
+uring-legacy 12 83743 128.0
+uring-defer 12 82383 130.0
+geario-p1 12 112959 98.0
+uring-legacy 12 90024 115.6
+uring-defer 12 97047 105.4
+geario-p1 12 103420 106.9
+uring-legacy 12 83238 128.7
+uring-defer 12 87347 118.8
+geario-p1 12 93198 119.7
+uring-legacy 12 82278 128.6
+uring-defer 12 84196 126.3
+geario-p1 12 112647 97.4
+uring-legacy 12 99049 104.2
+uring-defer 12 113161 89.5
+geario-p1 12 148403 73.4
+# part B: unpinned, 4 reactors
+# warmup
+# mode conns=12  (server conns qps p50_us)
+uring-legacy-4 12 218670 46.2
+uring-defer-4 12 252443 37.8
+epoll-4 12 295521 19.4
+geario 12 316996 33.6
+uring-legacy-4 12 248551 41.4
+uring-defer-4 12 252756 36.9
+epoll-4 12 284611 18.6
+geario 12 283540 35.9
+uring-legacy-4 12 209486 44.6
+uring-defer-4 12 213128 47.9
+epoll-4 12 335817 10.7
+geario 12 273243 45.5
+uring-legacy-4 12 201955 50.5
+uring-defer-4 12 195525 47.7
+epoll-4 12 303199 11.0
+geario 12 236938 46.1
+# done
