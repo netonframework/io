@@ -7,8 +7,9 @@ package neton.io.bytes
  * already-read prefix so a long-lived buffer does not grow without bound.
  *
  * Pooled buffers (SPEC §23.7, `Buffer(pooled = true)`) take their array from the thread's
- * [BufferPool] on first write and give it back as soon as reading drains them, so an idle
- * connection holds no buffer memory. [clear] keeps the array (a driver may still have it pinned).
+ * [BufferPool] on first write and give it back through [releaseIfIdle]: the reactors call it for
+ * reads that stay parked (an idle sweep, SPEC §24), so an idle connection holds no buffer memory
+ * while a busy one keeps the same array (and the same pin) across requests.
  *
  * [readSlice] returns a zero-copy [Bytes]. The array it points into is then *shared*: the buffer
  * never writes into already-read space of that array again (no compaction, no reset to 0); when it
@@ -181,31 +182,23 @@ class Buffer private constructor(
         resetIfDrained(pool)
     }
 
-    /**
-     * The drivers' write path: consume [n] sent bytes, but a drained pooled buffer *keeps* its array —
-     * it is usually refilled at once (echo, request/response), and a read that parks returns it via
-     * [releaseIfIdle]. Saves a release/acquire pair per request (SPEC §23.7, cachegrind).
-     */
-    internal fun consumeSent(n: Int) {
-        require(n in 0..readableBytes)
-        readerIndex += n
-        if (readerIndex != writerIndex) return
-        readerIndex = 0
-        writerIndex = 0
-        if (sharedOrBorrowed) leaveArray()
-    }
+    /** The drivers' write path: consume [n] sent bytes (same as [consume]; kept for the drivers' call sites). */
+    internal fun consumeSent(n: Int) = consume(n, null)
 
+    // A drained buffer keeps its array (SPEC §24): handing it back on every drain made each request
+    // take a different array from the pool, and each new array needs a new pin (an allocation).
+    // Pooled arrays go back through [releaseIfIdle] — explicitly, or from the reactor's sweep of
+    // reads that stay parked.
+    @Suppress("UNUSED_PARAMETER")
     private fun resetIfDrained(pool: BufferPool?) {
         if (readerIndex != writerIndex) return
         readerIndex = 0
         writerIndex = 0
-        if (mode != 0) drainedSlow(pool)
+        if (sharedOrBorrowed) leaveArray()
     }
 
-    private fun drainedSlow(pool: BufferPool?) {
-        if (sharedOrBorrowed) leaveArray()
-        else if (array.isNotEmpty()) { (pool ?: BufferPool.current).release(array); array = EMPTY_ARRAY }
-    }
+    /** A pooled buffer with nothing to read that still holds an array (what an idle sweep can take back). */
+    internal val holdsIdleArray: Boolean get() = mode == POOLED && readerIndex == writerIndex && array.isNotEmpty()
 
     /** Stop using a shared or borrowed array (never pooled); the next write takes a fresh one. Buffer must be empty. */
     private fun leaveArray() {

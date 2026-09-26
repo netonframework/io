@@ -64,7 +64,6 @@ class Framed<In, Out>(
             io.stream.flush()
         }
         out.clear()
-        out.releaseIfIdle()     // the write buffer is write-only: an idle connection holds no array (SPEC §23.7)
     }
 
     /** Send one frame: encode, write, flush. */

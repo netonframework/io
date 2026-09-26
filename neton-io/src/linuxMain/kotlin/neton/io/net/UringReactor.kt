@@ -209,6 +209,13 @@ internal class UringReactor : Reactor() {
     private var readers = arrayOfNulls<Continuation<Int>>(64)
     private var readerBufs = arrayOfNulls<Buffer>(64)
     private var readerSizers = arrayOfNulls<ReadSizer>(64)
+    // SPEC §24 idle sweep (as in ReadinessReactor): parked readers give their pooled arrays back
+    // after IDLE_SWEEP_MS of quiet, or when parked across a whole interval of SWEEP_ROUNDS rounds.
+    private var parkEpoch = IntArray(64)
+    private var sweepEpoch = 1
+    private var roundsSinceSweep = 0
+    private var idleArrays = false
+    private var timeoutFired = false
     private var msReady = IntArray(64); private var msReadyCount = 0; private var isMsReady = BooleanArray(64)
     // Send slots whose short send is resubmitted after reaping (never from inside reap()).
     private var pendingSends = IntArray(64); private var pendingSendCount = 0
@@ -223,6 +230,7 @@ internal class UringReactor : Reactor() {
         rqBytes = rqBytes.copyOf(n); msPaused = msPaused.copyOf(n); msUd = msUd.copyOf(n)
         readers = readers.copyOf(n); starved = starved.copyOf(n)
         readerBufs = readerBufs.copyOf(n); readerSizers = readerSizers.copyOf(n); isMsReady = isMsReady.copyOf(n)
+        parkEpoch = parkEpoch.copyOf(n)
     }
 
     private fun rqPush(fd: Int, bid: Int, len: Int) {
@@ -320,7 +328,8 @@ internal class UringReactor : Reactor() {
     // The multishot op stays armed across a cancelled read; only the parked reader is woken.
     private suspend fun msPark(fd: Int, dst: Buffer, sizer: ReadSizer): Int = suspendCoroutineUninterceptedOrReturn { cont ->
         watchCancellation(fd, cont)
-        dst.releaseIfIdle(bufferPool)              // parking: an empty pooled buffer holds no array (SPEC §23.7)
+        // Parking keeps the array (a quick wake reuses it and its pin); the idle sweep takes it back.
+        if (dst.holdsIdleArray) { parkEpoch[fd] = sweepEpoch; idleArrays = true }
         readers[fd] = cont; readerBufs[fd] = dst; readerSizers[fd] = sizer
         COROUTINE_SUSPENDED
     }
@@ -329,6 +338,17 @@ internal class UringReactor : Reactor() {
         val c = readers[fd] ?: return
         readers[fd] = null; readerBufs[fd] = null; readerSizers[fd] = null
         enqueueResumeInt(c, n, error)
+    }
+
+    private fun sweepParked(all: Boolean) {
+        idleArrays = false
+        for (fd in 0 until readerBufs.size) {
+            val b = readerBufs[fd] ?: continue
+            if (!b.holdsIdleArray) continue
+            if (all || parkEpoch[fd] < sweepEpoch) b.releaseIfIdle(bufferPool) else idleArrays = true
+        }
+        sweepEpoch++
+        roundsSinceSweep = 0
     }
 
     /** After reaping: parked readers whose fd got data (or EOF / an error) take it now. */
@@ -351,6 +371,7 @@ internal class UringReactor : Reactor() {
     private class PinRef(val array: ByteArray, val pinned: Pinned<ByteArray>) { var refs = 0; var retired = false
         fun release() { if (retired && refs == 0) pinned.unpin() } }
     private var pinRefs = arrayOfNulls<PinRef>(64)
+    private var wPinRefs = arrayOfNulls<PinRef>(64)       // write side (SPEC §24: no re-pin per request)
 
     // Cancellation is watched once per (fd, coroutine Job): two watches per fd, because a stream's
     // read loop and write loop are usually different coroutines. On cancellation (any thread) the
@@ -430,7 +451,7 @@ internal class UringReactor : Reactor() {
         if (fd < pinRefs.size) return
         var n = pinRefs.size
         while (n <= fd) n *= 2
-        pinRefs = pinRefs.copyOf(n)
+        pinRefs = pinRefs.copyOf(n); wPinRefs = wPinRefs.copyOf(n)
     }
 
     private fun pinFor(fd: Int, array: ByteArray): PinRef {
@@ -441,9 +462,18 @@ internal class UringReactor : Reactor() {
         return PinRef(array, array.pin()).also { pinRefs[fd] = it }
     }
 
+    private fun pinForWrite(fd: Int, array: ByteArray): PinRef {
+        ensureFd(fd)
+        val cur = wPinRefs[fd]
+        if (cur != null && cur.array === array) return cur
+        if (cur != null) { cur.retired = true; cur.release() }
+        return PinRef(array, array.pin()).also { wPinRefs[fd] = it }
+    }
+
     private fun retirePin(fd: Int) {
         if (fd >= pinRefs.size) return
         pinRefs[fd]?.let { it.retired = true; it.release(); pinRefs[fd] = null }
+        wPinRefs[fd]?.let { it.retired = true; it.release(); wPinRefs[fd] = null }
     }
 
     init {
@@ -595,8 +625,12 @@ internal class UringReactor : Reactor() {
         prepSqe(NETON_IORING_OP_ASYNC_CANCEL, -1, target.toLong(), 0, 0, controlUd())
     }
 
-    override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
-        if (multishot) return readMultishot(fd, dst, sizer)
+    // Both branches are tail calls: a non-tail call in either made the whole function a state
+    // machine, allocated on every read even on the multishot path (SPEC §24).
+    override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int =
+        if (multishot) readMultishot(fd, dst, sizer) else readSingle(fd, dst, sizer)
+
+    private suspend fun readSingle(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val res = submit(NETON_IORING_OP_READ, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pin)
@@ -610,7 +644,7 @@ internal class UringReactor : Reactor() {
      */
     override suspend fun write(fd: Int, src: Buffer): Int {
         if (src.readableBytes == 0) return 0
-        val pin = pinFor(fd, src.backingArray())
+        val pin = pinForWrite(fd, src.backingArray())
         val idx = takeSlot()
         val slot = slots[idx]!!
         slot.fd = fd; slot.pin = pin; pin.refs++
@@ -754,7 +788,9 @@ internal class UringReactor : Reactor() {
             drainTasks()
             if (root.isCompleted) break
 
-            val timerMs = nextTimerMillis()
+            var timerMs = nextTimerMillis()
+            val sweepWait = idleArrays && !hasTasks() && (timerMs < 0 || timerMs > IDLE_SWEEP_MS)
+            if (sweepWait) timerMs = IDLE_SWEEP_MS
             val mc = if (hasTasks() || timerMs == 0) 0u else 1u
             if (mc > 0u && timerMs > 0) {
                 // Bound the blocking wait by the nearest timer (re-arm only if none is in flight
@@ -771,6 +807,9 @@ internal class UringReactor : Reactor() {
             // SPEC §24: work that submits SQEs runs here, never from inside reap().
             if (msReadyCount > 0) completeReadyReads()
             if (pendingSendCount > 0) resubmitSends()
+            if (sweepWait && timeoutFired) sweepParked(all = true)
+            else if (++roundsSinceSweep >= SWEEP_ROUNDS && idleArrays) sweepParked(all = false)
+            timeoutFired = false
         }
     }
 
@@ -787,7 +826,7 @@ internal class UringReactor : Reactor() {
             head += 1u
             if (ud >= CONTROL_BASE) {
                 if (ud == wakeUd) { onWake(); armWake() }
-                else if (ud == timeoutUd) { timeoutUd = 0uL; timeoutDeadlineMs = Long.MAX_VALUE }
+                else if (ud == timeoutUd) { timeoutUd = 0uL; timeoutDeadlineMs = Long.MAX_VALUE; timeoutFired = true }
                 continue                                   // else: a cancel op's own CQE
             }
             val idx = (ud shr 32).toInt()
@@ -856,6 +895,8 @@ internal class UringReactor : Reactor() {
         const val DRAIN_ROUNDS = 1000
         /** [msTake]: nothing queued, no EOF, no error — the reader must wait. */
         const val NOTHING_QUEUED = Int.MIN_VALUE
+        const val IDLE_SWEEP_MS = 50
+        const val SWEEP_ROUNDS = 1024
         /** user_data at or above this belongs to a control op (wake poll / timeout / cancel), not a slot. */
         const val CONTROL_BASE: ULong = 0xFFFF_FFFF_0000_0000uL
     }

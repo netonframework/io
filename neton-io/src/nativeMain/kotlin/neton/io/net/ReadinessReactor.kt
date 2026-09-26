@@ -60,8 +60,18 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     // One pin per fd for the buffer last used on it: pinning allocates a StableRef, and the
     // buffer of a connection is the same object on every call. Replaced when the array changes
     // (Buffer growth), released on close.
+    // Separate slots for the read and the write side: Framed reads into one buffer and writes from
+    // another, and a single slot re-pinned (allocated) twice per request (SPEC §24).
     private var pinnedArrays = arrayOfNulls<ByteArray>(64)
     private var pins = arrayOfNulls<Pinned<ByteArray>>(64)
+    private var wPinnedArrays = arrayOfNulls<ByteArray>(64)
+    private var wPins = arrayOfNulls<Pinned<ByteArray>>(64)
+    // SPEC §24 idle sweep: the sweep epoch in which each fd's read parked. A buffer parked across a
+    // whole sweep interval (or when the reactor goes idle) gives its pooled array back.
+    private var parkEpoch = IntArray(64)
+    private var sweepEpoch = 1
+    private var roundsSinceSweep = 0
+    private var idleArrays = false          // some parked read may hold an idle pooled array
 
     private fun ensureFd(fd: Int) {
         if (fd < persistent.size) return
@@ -76,6 +86,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         readCancelHandles = readCancelHandles.copyOf(n); writeCancelHandles = writeCancelHandles.copyOf(n)
         persistent = persistent.copyOf(n); readyRead = readyRead.copyOf(n)
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
+        wPinnedArrays = wPinnedArrays.copyOf(n); wPins = wPins.copyOf(n); parkEpoch = parkEpoch.copyOf(n)
     }
 
     private fun pinFor(fd: Int, array: ByteArray): Pinned<ByteArray> {
@@ -84,6 +95,29 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         val p = array.pin()
         pinnedArrays[fd] = array; pins[fd] = p
         return p
+    }
+
+    private fun pinForWrite(fd: Int, array: ByteArray): Pinned<ByteArray> {
+        if (wPinnedArrays[fd] === array) return wPins[fd]!!
+        wPins[fd]?.unpin()
+        val p = array.pin()
+        wPinnedArrays[fd] = array; wPins[fd] = p
+        return p
+    }
+
+    /**
+     * Give back the pooled arrays of reads that stayed parked: all of them when the reactor went
+     * idle ([all]), otherwise those parked since before the previous sweep (SPEC §24).
+     */
+    private fun sweepParked(all: Boolean) {
+        idleArrays = false
+        for (fd in 0 until readBufs.size) {
+            val b = readBufs[fd] ?: continue
+            if (!b.holdsIdleArray) continue
+            if (all || parkEpoch[fd] < sweepEpoch) b.releaseIfIdle(bufferPool) else idleArrays = true
+        }
+        sweepEpoch++
+        roundsSinceSweep = 0
     }
 
     override fun registerStream(fd: Int) {
@@ -177,14 +211,15 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             // successful recv, so the next read() picks up data that arrived meanwhile without a poll.
             n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; sizer.onRead(n); n }
             n == EOF_RESULT -> -1
-            n == WOULD_BLOCK -> { readyRead[fd] = false; dst.releaseIfIdle(bufferPool); RECV_WAIT }
+            n == WOULD_BLOCK -> { readyRead[fd] = false; RECV_WAIT }
             else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
         }
     }
 
     private suspend fun parkRead(fd: Int, dst: Buffer, sizer: ReadSizer): Int = suspendCoroutineUninterceptedOrReturn { cont ->
         watchCancellation(fd, write = false, cont)
-        dst.releaseIfIdle(bufferPool)              // parking: an empty pooled buffer holds no array (SPEC §23.7)
+        // Parking keeps the array (a quick wake reuses it and its pin); the idle sweep takes it back.
+        if (dst.holdsIdleArray) { parkEpoch[fd] = sweepEpoch; idleArrays = true }
         readConts[fd] = cont; readBufs[fd] = dst; readSizers[fd] = sizer
         if (servedRound[fd] == round && (!persistent[fd] || readyRead[fd])) defer(fd)
         else if (!persistent[fd]) poller.armRead(fd)
@@ -219,7 +254,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         ensureFd(fd)
         var total = 0
         while (src.readableBytes > 0) {
-            val n = sendPinned(fd, pinFor(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
+            val n = sendPinned(fd, pinForWrite(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
             stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
             if (n >= 0) { src.consumeSent(n); total += n }
             else if (n == WOULD_BLOCK) return parkWrite(fd, src, total)
@@ -239,7 +274,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         val src = writeBufs[fd]!!
         var total = writeTotals[fd]
         while (src.readableBytes > 0) {
-            val n = sendPinned(fd, pinFor(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
+            val n = sendPinned(fd, pinForWrite(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
             stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
             if (n >= 0) { src.consumeSent(n); total += n }
             else if (n == WOULD_BLOCK) { writeTotals[fd] = total; poller.armWrite(fd); return }
@@ -298,7 +333,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             drainTasks()
             if (root.isCompleted) break
 
-            val timeout = if (hasTasks() || deferredCount > 0) 0 else nextTimerMillis()
+            var timeout = if (hasTasks() || deferredCount > 0) 0 else nextTimerMillis()
+            // Parked reads hold pooled arrays: wake up after IDLE_SWEEP_MS of quiet to give them back.
+            val sweepWait = idleArrays && (timeout < 0 || timeout > IDLE_SWEEP_MS)
+            if (sweepWait) timeout = IDLE_SWEEP_MS
             var woke = false
             val n = poller.poll(timeout) { fd, readable, writable ->
                 if (fd == wakeFd) { woke = true; return@poll }
@@ -318,6 +356,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             }
             if (woke) { onWake(); poller.armRead(wakeFd) }
             countPoll(timeout == 0, n)
+            if (sweepWait && n == 0) sweepParked(all = true)
+            else if (++roundsSinceSweep >= SWEEP_ROUNDS && idleArrays) sweepParked(all = false)
             // New round: reads deferred in the last one get their turn now (SPEC §19.5).
             round++
             val deferred = deferredCount
@@ -343,6 +383,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         servedRound[fd] = 0
         persistent[fd] = false; readyRead[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
+        wPins[fd]?.unpin(); wPins[fd] = null; wPinnedArrays[fd] = null
         poller.forget(fd)
         closeFd(fd)
     }
@@ -350,6 +391,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private companion object {
         /** [tryRecv]: nothing to read yet. Distinct from -1, which is EOF here (WOULD_BLOCK is also -1). */
         const val RECV_WAIT = Int.MIN_VALUE
+        /** Quiet time after which parked reads give their pooled arrays back. */
+        const val IDLE_SWEEP_MS = 50
+        /** Under load, reads parked for a whole interval of this many rounds give theirs back. */
+        const val SWEEP_ROUNDS = 1024
     }
 
     override fun shutdown() {

@@ -27,7 +27,9 @@ class BufferPoolTest {
         b.writeBytes(bytes(100))
         assertEquals(BufferPool.MIN_SIZE, b.capacity, "smallest size class")
         val first = b.backingArray()
-        b.skip(100)                                        // drained: the array goes back
+        b.skip(100)                                        // drained: the array is kept (same pin next time)
+        assertEquals(BufferPool.MIN_SIZE, b.capacity)
+        b.releaseIfIdle()                                  // idle: now it goes back
         assertEquals(0, b.capacity)
         assertEquals(1, BufferPool.current.returned)
         b.writeByte(1)
@@ -53,6 +55,7 @@ class BufferPoolTest {
         val b = Buffer(pooled = true)
         b.writeBytes(bytes(200_000))
         b.skip(200_000)
+        b.releaseIfIdle()
         assertEquals(0, BufferPool.current.cachedBytesNow)
         assertTrue(BufferPool.current.dropped >= 1)
     }
@@ -129,7 +132,7 @@ class BufferPoolTest {
         c.close(); s.close(); listener.close()
     }
 
-    /** An idle pooled read on the readiness drivers holds no array while parked. */
+    /** A read that stays parked gives its pooled array back once the reactor is idle (SPEC §24 sweep). */
     @Test
     fun parkedReadHoldsNoPooledArray() = runReactor {
         val listener = listen("127.0.0.1", 21921)
@@ -139,7 +142,7 @@ class BufferPoolTest {
         val s = accepted.await()
         val buf = Buffer(pooled = true)
         val r = async { s.read(buf) }
-        delay(100)
+        delay(400)                                         // parked well past the idle sweep (50 ms)
         // io_uring's single-shot read lends the array to the kernel while parked; multishot and the
         // readiness drivers hold none.
         if (currentReactor()::class.simpleName == "UringReactor" && buf.capacity != 0) println("SKIP idle-release check: io_uring single-shot read owns the array")
