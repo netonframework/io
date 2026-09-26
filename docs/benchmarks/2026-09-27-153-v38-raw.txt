@@ -1,0 +1,85 @@
+linuxX64 iouring tests=71 failures=0
+linuxX64 epoll tests=71 failures=0
+linuxX64 polling tests=71 failures=0
+# host=service load=1.73 md5 17c7b1b291dce56b9fb1f676be19bdc5  echoServer-v38.kexe
+# P: pinned, 12 conns: yields and syscalls per request
+v38-epoll qps=106441 yields_per_req=0.000 syscalls_per_req=3.090
+v38-epoll-short qps=114249 yields_per_req=0.000 syscalls_per_req=2.100
+v38-iouring qps=117606 yields_per_req=0.000 syscalls_per_req=0.095
+geario qps=130443 yields_per_req=0.000 syscalls_per_req=0.294
+v38-epoll qps=120256 yields_per_req=0.000 syscalls_per_req=3.091
+v38-epoll-short qps=131855 yields_per_req=0.000 syscalls_per_req=2.100
+v38-iouring qps=129655 yields_per_req=0.000 syscalls_per_req=0.094
+geario qps=124719 yields_per_req=0.000 syscalls_per_req=0.286
+# C: cachegrind
+v38-epoll secs=5 requests=198556 Ir=467410464
+v38-epoll secs=15 requests=642969 Ir=1500658158
+v38-iouring secs=5 requests=253464 Ir=751508976
+v38-iouring secs=15 requests=698235 Ir=2015629815
+# T1: pinned 12 conns, 8 rounds
+v38-epoll conns=12 pin=1 qps=143980 p99=120.6 jain=1.000 load=0.80
+v38-epoll-short conns=12 pin=1 qps=157424 p99=106.5 jain=1.000 load=0.89
+v38-iouring conns=12 pin=1 qps=155003 p99=151.5 jain=1.000 load=1.08
+geario conns=12 pin=1 qps=151757 p99=155.0 jain=1.000 load=1.29
+v38-epoll conns=12 pin=1 qps=147387 p99=112.4 jain=1.000 load=1.41
+v38-epoll-short conns=12 pin=1 qps=159107 p99=107.8 jain=1.000 load=1.62
+v38-iouring conns=12 pin=1 qps=155410 p99=151.5 jain=1.000 load=1.91
+geario conns=12 pin=1 qps=152619 p99=155.1 jain=1.000 load=1.84
+v38-epoll conns=12 pin=1 qps=145675 p99=103.3 jain=1.000 load=1.87
+v38-epoll-short conns=12 pin=1 qps=151491 p99=112.2 jain=1.000 load=1.88
+v38-iouring conns=12 pin=1 qps=142451 p99=171.9 jain=1.000 load=1.82
+geario conns=12 pin=1 qps=141564 p99=172.8 jain=1.000 load=1.86
+v38-epoll conns=12 pin=1 qps=144359 p99=110.2 jain=1.000 load=1.95
+v38-epoll-short conns=12 pin=1 qps=157215 p99=108.5 jain=1.000 load=1.88
+v38-iouring conns=12 pin=1 qps=156402 p99=151.5 jain=1.000 load=1.89
+geario conns=12 pin=1 qps=153688 p99=154.4 jain=1.000 load=2.22
+v38-epoll conns=12 pin=1 qps=146935 p99=120.0 jain=1.000 load=2.13
+v38-epoll-short conns=12 pin=1 qps=154818 p99=114.3 jain=1.000 load=2.27
+v38-iouring conns=12 pin=1 qps=135137 p99=175.5 jain=1.000 load=2.31
+geario conns=12 pin=1 qps=123066 p99=199.0 jain=1.000 load=2.28
+v38-epoll conns=12 pin=1 qps=127417 p99=133.8 jain=1.000 load=2.09
+v38-epoll-short conns=12 pin=1 qps=136546 p99=124.2 jain=1.000 load=2.16
+v38-iouring conns=12 pin=1 qps=131115 p99=183.0 jain=1.000 load=2.22
+geario conns=12 pin=1 qps=128168 p99=187.9 jain=1.000 load=2.20
+v38-epoll conns=12 pin=1 qps=125466 p99=133.5 jain=1.000 load=2.10
+v38-epoll-short conns=12 pin=1 qps=125807 p99=133.1 jain=1.000 load=2.16
+v38-iouring conns=12 pin=1 qps=132928 p99=179.4 jain=1.000 load=2.21
+geario conns=12 pin=1 qps=128761 p99=186.5 jain=1.000 load=2.19
+v38-epoll conns=12 pin=1 qps=125520 p99=142.2 jain=1.000 load=2.16
+v38-epoll-short conns=12 pin=1 qps=131235 p99=131.9 jain=1.000 load=1.98
+v38-iouring conns=12 pin=1 qps=128924 p99=183.0 jain=1.000 load=1.98
+geario conns=12 pin=1 qps=123890 p99=189.2 jain=1.000 load=1.76
+# T4: x4 100 conns, 4 rounds
+v38-epoll conns=100 pin=0 qps=260745 p99=889.1 jain=0.994 load=2.63
+v38-epoll-short conns=100 pin=0 qps=234235 p99=1052.3 jain=0.984 load=3.38
+v38-iouring conns=100 pin=0 qps=256062 p99=941.6 jain=0.992 load=3.83
+geario conns=100 pin=0 qps=262061 p99=818.1 jain=0.991 load=4.62
+v38-epoll conns=100 pin=0 qps=232126 p99=780.8 jain=0.992 load=5.06
+v38-epoll-short conns=100 pin=0 qps=220352 p99=1267.4 jain=0.972 load=5.60
+v38-iouring conns=100 pin=0 qps=242921 p99=867.8 jain=0.997 load=6.19
+geario conns=100 pin=0 qps=249668 p99=1007.3 jain=0.995 load=6.71
+v38-epoll conns=100 pin=0 qps=256304 p99=1146.6 jain=0.969 load=7.00
+v38-epoll-short conns=100 pin=0 qps=250139 p99=1038.2 jain=0.978 load=6.91
+v38-iouring conns=100 pin=0 qps=263734 p99=801.9 jain=0.980 load=6.76
+geario conns=100 pin=0 qps=321768 p99=480.2 jain=0.991 load=6.88
+v38-epoll conns=100 pin=0 qps=254070 p99=916.0 jain=0.990 load=7.12
+v38-epoll-short conns=100 pin=0 qps=238909 p99=1215.8 jain=0.989 load=7.27
+v38-iouring conns=100 pin=0 qps=247281 p99=939.3 jain=0.989 load=6.87
+geario conns=100 pin=0 qps=241599 p99=868.2 jain=0.993 load=7.43
+# T4k: x4 1000 conns, 3 rounds
+v38-epoll conns=1000 pin=0 qps=198175 p99=11213.8 jain=0.997 load=7.75
+v38-epoll-short conns=1000 pin=0 qps=191555 p99=12979.2 jain=0.987 load=7.69
+v38-iouring conns=1000 pin=0 qps=198395 p99=8909.6 jain=0.964 load=7.15
+geario conns=1000 pin=0 qps=199757 p99=9783.3 jain=0.975 load=7.44
+v38-epoll conns=1000 pin=0 qps=208039 p99=9913.1 jain=0.981 load=7.69
+v38-epoll-short conns=1000 pin=0 qps=206335 p99=11054.3 jain=0.966 load=7.64
+v38-iouring conns=1000 pin=0 qps=230097 p99=7275.0 jain=0.964 load=7.26
+geario conns=1000 pin=0 qps=228938 p99=10084.7 jain=0.968 load=7.14
+v38-epoll conns=1000 pin=0 qps=251917 p99=8352.3 jain=0.990 load=7.90
+v38-epoll-short conns=1000 pin=0 qps=233830 p99=10113.6 jain=0.999 load=7.67
+v38-iouring conns=1000 pin=0 qps=238467 p99=10101.9 jain=0.944 load=7.69
+geario conns=1000 pin=0 qps=221977 p99=8034.4 jain=0.987 load=7.89
+# A: allocations per request (callgrind, 10 s client)
+alloc-epoll requests=385292 allocate_calls= per_req=0.0000
+alloc-iouring requests=426445 allocate_calls= per_req=0.0000
+# done

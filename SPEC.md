@@ -779,3 +779,10 @@ reuseAddress = true, reusePort = false, lingerSec = null, connectTimeoutMillis =
 - 153 单核绑定 12 连接回显：`sched_yield`/请求 ≤ 0.05；cachegrind 下每请求 `CustomAllocator::Allocate` 调用为 0（稳态）。
 - 吞吐：单核绑定与 ×4 100 连接，epoll 与 io_uring 对 geario 成对中位数 ≥ 1.00。
 - 用户态指令/请求不高于 v34；全部测试通过（Linux 三驱动、macOS 两驱动、msgtrans）。
+
+### 24.4 结果（2026-09-27，详见 `docs/benchmarks/2026-09-27-zero-alloc.md`）
+- 稳态每请求堆分配 0、`sched_yield` 0（v38）；用户态指令 epoll 2325 / io_uring 2842（v34 为 3391 / 4561，geario 约 4050）；io_uring 每请求系统调用 0.094（geario 0.29）。
+- 途中修复：readiness 驱动 EOF 与 WOULD_BLOCK 同为 -1 的冲突；计时轮首次扫描起点错误（截止时间可能被推迟一整圈 5.12 s，v30 引入）。
+- 对 geario：**io_uring（Linux 默认）在所有测量点持平或领先**（单核 1.022 八轮全胜，×4 1000 连接 1.005，×4 100 连接剖析三轮全胜）。
+  epoll 0.96–0.99，未达验收；短读规则单核领先（1.051）、四核落后，下一步改为按连接自适应。
+

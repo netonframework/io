@@ -1,0 +1,77 @@
+linuxX64 iouring tests=71 failures=0
+linuxX64 epoll tests=71 failures=0
+linuxX64 polling tests=71 failures=0
+# host=service load=1.59 md5 42136fc298e70a1cb3a93449de6cc081  echoServer-v35.kexe
+# P: pinned, 12 conns: yields and syscalls per request
+v34-epoll qps=122580 yields_per_req=0.840 syscalls_per_req=2.910
+v35-epoll qps=117816 yields_per_req=0.161 syscalls_per_req=3.254
+v34-iouring qps=121033 yields_per_req=1.104 syscalls_per_req=1.198
+v35-iouring qps=154162 yields_per_req=0.344 syscalls_per_req=0.443
+geario qps=139887 yields_per_req=0.000 syscalls_per_req=0.295
+v34-epoll qps=128344 yields_per_req=0.821 syscalls_per_req=2.905
+v35-epoll qps=135062 yields_per_req=0.160 syscalls_per_req=3.251
+v34-iouring qps=99770 yields_per_req=1.136 syscalls_per_req=1.230
+v35-iouring qps=112514 yields_per_req=0.366 syscalls_per_req=0.459
+geario qps=107369 yields_per_req=0.000 syscalls_per_req=0.282
+# C: cachegrind
+v35-epoll secs=5 requests=189439 Ir=541216623
+v35-epoll secs=15 requests=587177 Ir=1667177609
+v35-iouring secs=5 requests=216372 Ir=714850607
+v35-iouring secs=15 requests=708794 Ir=2375717645
+# T1: pinned 12 conns, 8 rounds
+v35-epoll conns=12 pin=1 qps=106466 p99=145.3 jain=1.000 load=0.84
+v35-iouring conns=12 pin=1 qps=111370 p99=208.0 jain=1.000 load=1.09
+geario conns=12 pin=1 qps=109075 p99=217.7 jain=1.000 load=1.09
+v34-iouring conns=12 pin=1 qps=117812 p99=148.4 jain=1.000 load=1.30
+v35-epoll conns=12 pin=1 qps=121306 p99=145.6 jain=1.000 load=1.41
+v35-iouring conns=12 pin=1 qps=127060 p99=187.7 jain=1.000 load=1.46
+geario conns=12 pin=1 qps=129714 p99=183.0 jain=1.000 load=1.40
+v34-iouring conns=12 pin=1 qps=120106 p99=134.0 jain=1.000 load=1.56
+v35-epoll conns=12 pin=1 qps=119525 p99=138.2 jain=1.000 load=1.79
+v35-iouring conns=12 pin=1 qps=114445 p99=209.3 jain=1.000 load=1.88
+geario conns=12 pin=1 qps=132605 p99=194.4 jain=1.000 load=1.91
+v34-iouring conns=12 pin=1 qps=124219 p99=128.3 jain=1.000 load=2.07
+v35-epoll conns=12 pin=1 qps=137109 p99=128.9 jain=1.000 load=2.05
+v35-iouring conns=12 pin=1 qps=134340 p99=177.8 jain=1.000 load=2.05
+geario conns=12 pin=1 qps=153578 p99=153.8 jain=1.000 load=2.11
+v34-iouring conns=12 pin=1 qps=139334 p99=118.7 jain=1.000 load=2.18
+v35-epoll conns=12 pin=1 qps=127677 p99=138.8 jain=1.000 load=2.16
+v35-iouring conns=12 pin=1 qps=117389 p99=201.7 jain=1.000 load=1.99
+geario conns=12 pin=1 qps=112327 p99=211.2 jain=1.000 load=1.99
+v34-iouring conns=12 pin=1 qps=114139 p99=144.6 jain=1.000 load=2.21
+v35-epoll conns=12 pin=1 qps=127212 p99=129.3 jain=1.000 load=2.12
+v35-iouring conns=12 pin=1 qps=130478 p99=179.6 jain=1.000 load=2.17
+geario conns=12 pin=1 qps=129760 p99=182.5 jain=1.000 load=2.23
+v34-iouring conns=12 pin=1 qps=122426 p99=136.8 jain=1.000 load=2.34
+v35-epoll conns=12 pin=1 qps=139978 p99=118.4 jain=1.000 load=2.32
+v35-iouring conns=12 pin=1 qps=151650 p99=152.9 jain=1.000 load=2.27
+geario conns=12 pin=1 qps=146656 p99=169.2 jain=1.000 load=2.23
+v34-iouring conns=12 pin=1 qps=139876 p99=119.8 jain=1.000 load=2.37
+v35-epoll conns=12 pin=1 qps=140765 p99=124.0 jain=1.000 load=2.17
+v35-iouring conns=12 pin=1 qps=126341 p99=192.1 jain=1.000 load=2.06
+geario conns=12 pin=1 qps=122834 p99=199.0 jain=1.000 load=2.12
+v34-iouring conns=12 pin=1 qps=111320 p99=164.8 jain=1.000 load=2.19
+# T4: x4 100 conns, 4 rounds
+v35-epoll conns=100 pin=0 qps=263996 p99=797.9 jain=0.985 load=9.85
+v35-iouring conns=100 pin=0 qps=322289 p99=714.2 jain=0.992 load=9.80
+geario conns=100 pin=0 qps=342299 p99=544.7 jain=0.993 load=9.58
+v35-epoll conns=100 pin=0 qps=309642 p99=769.7 jain=0.991 load=9.53
+v35-iouring conns=100 pin=0 qps=322022 p99=741.4 jain=0.995 load=9.61
+geario conns=100 pin=0 qps=326489 p99=721.3 jain=0.995 load=10.12
+v35-epoll conns=100 pin=0 qps=314973 p99=651.6 jain=0.997 load=9.94
+v35-iouring conns=100 pin=0 qps=329235 p99=769.1 jain=0.989 load=10.11
+geario conns=100 pin=0 qps=327426 p99=778.3 jain=0.992 load=9.63
+v35-epoll conns=100 pin=0 qps=318016 p99=748.4 jain=0.993 load=9.62
+v35-iouring conns=100 pin=0 qps=329841 p99=661.6 jain=0.994 load=9.57
+geario conns=100 pin=0 qps=332016 p99=658.2 jain=0.988 load=9.05
+# T4k: x4 1000 conns, 3 rounds
+v35-epoll conns=1000 pin=0 qps=222808 p99=11570.8 jain=0.997 load=9.10
+v35-iouring conns=1000 pin=0 qps=204039 p99=11500.8 jain=0.981 load=9.31
+geario conns=1000 pin=0 qps=199841 p99=9606.5 jain=0.979 load=9.37
+v35-epoll conns=1000 pin=0 qps=185132 p99=15355.6 jain=0.996 load=8.49
+v35-iouring conns=1000 pin=0 qps=199708 p99=10194.9 jain=0.978 load=8.55
+geario conns=1000 pin=0 qps=199285 p99=7252.7 jain=0.999 load=8.47
+v35-epoll conns=1000 pin=0 qps=179011 p99=12895.0 jain=0.996 load=8.32
+v35-iouring conns=1000 pin=0 qps=187839 p99=12175.6 jain=0.964 load=8.54
+geario conns=1000 pin=0 qps=185630 p99=9339.8 jain=0.993 load=8.39
+# done

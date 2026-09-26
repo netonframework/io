@@ -1,0 +1,77 @@
+# host=service load=2.02
+n-epoll qps=292439 cpu_ns_per_req=7210 cs_per_req=0.482 migr_per_req=0.0000 yields_per_req=0.001 syscalls_per_req=2.040
+  1697728 echoServer-v38.  ticks=343
+  1697727 echoServer-v38.  ticks=447
+  1697726 echoServer-v38.  ticks=361
+  1697725 echoServer-v38.  ticks=0
+  1697724 Main GC thread   ticks=0
+  1697723 GC Timer thread  ticks=0
+  1697719 echoServer-v38.  ticks=405
+n-iouring qps=306285 cpu_ns_per_req=6604 cs_per_req=0.365 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=0.042
+  1698027 echoServer-v38.  ticks=383
+  1698026 echoServer-v38.  ticks=396
+  1698025 echoServer-v38.  ticks=339
+  1698024 echoServer-v38.  ticks=0
+  1698023 Main GC thread   ticks=0
+  1698022 GC Timer thread  ticks=0
+  1698018 echoServer-v38.  ticks=359
+geario qps=282726 cpu_ns_per_req=7215 cs_per_req=0.381 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=0.127
+  1698481 iou-wrk-1698473  ticks=0
+  1698480 iou-wrk-1698471  ticks=0
+  1698479 iou-wrk-1698472  ticks=0
+  1698476 iou-wrk-1698474  ticks=0
+  1698475 futures-timer    ticks=0
+  1698474 main:worker:3    ticks=396
+  1698473 main:worker:2    ticks=382
+  1698472 main:worker:1    ticks=362
+n-epoll qps=231373 cpu_ns_per_req=9005 cs_per_req=0.401 migr_per_req=0.0000 yields_per_req=0.005 syscalls_per_req=2.042
+  1698705 echoServer-v38.  ticks=413
+  1698704 echoServer-v38.  ticks=347
+  1698703 echoServer-v38.  ticks=392
+  1698702 echoServer-v38.  ticks=0
+  1698701 Main GC thread   ticks=0
+  1698700 GC Timer thread  ticks=0
+  1698696 echoServer-v38.  ticks=362
+n-iouring qps=297242 cpu_ns_per_req=6837 cs_per_req=0.353 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=0.042
+  1699000 echoServer-v38.  ticks=391
+  1698999 echoServer-v38.  ticks=389
+  1698998 echoServer-v38.  ticks=320
+  1698997 echoServer-v38.  ticks=0
+  1698996 Main GC thread   ticks=0
+  1698995 GC Timer thread  ticks=0
+  1698991 echoServer-v38.  ticks=377
+geario qps=267381 cpu_ns_per_req=7695 cs_per_req=0.399 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=0.126
+  1699438 iou-wrk-1699426  ticks=0
+  1699437 iou-wrk-1699423  ticks=0
+  1699436 iou-wrk-1699424  ticks=0
+  1699428 iou-wrk-1699425  ticks=0
+  1699427 futures-timer    ticks=0
+  1699426 main:worker:3    ticks=326
+  1699425 main:worker:2    ticks=386
+  1699424 main:worker:1    ticks=423
+n-epoll qps=220374 cpu_ns_per_req=9554 cs_per_req=0.395 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=2.051
+  1699667 echoServer-v38.  ticks=379
+  1699666 echoServer-v38.  ticks=381
+  1699665 echoServer-v38.  ticks=368
+  1699664 echoServer-v38.  ticks=0
+  1699663 Main GC thread   ticks=0
+  1699662 GC Timer thread  ticks=0
+  1699658 echoServer-v38.  ticks=388
+n-iouring qps=268690 cpu_ns_per_req=7529 cs_per_req=0.377 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=0.042
+  1699968 echoServer-v38.  ticks=407
+  1699967 echoServer-v38.  ticks=399
+  1699966 echoServer-v38.  ticks=346
+  1699965 echoServer-v38.  ticks=0
+  1699964 Main GC thread   ticks=0
+  1699963 GC Timer thread  ticks=0
+  1699959 echoServer-v38.  ticks=313
+geario qps=233360 cpu_ns_per_req=8796 cs_per_req=0.372 migr_per_req=0.0000 yields_per_req=0.000 syscalls_per_req=0.126
+  1700583 iou-wrk-1700413  ticks=0
+  1700432 iou-wrk-1700412  ticks=0
+  1700431 iou-wrk-1700414  ticks=0
+  1700430 iou-wrk-1700411  ticks=0
+  1700416 iou-wrk-1700413  ticks=0
+  1700415 futures-timer    ticks=0
+  1700414 main:worker:3    ticks=335
+  1700413 main:worker:2    ticks=347
+# done
