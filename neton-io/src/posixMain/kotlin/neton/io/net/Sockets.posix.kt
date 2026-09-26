@@ -63,7 +63,7 @@ internal actual fun lastSocketError(): Int = errno
 internal actual fun errnoMessage(code: Int): String = strerror(code)?.toKString() ?: "errno $code"
 
 /** Flags for send(2) on this platform (MSG_NOSIGNAL on Linux, nothing on Apple). */
-internal expect val SEND_FLAGS: Int   // actual in linuxMain (MSG_NOSIGNAL) and appleMain (0)
+internal expect val SEND_FLAGS: Int   // actual in epollMain (MSG_NOSIGNAL) and appleMain (0)
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {

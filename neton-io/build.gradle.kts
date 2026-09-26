@@ -5,20 +5,25 @@ repositories { mavenCentral() }
 // the reactor ship together. The packages (neton.io.bytes / codec / core / net) keep the layering
 // readable; the artifact boundary does not need to.
 //
-// Targets (SPEC §20, narrowed 2026-09-26): required — macOS, Linux, Windows; plus iOS, which the
-// PulseKit iOS SDK already depends on. Drivers: io_uring/epoll on Linux, kqueue on Apple, IOCP on
-// Windows (WSAPoll first, for correctness).
+// Targets (SPEC §20, final): macOS, Linux, Windows, iOS, Android. neton-io is I/O and networking
+// only (no TLS). Drivers: io_uring/epoll/poll on Linux, epoll/poll on Android, kqueue/poll on Apple,
+// IOCP on Windows (WSAPoll first, for correctness).
 kotlin {
     val linux = listOf(linuxX64(), linuxArm64())
     val macos = listOf(macosArm64(), macosX64())
     val windows = listOf(mingwX64())
     iosArm64(); iosSimulatorArm64(); iosX64()
+    androidNativeArm64(); androidNativeArm32(); androidNativeX64(); androidNativeX86()
 
-    // POSIX sockets are shared by Linux and Apple; Windows (Winsock) has its own layer in mingwMain.
+    // POSIX sockets are shared by Linux, Android and Apple; epoll by Linux and Android. io_uring
+    // stays in linuxMain; Winsock in mingwMain.
     applyDefaultHierarchyTemplate {
         common {
             group("native") {
-                group("posix") { group("linux"); group("apple") }
+                group("posix") {
+                    group("epoll") { group("linux"); group("androidNative") }
+                    group("apple")
+                }
             }
         }
     }

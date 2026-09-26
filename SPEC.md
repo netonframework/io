@@ -658,3 +658,22 @@ Kotlin 版是同样的分工：协议用 Kotlin，原语薄调用 libcrypto。�
 设计上原语调用集中在一层内部接口之后，先用 OpenSSL，之后可换 aws-lc。
 
 **质量与安全**：RFC 8448 测试向量；BoringSSL 的 BoGo 协议一致性测试套件（rustls 也在用，语言无关，通过 shim 程序接入）；与 OpenSSL、Go、rustls 互通；模糊测试。
+
+## 22. Windows IOCP 驱动（设计，待有 Windows 测试机后实现）
+
+WSAPoll 驱动（§20 P1）只用于打通正确性：它每轮 O(n)，且 Windows 上的 WSAPoll 有已知缺陷（例如连接失败时不报事件的旧行为），不适合作为性能驱动。
+IOCP 是 Windows 上的完成型 I/O，与 io_uring 同属一类，沿用 `UringReactor` 的结构（槽表、原始续体、Int 结果环、取消语义）：
+
+- **端口与关联**：每个 reactor 一个 `CreateIoCompletionPort`；流注册时把 SOCKET 关联到端口，并设 `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS`
+  ——操作同步成功时不再产生完成包，直接返回结果（快路径，省一次 `GetQueuedCompletionStatusEx`）。
+- **读写**：`WSARecv` / `WSASend` 带 `OVERLAPPED`，缓冲区沿用按 fd 缓存的 pin（与 io_uring 相同，缓冲区在完成前保持 pin）；
+  返回 `WSA_IO_PENDING` 时 park，完成包到达后经 Int 结果环恢复。`OVERLAPPED` 放在原生内存的槽里，完成包按其地址找回槽。
+- **accept / connect**：`AcceptEx`、`ConnectEx`（经 `WSAIoctl(SIO_GET_EXTENSION_FUNCTION_POINTER)` 取得），完成后 `SO_UPDATE_ACCEPT_CONTEXT` /
+  `SO_UPDATE_CONNECT_CONTEXT`。
+- **唤醒**：跨线程 `dispatch` 用 `PostQueuedCompletionStatus`，不再需要回环套接字对；`Reactor` 的唤醒方式因此改为可覆盖。
+- **定时器**：`GetQueuedCompletionStatusEx` 的超时参数；一次最多取一批完成包。
+- **取消与关闭**：`CancelIoEx(socket, overlapped)`，缓冲区直到该操作的完成包到达才释放（与 io_uring 的规则相同）；关闭时先取消再 `closesocket`。
+- **公平**：与 §19.5 同样的"每轮每连接一次"规则。
+
+**验收**：全部测试在 Windows 上通过（IOCP 与 WSAPoll 两个驱动）；Windows 上与同机 Rust（tokio / geario 的 IOCP）回显成对比较，使用公平客户端。
+**前提**：一台 Windows 测试机（或 CI 的 Windows 执行环境）。
