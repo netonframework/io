@@ -547,3 +547,23 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 | §19.6 TCP_NODELAY | io_uring 64 KB 25 → 11,172 qps |
 
 与 geario（成对中位数）：单核 epoll 0.964、io_uring 0.946；×4/100 连接 epoll 0.949、io_uring 0.965；×4/1000 连接 epoll 0.964（v20）。
+
+**评估 openssl-kotlin 与 native-builds（2026-09-26，用户提议；用户要求性能优先）**
+
+- **kio-labs/openssl-kotlin**（`io.github.kio-labs:openssl` 4.0.1.1，2026-07-12，Apache-2.0，单一维护者）：只有一个 `Placeholder.kt`，
+  即对 `openssl/ssl.h`、`openssl/err.h` 的原始 cinterop，外加静态 `libssl.a`/`libcrypto.a`（**OpenSSL 4.0.1**），用 Kotlin 2.4.0 构建。
+  没有封装损耗，但**只支持 linuxX64 与 macosArm64**（无 iOS、无 linuxArm64），发布历史仅两天、手工更新。**不作为基础**——它能给的，下一项都能给且覆盖更全。
+- **ensody/native-builds**（`com.ensody.nativebuilds:*`，Apache-2.0）：用 vcpkg 自动构建最新版 C 库并按目标平台发布为普通 KMP 模块；
+  OpenSSL 当前 **3.6.4（2026-08-28，与上游补丁版同步）**，覆盖我们全部目标（linuxX64/Arm64、macOS、iOS 真机与模拟器，另有 mingwX64、Android Native）。
+  库模块只内嵌静态 `.a`（`libcrypto.a` 约 11 MB）、几乎不带绑定；头文件单独成模块，另有 Gradle 插件用于自写 cinterop。用 Kotlin 2.2.21 构建，2.4.0 可读。
+  另有 zstd、zlib、brotli、lz4（压缩）与 curl、nghttp2/3、ngtcp2（协议实现，C 写的——与"核心用 Kotlin"的规则冲突，除非另行决定）。
+- **关键验证（已实测）**：cryptography-kotlin 的 OpenSSL 提供者本身拆成 `openssl3-api`（只有声明）+ 链接模块，并已发布
+  `openssl3-prebuilt-nativebuilds`（链接 native-builds 的 libcrypto）。在 Kotlin 2.4.0 上组合
+  `cryptography-provider-openssl3-prebuilt-nativebuilds:0.6.0` + `nativebuilds:openssl-libcrypto:3.6.4` + 我们自己的仅声明 EVP 绑定：
+  Gradle 把 3.6.1_1 统一解析为 3.6.4，二进制里只有**一份** OpenSSL 3.6.4，Linux/macOS 均可构建；153 上直接路径 289 ns/128 B 记录，与之前一致。
+
+**建议的依赖结构（性能优先）**：
+1. 二进制供给：native-builds（`openssl-libcrypto`，以后需要时 `zstd`/`zlib`/`brotli`）。安全更新随其自动发布跟进。
+2. 记录层与所有热路径：neton-io 自己的仅声明 cinterop（只声明用到的 EVP 函数）+ 薄 Kotlin 封装（每方向常驻上下文、原地加解密）。
+3. 握手：cryptography-kotlin（`openssl3-prebuilt-nativebuilds`），与第 2 条共用同一份 libcrypto。
+4. 不需要复制 native-builds 的构建设施（vcpkg + Zig）；只有当它不提供某个库时才考虑自建。

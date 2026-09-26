@@ -14,7 +14,7 @@
 - [ ] 18.3 压测矩阵脚本（连接数 × 载荷 × RSS/p99）并跑一轮
 
 ## 待决
-- [ ] 18.5 密码学原语：已评估 cryptography-kotlin（原语齐全，但每条记录 AEAD 比直接调用慢 3.5–15.6×）；建议握手用它、记录层自写 libcrypto 薄调用——等用户确认后开工阶段 2
+- [ ] 18.5 密码学原语：已评估 cryptography-kotlin、openssl-kotlin、native-builds；建议 native-builds 供给 libcrypto 3.6.4 + 记录层自写 EVP 薄绑定 + 握手用 cryptography-kotlin（同一份 libcrypto，已验证）。待定：TLS 协议本身用 Kotlin 写还是用 OpenSSL libssl
 
 ## §19 工具链与运行时
 - [x] 19.1 工具链：用户决定固定 Kotlin 2.4.0（2.4.10/2.4.20 无 Native 运行时改动），以后再议
