@@ -1,0 +1,22 @@
+package = neton.io.win
+# Only the helpers below are exported; the Winsock declarations themselves come from platform.posix / platform.windows.
+headers = winsock2.h
+headerFilter = neton_winshim_none.h
+linkerOpts = -lws2_32
+compilerOpts = -D_WIN32_WINNT=0x0A00
+
+---
+
+/* Integer socket options: setsockopt takes `const char*` on Windows, which cinterop maps to a String. */
+static int neton_setsockopt_int(unsigned long long s, int level, int opt, int value) {
+    return setsockopt((SOCKET) s, level, opt, (const char*) &value, (int) sizeof value);
+}
+static int neton_getsockopt_int(unsigned long long s, int level, int opt, int* value) {
+    int len = (int) sizeof *value;
+    return getsockopt((SOCKET) s, level, opt, (char*) value, &len);
+}
+/* Winsock must be started once per process before any socket call. */
+static int neton_wsa_startup(void) {
+    WSADATA data;
+    return WSAStartup(MAKEWORD(2, 2), &data);
+}

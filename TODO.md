@@ -33,7 +33,7 @@
 
 ## §20 平台（收窄：macOS / Linux / Windows 必须，iOS 保留）
 - [x] P1 源码集拆分：nativeMain 只放 expect，posixMain（Linux + Apple）放 POSIX socket，linuxMain 放 epoll + io_uring；非 Windows 目标全部编译，macOS 两驱动 33/33
-- [ ] P1 mingwMain：Winsock 的 socket/地址/唤醒实现 + WSAPoll 驱动，mingwX64 可编译链接
+- [x] P1 mingwMain：Winsock 的 socket/地址/唤醒实现 + WSAPoll 驱动，mingwX64 编译 + 链接通过（echoServer.exe、test.exe 为 PE32+）；**未在 Windows 上运行过**
 - [ ] P2 linuxArm64 测试（colima arm64 容器）
 - [ ] P3 Windows 测试机（待用户提供）→ WSAPoll 打通 → IOCP 驱动（性能）
 

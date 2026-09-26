@@ -42,6 +42,13 @@ kotlin {
         }
     }
 
+    // Winsock helpers (integer socket options, WSAStartup) and ws2tcpip (getaddrinfo) for Windows.
+    windows.forEach { target ->
+        target.compilations.getByName("main").cinterops.create("winshim") {
+            defFile(project.file("src/nativeInterop/cinterop/winshim.def"))
+        }
+    }
+
     // io_uring bindings (self-contained UAPI; the cross sysroot predates io_uring).
     linux.forEach { target ->
         target.compilations.getByName("main").cinterops.create("uring") {
