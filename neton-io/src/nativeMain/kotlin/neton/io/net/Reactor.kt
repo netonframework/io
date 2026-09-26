@@ -153,7 +153,12 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
      * reactor must not be computed from a stale clock.
      */
     internal fun timeoutClockMs(): Long {
-        if (wheel.size == 0 && timers.isEmpty()) cachedNowMs = reactorNowMs()
+        if (wheel.size == 0 && timers.isEmpty()) {
+            cachedNowMs = reactorNowMs()
+            // The loop does not tick an empty wheel; bring its scan position to now before the first
+            // deadline goes in, or the first scan could start past that deadline's slot.
+            wheel.tick(cachedNowMs)
+        }
         return cachedNowMs
     }
     internal val wheel = TimerWheel()
@@ -316,7 +321,11 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
                 val c = intConts[i]!!; val v = intVals[i]; val e = intErrs[i]
                 intConts[i] = null; intErrs[i] = null
                 intHead = (i + 1) % intConts.size; intCount--
-                if (e == null) c.resumeWith(Result.success(v)) else c.resumeWith(Result.failure(e))
+                // Pre-boxed value (SPEC §24): resuming with a fresh Integer per read/write was a heap
+                // allocation per request.
+                @Suppress("UNCHECKED_CAST")
+                if (e == null) (c as kotlin.coroutines.Continuation<Any?>).resumeWith(Result.success(boxedInt(v)))
+                else c.resumeWith(Result.failure(e))
             } else if (tasks.isNotEmpty()) {
                 tasks.removeFirst().run()
             } else break
@@ -349,8 +358,12 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     protected fun hasTasks(): Boolean = resumeCount > 0 || intCount > 0 || tasks.isNotEmpty()
 
-    /** Read available bytes into [dst]; returns the count (>0) or -1 at EOF. Reactor thread only. */
-    abstract suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int
+    /**
+     * Read available bytes into [dst]; returns the count (>0) or -1 at EOF. Reactor thread only.
+     * [sizer] gives the read size and hears about each successful read (SPEC §24: the stream needs
+     * no work after this call, so its read is a tail call and allocates nothing).
+     */
+    abstract suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int
 
     /** Write all readable bytes from [src]; returns the number written. */
     abstract suspend fun write(fd: Int, src: Buffer): Int
@@ -425,12 +438,35 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 /** Create the reactor for this platform, honoring NETON_IO_DRIVER. */
 internal expect fun createReactor(): Reactor
 
+/** Read sizing for [Reactor.read]: the size to ask for, and a callback after each successful read. */
+internal interface ReadSizer {
+    fun readChunk(): Int
+    fun onRead(n: Int)
+}
+
+/** A fixed read size (tests, internal callers without adaptive sizing). */
+internal class FixedReadSize(private val size: Int) : ReadSizer {
+    override fun readChunk(): Int = size
+    override fun onRead(n: Int) {}
+}
+
+private val intBoxes = arrayOfNulls<Any>(65537)
+
+/**
+ * [v] as a shared boxed Int for 0..65536 (SPEC §24), created once and reused, so resuming a
+ * continuation with a byte count allocates nothing. Racy first stores are harmless: equal values.
+ */
+internal fun boxedInt(v: Int): Any {
+    if (v < 0 || v > 65536) return v
+    return intBoxes[v] ?: (v as Any).also { intBoxes[v] = it }
+}
+
 /** [neton.io.core.IoStream] over a fd, delegating every operation to the [Reactor]. */
 internal class ReactorStream(
     internal val fd: Int,
     private val reactor: Reactor,
     private val maxReadChunk: Int = 64 * 1024,
-) : WheelNode(), neton.io.core.IoStream {
+) : WheelNode(), neton.io.core.IoStream, ReadSizer {
     private var closed = false
 
     // SPEC §23.2 timeouts (ms, 0 = off) and the deadlines they produce, in reactor-clock ms.
@@ -487,23 +523,31 @@ internal class ReactorStream(
 
     init { reactor.registerStream(fd) }
 
-    override suspend fun read(dst: Buffer): Int {
-        if (closed) throw neton.io.core.ClosedException()
-        reactor.checkOwnerPublic("read")
-        // No timeouts (the default): no deadline bookkeeping on the hot path (SPEC §23.2).
-        val n = if (readTimeoutMs == 0L && idleTimeoutMs == 0L) reactor.read(fd, dst, readGuess) else timedRead(dst)
+    // The adaptive size is driven by the reactor through [ReadSizer] (SPEC §24).
+
+    override fun readChunk(): Int = readGuess
+
+    override fun onRead(n: Int) {
         if (n >= readGuess) {
             if (readGuess < maxReadChunk) readGuess = (readGuess * 2).coerceAtMost(maxReadChunk)
             smallReads = 0
-        } else if (n in 1 until readGuess / 4 && readGuess > MIN_READ_CHUNK) {
+        } else if (n < readGuess / 4 && readGuess > MIN_READ_CHUNK) {
             if (++smallReads >= 2) { readGuess /= 2; smallReads = 0 }
         } else smallReads = 0
-        return n
+    }
+
+    // No timeouts (the default): a tail call straight into the reactor — no state machine, no
+    // continuation allocated per read (SPEC §23.2, §24).
+    override suspend fun read(dst: Buffer): Int {
+        if (closed) throw neton.io.core.ClosedException()
+        reactor.checkOwnerPublic("read")
+        if (readTimeoutMs == 0L && idleTimeoutMs == 0L) return reactor.read(fd, dst, this)
+        return timedRead(dst)
     }
 
     private suspend fun timedRead(dst: Buffer): Int {
         if (readTimeoutMs > 0) { readDeadline = reactor.timeoutClockMs() + readTimeoutMs; reactor.wheel.schedule(this, readDeadline) }
-        val n = try { reactor.read(fd, dst, readGuess) } finally { readDeadline = 0 }
+        val n = try { reactor.read(fd, dst, this) } finally { readDeadline = 0 }
         if (idleTimeoutMs > 0) lastActivityMs = reactor.timeoutClockMs()
         return n
     }

@@ -272,11 +272,11 @@ internal class IocpReactor : Reactor() {
         kotlin.coroutines.coroutineContext[Job]?.let { if (!it.isActive) throw it.getCancellationException() }
     }
 
-    override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
+    override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         checkOwner("read")
         val i = ix(fd)
         if (servedRound[i] == round) waitNextRound()
-        val cap = dst.reserve(chunk, bufferPool)     // may replace the backing array: pin after
+        val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val at = dst.writerIndex()
         val r0 = round
@@ -286,6 +286,7 @@ internal class IocpReactor : Reactor() {
         stats?.let { it.reads++; if (n > 0) it.readBytes += n }
         if (n <= 0) return -1                         // 0 bytes: orderly shutdown by the peer
         dst.commitWrite(n)
+        sizer.onRead(n)
         // Completed without suspending (skip-on-success): the round did not move. Such a read is the
         // one this connection gets this round; a read that waited for its packet costs no extra turn.
         if (round == r0) servedRound[i] = round

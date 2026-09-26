@@ -1,0 +1,76 @@
+== n-epoll requests=701425 threads=4
+  sched_yield          592019  0.844/req
+  recvfrom             701007  0.999/req
+  sendto               698840  0.996/req
+  epoll_wait            59422  0.085/req
+  futex                   451  0.001/req
+  sys_enter           2051902  2.925/req
+  thread 1604991 echoServer-v34. utime=71 stime=694
+  thread 1604994 GC Timer thread utime=0 stime=0
+  thread 1604995 Main GC thread utime=0 stime=0
+  thread 1604996 echoServer-v34. utime=0 stime=0
+  -- sched_yield callers (n-epoll)
+     100.00%  
+              |
+              ---__sched_yield
+== n-iouring requests=730407 threads=4
+  io_uring_enter        68178  0.093/req
+  sched_yield          828033  1.134/req
+  futex                   627  0.001/req
+  sys_enter            897077  1.228/req
+  thread 1605121 echoServer-v34. utime=74 stime=672
+  thread 1605124 GC Timer thread utime=0 stime=0
+  thread 1605125 Main GC thread utime=0 stime=0
+  thread 1605126 echoServer-v34. utime=0 stime=0
+  -- sched_yield callers (n-iouring)
+     100.00%  
+              |
+              ---__sched_yield
+== g-uring requests=779658 threads=5
+  io_uring_enter        74733  0.096/req
+  futex                    12  0.000/req
+  read                  74683  0.096/req
+  write                 74683  0.096/req
+  sys_enter            224110  0.287/req
+  thread 1605248 server-geario utime=0 stime=0
+  thread 1605251 main:accept utime=0 stime=0
+  thread 1605265 main:worker:0 utime=70 stime=725
+  thread 1605266 futures-timer utime=0 stime=0
+  thread 1605267 iou-wrk-1605265 utime=0 stime=0
+# done
+[New LWP 1606246]
+[New LWP 1606245]
+[New LWP 1606244]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib64/libthread_db.so.1".
+0x00007f3d85b113ce in send () from /lib64/libc.so.6
+Breakpoint 1 at 0x7f3d85af4e10
+[Switching to Thread 0x7f3d851fe640 (LWP 1606245)]
+
+Thread 3 "Main GC thread" hit Breakpoint 1, 0x00007f3d85af4e10 in sched_yield () from /lib64/libc.so.6
+#0  0x00007f3d85af4e10 in sched_yield () from /lib64/libc.so.6
+#1  0x00000000002e7e11 in kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::PerformFullGC(long) ()
+#2  0x00000000002e78f8 in std::invoke_result<kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}>::type kotlin::UtilityThread::Run<kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}>(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&) ()
+#3  0x00000000002e7a4e in std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)(kotlin::ScopedThread::attributes, void (*&&)(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::ScopedThread::attributes, void (*)(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}> > >::_M_run() ()
+#4  0x0000000000300c4e in execute_native_thread_routine ()
+#5  0x00007f3d85a8b569 in start_thread () from /lib64/libc.so.6
+#6  0x00007f3d85b10760 in clone3 () from /lib64/libc.so.6
+
+Thread 3 "Main GC thread" hit Breakpoint 1, 0x00007f3d85af4e10 in sched_yield () from /lib64/libc.so.6
+#0  0x00007f3d85af4e10 in sched_yield () from /lib64/libc.so.6
+#1  0x00000000002e7e11 in kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::PerformFullGC(long) ()
+#2  0x00000000002e78f8 in std::invoke_result<kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}>::type kotlin::UtilityThread::Run<kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}>(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&) ()
+#3  0x00000000002e7a4e in std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)(kotlin::ScopedThread::attributes, void (*&&)(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::ScopedThread::attributes, void (*)(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}> > >::_M_run() ()
+#4  0x0000000000300c4e in execute_native_thread_routine ()
+#5  0x00007f3d85a8b569 in start_thread () from /lib64/libc.so.6
+#6  0x00007f3d85b10760 in clone3 () from /lib64/libc.so.6
+
+Thread 3 "Main GC thread" hit Breakpoint 1, 0x00007f3d85af4e10 in sched_yield () from /lib64/libc.so.6
+#0  0x00007f3d85af4e10 in sched_yield () from /lib64/libc.so.6
+#1  0x00000000002e7e11 in kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::PerformFullGC(long) ()
+#2  0x00000000002e78f8 in std::invoke_result<kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}>::type kotlin::UtilityThread::Run<kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}>(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&) ()
+#3  0x00000000002e7a4e in std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)(kotlin::ScopedThread::attributes, void (*&&)(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::ScopedThread::attributes, void (*)(kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}&&), kotlin::gc::internal::MainGCThread<kotlin::gc::internal::CmsGCTraits>::MainGCThread(GCStateHolder&, kotlin::alloc::Allocator&, kotlin::gcScheduler::GCScheduler&, kotlin::gc::mark::ConcurrentMark&)::{lambda()#1}> > >::_M_run() ()
+#4  0x0000000000300c4e in execute_native_thread_routine ()
+#5  0x00007f3d85a8b569 in start_thread () from /lib64/libc.so.6
+#6  0x00007f3d85b10760 in clone3 () from /lib64/libc.so.6
+[Inferior 1 (process 1606242) detached]

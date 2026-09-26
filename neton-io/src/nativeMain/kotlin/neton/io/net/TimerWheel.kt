@@ -33,7 +33,11 @@ internal class TimerWheel(private val tickMs: Long = 10, private val slots: Int 
             if (dueMs >= node.wheelDueMs) return        // already due no later than asked
             unlink(node)
         }
-        val slot = ((dueMs / tickMs) % slots).toInt()
+        // A deadline already behind the last scanned tick goes into that tick's slot: the next scan
+        // starts there, so it fires on the next tick instead of one full revolution later.
+        var dueTick = dueMs / tickMs
+        if (lastTick >= 0 && dueTick < lastTick) dueTick = lastTick
+        val slot = (dueTick % slots).toInt()
         node.wheelDueMs = dueMs; node.wheelSlot = slot
         node.wheelPrev = null; node.wheelNext = heads[slot]
         heads[slot]?.wheelPrev = node
@@ -57,7 +61,9 @@ internal class TimerWheel(private val tickMs: Long = 10, private val slots: Int 
         if (size == 0) { lastTick = nowMs / tickMs; nextDueMs = Long.MAX_VALUE; return }
         if (nowMs < nextDueMs) return
         val nowTick = nowMs / tickMs
-        val from = if (lastTick < 0) nowTick else lastTick
+        // Never scanned yet: start at the earliest deadline (nextDueMs is a lower bound), not at now —
+        // a first scan that starts past a deadline's slot would miss it for a whole revolution.
+        val from = if (lastTick < 0) minOf(nowTick, nextDueMs / tickMs) else lastTick
         val steps = if (nowTick - from >= slots) slots.toLong() else nowTick - from + 1
         var t = from
         for (k in 0 until steps) {

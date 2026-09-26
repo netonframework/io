@@ -140,7 +140,9 @@ internal class UringReactor : Reactor() {
     // that resumes it (CQE, close, cancellation) takes it out of the slot first.
     private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: Continuation<Int>? = null; var multishot = false; var cancelOnAbort = true; var isWrite = false
         // SPEC §23.3: a vectored send owns extra pins and a native msghdr + iovec block until its CQE.
-        var extraPins: Array<Pinned<ByteArray>>? = null; var nativeBlock: CPointer<ByteVar>? = null }
+        var extraPins: Array<Pinned<ByteArray>>? = null; var nativeBlock: CPointer<ByteVar>? = null
+        // SPEC §24: a whole-buffer send completed by the reactor (resubmitted after short sends).
+        var sendBuf: Buffer? = null; var sendTotal = 0 }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -167,6 +169,7 @@ internal class UringReactor : Reactor() {
 
     private fun releaseSlot(idx: Int, slot: Slot) {
         slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false; slot.isWrite = false
+        slot.sendBuf = null
         if (slot.nativeBlock != null) releaseVectored(slot)     // writev only; keeps this path small enough to inline
         freeSlots[freeTop++] = idx
         liveOps--
@@ -201,7 +204,14 @@ internal class UringReactor : Reactor() {
     private val maxQueuedPerConn: Int = getenv("NETON_IO_URING_MAX_QUEUED")?.toKString()?.toIntOrNull() ?: (256 * 1024)
     private var msEof = BooleanArray(64)
     private var msErr = IntArray(64)
-    private var readers = arrayOfNulls<Continuation<Unit>>(64)
+    // SPEC §24: the parked reader's own continuation plus its buffer; chunks are copied in by the
+    // reactor after reaping, and the reader is resumed with the byte count.
+    private var readers = arrayOfNulls<Continuation<Int>>(64)
+    private var readerBufs = arrayOfNulls<Buffer>(64)
+    private var readerSizers = arrayOfNulls<ReadSizer>(64)
+    private var msReady = IntArray(64); private var msReadyCount = 0; private var isMsReady = BooleanArray(64)
+    // Send slots whose short send is resubmitted after reaping (never from inside reap()).
+    private var pendingSends = IntArray(64); private var pendingSendCount = 0
     private var starved = IntArray(64); private var starvedCount = 0   // fds waiting for a free pool buffer
 
     private fun ensureMsFd(fd: Int) {
@@ -212,6 +222,7 @@ internal class UringReactor : Reactor() {
         msArmed = msArmed.copyOf(n); msEof = msEof.copyOf(n); msErr = msErr.copyOf(n)
         rqBytes = rqBytes.copyOf(n); msPaused = msPaused.copyOf(n); msUd = msUd.copyOf(n)
         readers = readers.copyOf(n); starved = starved.copyOf(n)
+        readerBufs = readerBufs.copyOf(n); readerSizers = readerSizers.copyOf(n); isMsReady = isMsReady.copyOf(n)
     }
 
     private fun rqPush(fd: Int, bid: Int, len: Int) {
@@ -268,39 +279,69 @@ internal class UringReactor : Reactor() {
         } else if (res == 0) msEof[fd] = true
         else if (res < 0 && -res != ENOBUFS && -res != ECANCELED) msErr[fd] = -res
         if ((flags and NETON_IORING_CQE_F_MORE.toUInt()) == 0u) { msArmed[fd] = false; releaseSlot(idx, slot) }
-        val r = readers[fd]
-        if (r != null) { readers[fd] = null; enqueueResume(r) }
+        if (readers[fd] != null && !isMsReady[fd]) {
+            if (msReadyCount == msReady.size) msReady = msReady.copyOf(msReadyCount * 2)
+            msReady[msReadyCount++] = fd; isMsReady[fd] = true
+        }
     }
 
-    private suspend fun readMultishot(fd: Int, dst: Buffer): Int {
+    // ---- multishot reads (SPEC §24): a non-suspending take, or a tail call into [msPark].
+    private suspend fun readMultishot(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         ensureMsFd(fd)
-        while (true) {
-            if (rqCount[fd] > 0) {
-                val e = rqPop(fd)
-                val bid = (e shr 32).toInt(); val len = (e and 0xFFFF_FFFFL).toInt()
-                rqBytes[fd] -= len
-                if (msPaused[fd] && rqBytes[fd] < maxQueuedPerConn / 2) {
-                    msPaused[fd] = false
-                    if (!msArmed[fd] && !msEof[fd]) armMultishot(fd)
-                }
-                dst.reserve(len, bufferPool)
-                val pin = pinFor(fd, dst.backingArray())
-                memcpy(pin.pinned.addressOf(dst.writerIndex()), bufBase!! + bid * bufSize, len.convert())
-                dst.commitWrite(len)
-                reprovide(bid)
-                return len
+        val n = msTake(fd, dst, sizer)
+        if (n != NOTHING_QUEUED) return n
+        if (!msArmed[fd] && !msPaused[fd]) armMultishot(fd)
+        return msPark(fd, dst, sizer)
+    }
+
+    /** The next queued chunk copied into [dst] (its length), -1 at EOF, or [NOTHING_QUEUED]; throws a recorded error. */
+    private fun msTake(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        if (rqCount[fd] > 0) {
+            val e = rqPop(fd)
+            val bid = (e shr 32).toInt(); val len = (e and 0xFFFF_FFFFL).toInt()
+            rqBytes[fd] -= len
+            if (msPaused[fd] && rqBytes[fd] < maxQueuedPerConn / 2) {
+                msPaused[fd] = false
+                if (!msArmed[fd] && !msEof[fd]) armMultishot(fd)
             }
-            if (msEof[fd]) return -1
-            if (msErr[fd] != 0) { val e = msErr[fd]; msErr[fd] = 0; throw IoException("io_uring recv failed: ${errnoMessage(e)}", e) }
-            if (!msArmed[fd] && !msPaused[fd]) armMultishot(fd)
-            // Parking: an empty pooled buffer gives its array back first (SPEC §23.7).
-            dst.releaseIfIdle(bufferPool)
-            // The multishot op stays armed across a cancelled read; only the parked reader is woken.
-            suspendCoroutineUninterceptedOrReturn<Unit> { cont ->
-                watchCancellation(fd, cont)
-                readers[fd] = cont
-                COROUTINE_SUSPENDED
-            }
+            dst.reserve(len, bufferPool)
+            val pin = pinFor(fd, dst.backingArray())
+            memcpy(pin.pinned.addressOf(dst.writerIndex()), bufBase!! + bid * bufSize, len.convert())
+            dst.commitWrite(len)
+            reprovide(bid)
+            sizer.onRead(len)
+            return len
+        }
+        if (msEof[fd]) return -1
+        if (msErr[fd] != 0) { val e = msErr[fd]; msErr[fd] = 0; throw IoException("io_uring recv failed: ${errnoMessage(e)}", e) }
+        return NOTHING_QUEUED
+    }
+
+    // The multishot op stays armed across a cancelled read; only the parked reader is woken.
+    private suspend fun msPark(fd: Int, dst: Buffer, sizer: ReadSizer): Int = suspendCoroutineUninterceptedOrReturn { cont ->
+        watchCancellation(fd, cont)
+        dst.releaseIfIdle(bufferPool)              // parking: an empty pooled buffer holds no array (SPEC §23.7)
+        readers[fd] = cont; readerBufs[fd] = dst; readerSizers[fd] = sizer
+        COROUTINE_SUSPENDED
+    }
+
+    private fun finishMsRead(fd: Int, n: Int, error: Throwable?) {
+        val c = readers[fd] ?: return
+        readers[fd] = null; readerBufs[fd] = null; readerSizers[fd] = null
+        enqueueResumeInt(c, n, error)
+    }
+
+    /** After reaping: parked readers whose fd got data (or EOF / an error) take it now. */
+    private fun completeReadyReads() {
+        val count = msReadyCount
+        msReadyCount = 0
+        for (i in 0 until count) {
+            val fd = msReady[i]
+            isMsReady[fd] = false
+            val dst = readerBufs[fd] ?: continue
+            val n = try { msTake(fd, dst, readerSizers[fd]!!) } catch (t: Throwable) { finishMsRead(fd, 0, t); continue }
+            if (n == NOTHING_QUEUED) { if (!msArmed[fd] && !msPaused[fd] && !msEof[fd]) armMultishot(fd); continue }
+            finishMsRead(fd, n, null)
         }
     }
 
@@ -348,7 +389,7 @@ internal class UringReactor : Reactor() {
         val ex = job.getCancellationException()
         if (fd < readers.size) {
             val r = readers[fd]
-            if (r != null && r.context[Job] === job) { readers[fd] = null; enqueueResume(r, ex) }
+            if (r != null && r.context[Job] === job) finishMsRead(fd, 0, ex)
         }
         for (i in slots.indices) {
             val slot = slots[i] ?: continue
@@ -367,7 +408,7 @@ internal class UringReactor : Reactor() {
      * whose late completion would be harmful are also cancelled in the kernel.
      */
     override fun timeoutParked(fd: Int, reads: Boolean, writes: Boolean, cause: Throwable) {
-        if (reads && fd < readers.size) readers[fd]?.let { readers[fd] = null; enqueueResume(it, cause) }
+        if (reads && fd < readers.size && readers[fd] != null) finishMsRead(fd, 0, cause)
         for (i in slots.indices) {
             val slot = slots[i] ?: continue
             if (!slot.live || slot.fd != fd || slot.multishot) continue
@@ -554,25 +595,72 @@ internal class UringReactor : Reactor() {
         prepSqe(NETON_IORING_OP_ASYNC_CANCEL, -1, target.toLong(), 0, 0, controlUd())
     }
 
-    override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
-        if (multishot) return readMultishot(fd, dst)
-        val cap = dst.reserve(chunk, bufferPool)     // may replace the backing array: pin after
+    override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        if (multishot) return readMultishot(fd, dst, sizer)
+        val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val res = submit(NETON_IORING_OP_READ, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pin)
         stats?.let { it.reads++; if (res > 0) it.readBytes += res }
-        return if (res > 0) { dst.commitWrite(res); res } else -1 // 0 = EOF (errors throw)
+        return if (res > 0) { dst.commitWrite(res); sizer.onRead(res); res } else -1 // 0 = EOF (errors throw)
     }
 
+    /**
+     * Send all of [src] (SPEC §24): one SEND SQE; a short send is resubmitted by the reactor after
+     * reaping, and the caller is resumed once, with the total. A tail call: nothing allocated.
+     */
     override suspend fun write(fd: Int, src: Buffer): Int {
-        var total = 0
-        while (src.readableBytes > 0) {
-            val len = src.readableBytes
-            val pin = pinFor(fd, src.backingArray())
-            val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin, cancelOnAbort = false, isWrite = true)
-            stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
-            src.consumeSent(res); total += res
+        if (src.readableBytes == 0) return 0
+        val pin = pinFor(fd, src.backingArray())
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.pin = pin; pin.refs++
+        slot.isWrite = true; slot.cancelOnAbort = false
+        slot.sendBuf = src; slot.sendTotal = 0
+        val ud = (idx.toULong() shl 32) or slot.gen.toULong()
+        return suspendCoroutineUninterceptedOrReturn { cont ->
+            try { watchCancellation(fd, cont) } catch (t: Throwable) { pin.refs--; releaseSlot(idx, slot); throw t }
+            prepSqe(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), src.readableBytes, NETON_MSG_NOSIGNAL, ud)
+            slot.cont = cont
+            COROUTINE_SUSPENDED
         }
-        return total
+    }
+
+    /** A send CQE: account it; resubmit the rest after reaping, or finish and resume the writer. */
+    private fun onSendCqe(idx: Int, slot: Slot, res: Int) {
+        stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
+        val src = slot.sendBuf!!
+        if (res >= 0) { src.consumeSent(res); slot.sendTotal += res }
+        val cont = slot.cont
+        if (res >= 0 && cont != null && src.readableBytes > 0) {
+            if (pendingSendCount == pendingSends.size) pendingSends = pendingSends.copyOf(pendingSendCount * 2)
+            pendingSends[pendingSendCount++] = idx
+            return
+        }
+        val total = slot.sendTotal
+        slot.pin?.let { it.refs--; it.release() }
+        releaseSlot(idx, slot)
+        if (cont == null) return
+        if (res < 0) enqueueResumeInt(cont, 0, IoException("io_uring send failed: ${errnoMessage(-res)}", -res))
+        else enqueueResumeInt(cont, total)
+    }
+
+    /** After reaping: resubmit the unsent rest of short sends (or drop them if the writer is gone). */
+    private fun resubmitSends() {
+        val count = pendingSendCount
+        pendingSendCount = 0
+        for (i in 0 until count) {
+            val idx = pendingSends[i]
+            val slot = slots[idx] ?: continue
+            if (!slot.live) continue
+            val src = slot.sendBuf!!
+            val pin = slot.pin!!
+            if (slot.cont == null || pin.array !== src.backingArray()) {
+                slot.cont?.let { slot.cont = null; enqueueResumeInt(it, 0, IoException("write buffer changed while sending", 0)) }
+                pin.refs--; pin.release(); releaseSlot(idx, slot); continue
+            }
+            prepSqe(NETON_IORING_OP_SEND, slot.fd, pin.pinned.addressOf(src.readerIndex()).toLong(), src.readableBytes, NETON_MSG_NOSIGNAL,
+                (idx.toULong() shl 32) or slot.gen.toULong())
+        }
     }
 
     /**
@@ -629,7 +717,7 @@ internal class UringReactor : Reactor() {
             // chunks nobody read go back to the pool; the parked reader fails like any other waiter.
             while (rqCount[fd] > 0) reprovide((rqPop(fd) shr 32).toInt())
             msEof[fd] = false; msErr[fd] = 0; rqBytes[fd] = 0; msPaused[fd] = false
-            readers[fd]?.let { readers[fd] = null; enqueueResume(it, ClosedException()) }
+            finishMsRead(fd, 0, ClosedException())
             var i = 0
             while (i < starvedCount) { if (starved[i] == fd) starved[i] = starved[--starvedCount] else i++ }
         }
@@ -680,6 +768,9 @@ internal class UringReactor : Reactor() {
             // that always has tasks pending would otherwise never see its CQEs.
             neton_uring_enter(ringFd, toSubmit, mc, NETON_IORING_ENTER_GETEVENTS.toUInt())
             countPoll(mc == 0u, reap())
+            // SPEC §24: work that submits SQEs runs here, never from inside reap().
+            if (msReadyCount > 0) completeReadyReads()
+            if (pendingSendCount > 0) resubmitSends()
         }
     }
 
@@ -703,6 +794,7 @@ internal class UringReactor : Reactor() {
             val slot = slots.getOrNull(idx) ?: continue
             if (!slot.live || slot.gen != ud.toUInt()) continue   // stale generation: unknown op
             if (slot.multishot) { onMultishotCqe(idx, slot, res, cqe.flags); continue }
+            if (slot.sendBuf != null) { onSendCqe(idx, slot, res); continue }
             slot.pin?.let { it.refs--; it.release() }      // the kernel is done with the buffer
             val cont = slot.cont                           // null if the awaiter was cancelled/closed
             releaseSlot(idx, slot)
@@ -721,6 +813,12 @@ internal class UringReactor : Reactor() {
      * remaining buffers stay pinned (a leak, reported), never a use-after-free.
      */
     override fun shutdown() {
+        // Short sends waiting for resubmission have no op in flight: release them first.
+        for (i in 0 until pendingSendCount) {
+            val slot = slots[pendingSends[i]] ?: continue
+            if (slot.live) { slot.cont = null; slot.pin?.let { it.refs--; it.release() }; releaseSlot(pendingSends[i], slot) }
+        }
+        pendingSendCount = 0
         if (liveOps > 0) {
             for (i in slots.indices) {
                 val slot = slots[i] ?: continue
@@ -756,6 +854,8 @@ internal class UringReactor : Reactor() {
         const val SIZEOF_SQE: UInt = 64u
         const val SIZEOF_CQE: UInt = 16u
         const val DRAIN_ROUNDS = 1000
+        /** [msTake]: nothing queued, no EOF, no error — the reader must wait. */
+        const val NOTHING_QUEUED = Int.MIN_VALUE
         /** user_data at or above this belongs to a control op (wake poll / timeout / cancel), not a slot. */
         const val CONTROL_BASE: ULong = 0xFFFF_FFFF_0000_0000uL
     }

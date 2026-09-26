@@ -1,0 +1,105 @@
+# host=service load=0.01
+# P: pinned core 1, 12 conns, 128 B
+n-epoll qps=103009 req=824105 user_ns_per_req=873 sys_ns_per_req=8809 syscalls_per_req=3.09
+n-iouring qps=102997 req=824012 user_ns_per_req=849 sys_ns_per_req=8859 syscalls_per_req=1.50
+g-poll qps=107774 req=862236 user_ns_per_req=626 sys_ns_per_req=8651 syscalls_per_req=0.28
+g-uring qps=148704 req=1189690 user_ns_per_req=622 sys_ns_per_req=6102 syscalls_per_req=0.29
+n-epoll qps=140243 req=1121990 user_ns_per_req=837 sys_ns_per_req=6283 syscalls_per_req=3.13
+n-iouring qps=138592 req=1108778 user_ns_per_req=856 sys_ns_per_req=6349 syscalls_per_req=1.51
+g-poll qps=151643 req=1213185 user_ns_per_req=601 sys_ns_per_req=5967 syscalls_per_req=0.29
+g-uring qps=126495 req=1012017 user_ns_per_req=632 sys_ns_per_req=7252 syscalls_per_req=0.29
+n-epoll qps=141648 req=1133229 user_ns_per_req=847 sys_ns_per_req=6221 syscalls_per_req=3.11
+n-iouring qps=139717 req=1117778 user_ns_per_req=823 sys_ns_per_req=6325 syscalls_per_req=1.49
+g-poll qps=152733 req=1221919 user_ns_per_req=589 sys_ns_per_req=5941 syscalls_per_req=0.29
+g-uring qps=150497 req=1204033 user_ns_per_req=597 sys_ns_per_req=6021 syscalls_per_req=0.29
+# C: cachegrind Ir/request (5 s and 15 s)
+g-poll secs=5 requests=114485 Ir=464357956
+g-poll secs=15 requests=338132 Ir=1383298980
+g-uring secs=5 requests=112360 Ir=462399590
+g-uring secs=15 requests=362551 Ir=1474402906
+# T: throughput, pinned 12 conns (8 rounds) and x4 100 conns (4 rounds)
+n-epoll conns=12 pin=1 qps=103907 p99=166.0 jain=1.000 load=1.81
+n-iouring conns=12 pin=1 qps=118175 p99=139.0 jain=1.000 load=1.91
+g-poll conns=12 pin=1 qps=124933 p99=188.7 jain=1.000 load=2.00
+g-uring conns=12 pin=1 qps=104949 p99=236.0 jain=1.000 load=1.92
+n-epoll conns=12 pin=1 qps=125238 p99=125.0 jain=1.000 load=1.79
+n-iouring conns=12 pin=1 qps=122743 p99=132.8 jain=1.000 load=2.45
+g-poll conns=12 pin=1 qps=128571 p99=186.4 jain=1.000 load=2.52
+g-uring conns=12 pin=1 qps=131722 p99=179.6 jain=1.000 load=2.56
+n-epoll conns=12 pin=1 qps=112225 p99=144.4 jain=1.000 load=2.48
+n-iouring conns=12 pin=1 qps=89863 p99=176.3 jain=1.000 load=2.56
+g-poll conns=12 pin=1 qps=95065 p99=250.1 jain=1.000 load=2.70
+g-uring conns=12 pin=1 qps=121183 p99=203.8 jain=1.000 load=2.56
+n-epoll conns=12 pin=1 qps=125609 p99=132.9 jain=1.000 load=2.33
+n-iouring conns=12 pin=1 qps=122443 p99=129.9 jain=1.000 load=2.28
+g-poll conns=12 pin=1 qps=127834 p99=186.7 jain=1.000 load=2.56
+g-uring conns=12 pin=1 qps=128039 p99=186.8 jain=1.000 load=2.52
+n-epoll conns=12 pin=1 qps=120971 p99=142.7 jain=1.000 load=2.51
+n-iouring conns=12 pin=1 qps=120040 p99=133.8 jain=1.000 load=2.97
+g-poll conns=12 pin=1 qps=129983 p99=181.8 jain=1.000 load=2.96
+g-uring conns=12 pin=1 qps=130823 p99=179.2 jain=1.000 load=2.88
+n-epoll conns=12 pin=1 qps=99999 p99=153.3 jain=1.000 load=2.83
+n-iouring conns=12 pin=1 qps=88994 p99=176.6 jain=1.000 load=2.78
+g-poll conns=12 pin=1 qps=95385 p99=243.4 jain=1.000 load=2.64
+g-uring conns=12 pin=1 qps=93056 p99=249.9 jain=1.000 load=2.31
+n-epoll conns=12 pin=1 qps=103660 p99=158.9 jain=1.000 load=2.34
+n-iouring conns=12 pin=1 qps=104640 p99=157.5 jain=1.000 load=2.21
+g-poll conns=12 pin=1 qps=111431 p99=215.8 jain=1.000 load=2.11
+g-uring conns=12 pin=1 qps=126557 p99=183.5 jain=1.000 load=2.10
+n-epoll conns=12 pin=1 qps=111124 p99=155.5 jain=1.000 load=2.32
+n-iouring conns=12 pin=1 qps=126836 p99=133.5 jain=1.000 load=2.42
+g-poll conns=12 pin=1 qps=151980 p99=160.1 jain=1.000 load=2.55
+g-uring conns=12 pin=1 qps=138185 p99=183.3 jain=1.000 load=2.24
+n-epoll conns=100 pin=0 qps=247178 p99=1041.3 jain=0.994 load=3.12
+n-iouring conns=100 pin=0 qps=308019 p99=863.9 jain=0.989 load=4.10
+g-poll conns=100 pin=0 qps=331668 p99=648.0 jain=0.987 load=4.33
+g-uring conns=100 pin=0 qps=333535 p99=584.0 jain=0.998 load=4.31
+n-epoll conns=100 pin=0 qps=305018 p99=896.4 jain=0.987 load=5.98
+n-iouring conns=100 pin=0 qps=313709 p99=951.9 jain=0.994 load=6.44
+g-poll conns=100 pin=0 qps=326980 p99=724.1 jain=0.996 load=6.64
+g-uring conns=100 pin=0 qps=329439 p99=670.4 jain=0.993 load=6.10
+n-epoll conns=100 pin=0 qps=252812 p99=1003.7 jain=0.996 load=6.41
+n-iouring conns=100 pin=0 qps=250312 p99=1133.4 jain=0.997 load=7.36
+g-poll conns=100 pin=0 qps=309894 p99=537.5 jain=0.992 load=7.25
+g-uring conns=100 pin=0 qps=298768 p99=692.1 jain=0.992 load=6.94
+n-epoll conns=100 pin=0 qps=290363 p99=1097.3 jain=0.976 load=7.41
+n-iouring conns=100 pin=0 qps=247337 p99=1132.6 jain=0.991 load=7.43
+g-poll conns=100 pin=0 qps=269683 p99=735.8 jain=0.997 load=7.39
+g-uring conns=100 pin=0 qps=284427 p99=746.1 jain=0.980 load=6.82
+# done
+== n-epoll
+   recvfrom          153272    213   487.612     0.002     0.003     0.904      0.19%
+   sendto            153268      0  1278.496     0.005     0.008     0.160      0.04%
+   epoll_wait         12861      0    55.698     0.002     0.004     0.257      0.90%
+   sched_yield        10329      0    27.614     0.002     0.003     0.022      0.20%
+   futex                 45      0  2649.290     0.000    58.873   339.391     32.42%
+   gettid                36      0     0.089     0.002     0.002     0.003      1.32%
+   futex                 36      0     4.750     0.003     0.132     0.540     28.46%
+   futex                 18      0  2701.121     0.000   150.062   345.886     27.12%
+== n-iouring
+   io_uring_enter     41885      0  2252.782     0.000     0.054     0.231      0.10%
+   sched_yield        35314      0    95.126     0.002     0.003     0.076      0.17%
+   futex                155      0  2762.920     0.000    17.825    95.390     16.45%
+   gettid               124      0     0.311     0.002     0.003     0.003      0.82%
+   futex                123      0    16.201     0.003     0.132     0.558     15.17%
+   futex                 62      0  2957.252     0.000    47.698   101.891     13.23%
+   munmap                 3      0     0.099     0.028     0.033     0.036      7.69%
+   mmap                   3      0     0.165     0.049     0.055     0.060      6.16%
+== g-poll
+   io_uring_enter     38194      0  2078.769     0.000     0.054     0.192      0.10%
+   write              38190      0   127.369     0.003     0.003     0.102      0.17%
+   read               38109      4   115.974     0.002     0.003     0.022      0.12%
+   io_uring_enter         8      0  1000.068     0.000   125.008   999.915     99.98%
+   read                   5      0     0.015     0.002     0.003     0.004     12.16%
+   futex                  4      2  1000.146     0.000   250.036  1000.026     99.98%
+   write                  3      0     0.008     0.003     0.003     0.003      3.71%
+   write                  2      0     0.011     0.005     0.005     0.006      7.38%
+== g-uring
+   io_uring_enter     38228      0  2097.428     0.000     0.055     0.220      0.08%
+   write              38224      0   125.736     0.003     0.003     0.119      0.16%
+   read               38166     11   114.944     0.002     0.003     0.056      0.12%
+   io_uring_enter         8      0  1000.054     0.000   125.007   999.898     99.98%
+   read                   5      0     0.014     0.002     0.003     0.003      4.07%
+   futex                  4      2  1000.132     0.000   250.033  1000.022     99.99%
+   write                  3      0     0.008     0.003     0.003     0.003      2.76%
+   write                  2      0     0.009     0.005     0.005     0.005      0.53%

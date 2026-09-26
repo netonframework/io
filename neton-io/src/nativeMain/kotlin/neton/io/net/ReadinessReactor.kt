@@ -27,8 +27,17 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     // SPEC §19.3: parked coroutines are stored as their own raw continuations — no
     // CancellableContinuation, no parent handle per park. Every path that resumes one (readiness,
     // cancellation, close) takes it out of its slot first, so none can be resumed twice.
-    private var readWaiters = arrayOfNulls<Continuation<Unit>>(64)
-    private var writeWaiters = arrayOfNulls<Continuation<Unit>>(64)
+    private var readWaiters = arrayOfNulls<Continuation<Unit>>(64)     // accept (listeners)
+    private var writeWaiters = arrayOfNulls<Continuation<Unit>>(64)    // connect, writev
+    // SPEC §24: a parked read / write is completed by the reactor itself. It stores the caller's
+    // continuation (the tail-called chain allocates none of its own) with the buffer, and on
+    // readiness does the recv / the remaining sends and resumes with the result.
+    private var readConts = arrayOfNulls<Continuation<Int>>(64)
+    private var readBufs = arrayOfNulls<Buffer>(64)
+    private var readSizers = arrayOfNulls<ReadSizer>(64)
+    private var writeConts = arrayOfNulls<Continuation<Int>>(64)
+    private var writeBufs = arrayOfNulls<Buffer>(64)
+    private var writeTotals = IntArray(64)
     // Cancellation is watched once per (fd, direction, coroutine Job), not once per park: the
     // handle is reused for every park by the same coroutine and disposed on close or when another
     // coroutine takes over that side of the stream.
@@ -36,9 +45,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     // readers deferred to the next round because they already had theirs in this one.
     private var servedRound = IntArray(64)
     private var round = 1
-    private var deferredConts = arrayOfNulls<Continuation<Unit>>(64)
     private var deferredFds = IntArray(64)
     private var deferredCount = 0
+    private var isDeferred = BooleanArray(64)
     private var readJobs = arrayOfNulls<Job>(64)
     private var writeJobs = arrayOfNulls<Job>(64)
     private var readCancelHandles = arrayOfNulls<DisposableHandle>(64)
@@ -59,6 +68,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         var n = persistent.size
         while (n <= fd) n *= 2
         readWaiters = readWaiters.copyOf(n); writeWaiters = writeWaiters.copyOf(n)
+        readConts = readConts.copyOf(n); readBufs = readBufs.copyOf(n); readSizers = readSizers.copyOf(n)
+        writeConts = writeConts.copyOf(n); writeBufs = writeBufs.copyOf(n); writeTotals = writeTotals.copyOf(n)
+        isDeferred = isDeferred.copyOf(n)
         readJobs = readJobs.copyOf(n); writeJobs = writeJobs.copyOf(n)
         servedRound = servedRound.copyOf(n)
         readCancelHandles = readCancelHandles.copyOf(n); writeCancelHandles = writeCancelHandles.copyOf(n)
@@ -98,7 +110,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
      * and its Job's cancellation must be able to wake it. The handler is registered on the first
      * park of this coroutine on this side of [fd] and reused afterwards.
      */
-    private fun watchCancellation(fd: Int, write: Boolean, cont: Continuation<Unit>) {
+    private fun watchCancellation(fd: Int, write: Boolean, cont: Continuation<*>) {
         val job = cont.context[Job] ?: return
         if (!job.isActive) throw job.getCancellationException()
         val jobs = if (write) writeJobs else readJobs
@@ -115,29 +127,24 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private fun onParkCancelled(fd: Int, write: Boolean, job: Job) {
         if (fd >= readWaiters.size) return
         val waiters = if (write) writeWaiters else readWaiters
-        val w = waiters[fd] ?: return
-        if (w.context[Job] !== job) return              // the slot now belongs to another coroutine
-        waiters[fd] = null
-        enqueueResume(w, job.getCancellationException())
+        val w = waiters[fd]
+        if (w != null && w.context[Job] === job) { waiters[fd] = null; enqueueResume(w, job.getCancellationException()) }
+        // The slot may now belong to another coroutine: only this job's parked op is woken.
+        if (write) { if (writeConts[fd]?.context?.get(Job) === job) finishWrite(fd, 0, job.getCancellationException()) }
+        else if (readConts[fd]?.context?.get(Job) === job) finishRead(fd, 0, job.getCancellationException())
     }
 
-    /** SPEC §23.2: wake the parked reader/writer on [fd] (and a reader deferred by §19.5) with [cause]. */
+    /** SPEC §23.2: wake the parked reader/writer on [fd] (also a reader deferred by §19.5) with [cause]. */
     override fun timeoutParked(fd: Int, reads: Boolean, writes: Boolean, cause: Throwable) {
         if (fd >= readWaiters.size) return
         if (reads) {
             readWaiters[fd]?.let { readWaiters[fd] = null; enqueueResume(it, cause) }
-            var i = 0
-            while (i < deferredCount) {
-                if (deferredFds[i] == fd) {
-                    val c = deferredConts[i]!!
-                    deferredCount--
-                    deferredConts[i] = deferredConts[deferredCount]; deferredFds[i] = deferredFds[deferredCount]
-                    deferredConts[deferredCount] = null
-                    enqueueResume(c, cause)
-                } else i++
-            }
+            if (readConts[fd] != null) finishRead(fd, 0, cause)
         }
-        if (writes) writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, cause) }
+        if (writes) {
+            writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, cause) }
+            if (writeConts[fd] != null) finishWrite(fd, 0, cause)
+        }
     }
 
     private fun forgetCancellation(fd: Int) {
@@ -146,45 +153,67 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         readJobs[fd] = null; writeJobs[fd] = null
     }
 
-    /**
-     * SPEC §19.5: park until the next poll round. Used by a reader whose connection already had a
-     * successful recv in this round, so every ready connection is served once before any is served
-     * twice. Without it, a client thread woken by our send() onto this core refilled its socket at
-     * once and drain-to-EAGAIN served the same connection again and again (Jain 0.29-0.40).
-     */
-    private suspend fun deferToNextRound(fd: Int): Unit = suspendCoroutineUninterceptedOrReturn { cont ->
-        if (deferredCount == deferredConts.size) {
-            deferredConts = deferredConts.copyOf(deferredCount * 2); deferredFds = deferredFds.copyOf(deferredCount * 2)
+    // ---- reads (SPEC §24). `read` is a non-suspending attempt plus, when it must wait, a tail call
+    // into [parkRead]; the recv after a wait is done by [completeRead] on the reactor's own turn.
+
+    override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        ensureFd(fd)
+        // SPEC §19.5: one successful recv per connection per poll round; SPEC §17: a persistent fd
+        // whose edge was consumed waits for the next edge instead of a speculative recv.
+        if (servedRound[fd] != round && (!persistent[fd] || readyRead[fd])) {
+            val n = tryRecv(fd, dst, sizer)
+            if (n != RECV_WAIT) return n
         }
-        deferredConts[deferredCount] = cont; deferredFds[deferredCount] = fd; deferredCount++
+        return parkRead(fd, dst, sizer)
+    }
+
+    /** One recv into [dst]: bytes (> 0), -1 at EOF, or [RECV_WAIT]; throws on a socket error. */
+    private fun tryRecv(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
+        val n = recvPinned(fd, pinFor(fd, dst.backingArray()), dst.writerIndex(), cap)
+        stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
+        return when {
+            // Deliberately no short-read rule (SPEC §17b, rejected): the ready flag stays set after a
+            // successful recv, so the next read() picks up data that arrived meanwhile without a poll.
+            n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; sizer.onRead(n); n }
+            n == EOF_RESULT -> -1
+            n == WOULD_BLOCK -> { readyRead[fd] = false; dst.releaseIfIdle(bufferPool); RECV_WAIT }
+            else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
+        }
+    }
+
+    private suspend fun parkRead(fd: Int, dst: Buffer, sizer: ReadSizer): Int = suspendCoroutineUninterceptedOrReturn { cont ->
+        watchCancellation(fd, write = false, cont)
+        dst.releaseIfIdle(bufferPool)              // parking: an empty pooled buffer holds no array (SPEC §23.7)
+        readConts[fd] = cont; readBufs[fd] = dst; readSizers[fd] = sizer
+        if (servedRound[fd] == round && (!persistent[fd] || readyRead[fd])) defer(fd)
+        else if (!persistent[fd]) poller.armRead(fd)
         COROUTINE_SUSPENDED
     }
 
-    override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
-        ensureFd(fd)
-        while (true) {
-            // Parking: a pooled, empty buffer gives its array back first (idle connections hold none, SPEC §23.7).
-            if (persistent[fd] && !readyRead[fd]) { dst.releaseIfIdle(bufferPool); waitReadable(fd); continue }
-            if (servedRound[fd] == round) {
-                deferToNextRound(fd)
-                // A deferred reader is not in a waiter slot, so cancellation is checked here.
-                kotlin.coroutines.coroutineContext[Job]?.let { if (!it.isActive) throw it.getCancellationException() }
-                continue
-            }
-            val cap = dst.reserve(chunk, bufferPool)     // may replace the backing array: pin after
-            val n = recvPinned(fd, pinFor(fd, dst.backingArray()), dst.writerIndex(), cap)
-            stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
-            when {
-                // Deliberately no short-read rule here (SPEC §17b, rejected): keeping the ready
-                // flag set after a successful recv lets the next read() pick up a request that
-                // arrived meanwhile without a poll round; the EAGAIN recv it costs is cheap.
-                n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; return n }
-                n == EOF_RESULT -> return -1
-                n == WOULD_BLOCK -> { readyRead[fd] = false; dst.releaseIfIdle(bufferPool); waitReadable(fd) }
-                else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
-            }
-        }
+    /** Retry [fd]'s parked read in the next round (SPEC §19.5). */
+    private fun defer(fd: Int) {
+        if (isDeferred[fd]) return
+        if (deferredCount == deferredFds.size) deferredFds = deferredFds.copyOf(deferredCount * 2)
+        deferredFds[deferredCount++] = fd
+        isDeferred[fd] = true
     }
+
+    /** Readiness (or a deferred turn) for a parked read: do the recv, resume the reader if it completed. */
+    private fun completeRead(fd: Int) {
+        if (servedRound[fd] == round) { defer(fd); return }
+        val n = try { tryRecv(fd, readBufs[fd]!!, readSizers[fd]!!) } catch (t: Throwable) { finishRead(fd, 0, t); return }
+        if (n == RECV_WAIT) { if (!persistent[fd]) poller.armRead(fd); return }
+        finishRead(fd, n, null)
+    }
+
+    private fun finishRead(fd: Int, n: Int, error: Throwable?) {
+        val c = readConts[fd] ?: return
+        readConts[fd] = null; readBufs[fd] = null; readSizers[fd] = null
+        enqueueResumeInt(c, n, error)
+    }
+
+    // ---- writes (SPEC §24): send until done or would-block; the rest is sent by [completeWrite].
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         ensureFd(fd)
@@ -192,13 +221,37 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         while (src.readableBytes > 0) {
             val n = sendPinned(fd, pinFor(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
             stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
-            when {
-                n >= 0 -> { src.consumeSent(n); total += n }
-                n == WOULD_BLOCK -> waitWritable(fd)
-                else -> { val e = lastSocketError(); throw IoException("write failed: ${errnoMessage(e)}", e) }
-            }
+            if (n >= 0) { src.consumeSent(n); total += n }
+            else if (n == WOULD_BLOCK) return parkWrite(fd, src, total)
+            else { val e = lastSocketError(); throw IoException("write failed: ${errnoMessage(e)}", e) }
         }
         return total
+    }
+
+    private suspend fun parkWrite(fd: Int, src: Buffer, sentSoFar: Int): Int = suspendCoroutineUninterceptedOrReturn { cont ->
+        watchCancellation(fd, write = true, cont)
+        writeConts[fd] = cont; writeBufs[fd] = src; writeTotals[fd] = sentSoFar
+        poller.armWrite(fd)
+        COROUTINE_SUSPENDED
+    }
+
+    private fun completeWrite(fd: Int) {
+        val src = writeBufs[fd]!!
+        var total = writeTotals[fd]
+        while (src.readableBytes > 0) {
+            val n = sendPinned(fd, pinFor(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
+            stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
+            if (n >= 0) { src.consumeSent(n); total += n }
+            else if (n == WOULD_BLOCK) { writeTotals[fd] = total; poller.armWrite(fd); return }
+            else { val e = lastSocketError(); finishWrite(fd, 0, IoException("write failed: ${errnoMessage(e)}", e)); return }
+        }
+        finishWrite(fd, total, null)
+    }
+
+    private fun finishWrite(fd: Int, total: Int, error: Throwable?) {
+        val c = writeConts[fd] ?: return
+        writeConts[fd] = null; writeBufs[fd] = null
+        enqueueResumeInt(c, total, error)
     }
 
     /** One sendmsg per batch of up to [MAX_IOV] buffers; parks on would-block like [write] (SPEC §23.3). */
@@ -251,23 +304,29 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                 if (fd == wakeFd) { woke = true; return@poll }
                 if (fd >= persistent.size) return@poll   // never registered here (cannot happen; be safe)
                 if (readable) {
-                    // Persistent fds: record the edge *before* resuming, so the resumed read() sees
-                    // the fd as ready instead of parking again (the edge is not repeated).
+                    // Persistent fds: record the edge first — it is not repeated.
                     if (persistent[fd]) readyRead[fd] = true
                     val w = readWaiters[fd]
                     if (w != null) { readWaiters[fd] = null; enqueueResume(w) }
+                    if (readConts[fd] != null) completeRead(fd)
                 }
                 if (writable) {
                     val w = writeWaiters[fd]
                     if (w != null) { writeWaiters[fd] = null; enqueueResume(w) }
+                    if (writeConts[fd] != null) completeWrite(fd)
                 }
             }
             if (woke) { onWake(); poller.armRead(wakeFd) }
             countPoll(timeout == 0, n)
-            // New round: readers deferred in the last one get their turn now (SPEC §19.5).
+            // New round: reads deferred in the last one get their turn now (SPEC §19.5).
             round++
-            for (i in 0 until deferredCount) { enqueueResume(deferredConts[i]!!); deferredConts[i] = null }
+            val deferred = deferredCount
             deferredCount = 0
+            for (i in 0 until deferred) {
+                val fd = deferredFds[i]
+                isDeferred[fd] = false
+                if (readConts[fd] != null) completeRead(fd)
+            }
         }
     }
 
@@ -276,24 +335,21 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         ensureFd(fd)
         readWaiters[fd]?.let { readWaiters[fd] = null; enqueueResume(it, ClosedException()) }
         writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, ClosedException()) }
+        // A read deferred to the next round must not recv on this fd number, which the kernel may
+        // hand to a new connection: its slot is emptied here (the deferred entry then finds nothing).
+        finishRead(fd, 0, ClosedException())
+        finishWrite(fd, 0, ClosedException())
         forgetCancellation(fd)
-        // A reader deferred to the next round must not run recv on this fd number, which the
-        // kernel may hand to a new connection: fail it now like a parked reader.
-        var i = 0
-        while (i < deferredCount) {
-            if (deferredFds[i] == fd) {
-                val c = deferredConts[i]!!
-                deferredCount--
-                deferredConts[i] = deferredConts[deferredCount]; deferredFds[i] = deferredFds[deferredCount]
-                deferredConts[deferredCount] = null
-                enqueueResume(c, ClosedException())
-            } else i++
-        }
         servedRound[fd] = 0
         persistent[fd] = false; readyRead[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         poller.forget(fd)
         closeFd(fd)
+    }
+
+    private companion object {
+        /** [tryRecv]: nothing to read yet. Distinct from -1, which is EOF here (WOULD_BLOCK is also -1). */
+        const val RECV_WAIT = Int.MIN_VALUE
     }
 
     override fun shutdown() {
