@@ -24,6 +24,9 @@ class FrameReadRate(val timeoutMillis: Long, val maxTimeoutMillis: Long, val rat
  * by itself above [highWatermark]; [flush] writes what is buffered (suspending while the socket is
  * full — that is the backpressure); [send] is feed + flush. [serveLoop] answers every request already
  * received before flushing once, so pipelined requests do not cost a syscall each (SPEC §23.2).
+ *
+ * For throughput prefer [serveLoop]: it allocates nothing per request of its own (SPEC §24).
+ * [incoming] is a Flow, and each `emit` resumes the collector's suspend lambda, which allocates.
  */
 class Framed<In, Out>(
     private val io: Io,
@@ -51,25 +54,32 @@ class Framed<In, Out>(
     }
 
     /** Encode [item] into the write buffer; flush once the buffer passes [highWatermark]. */
-    suspend fun feed(item: Out) {
-        encoder.encode(item, io.writeBuf)
-        if (io.writeBuf.readableBytes >= highWatermark) flush()
-    }
+    suspend fun feed(item: Out) = feedOut(item)
 
     /** Write everything buffered by [feed]. */
-    suspend fun flush() {
+    suspend fun flush() = writeOut()
+
+    /** Send one frame: encode, write, flush. */
+    suspend fun send(item: Out) {
+        feedOut(item)
+        writeOut()
+    }
+
+    // Inline bodies (SPEC §24): called from serveLoop's own loop they add no coroutine frame, so a
+    // request/response costs no allocation here. A separate suspend function would allocate its
+    // continuation on every call.
+    private suspend inline fun feedOut(item: Out) {
+        encoder.encode(item, io.writeBuf)
+        if (io.writeBuf.readableBytes >= highWatermark) writeOut()
+    }
+
+    private suspend inline fun writeOut() {
         val out = io.writeBuf
         if (out.readableBytes > 0) {
             io.stream.write(out)
             io.stream.flush()
         }
         out.clear()
-    }
-
-    /** Send one frame: encode, write, flush. */
-    suspend fun send(item: Out) {
-        feed(item)
-        flush()
     }
 
     /**
@@ -83,17 +93,17 @@ class Framed<In, Out>(
             var item = decoder.decode(buf)
             while (item != null) {
                 rate.frameDone()
-                feed(handler(item))
+                feedOut(handler(item))
                 item = decoder.decode(buf)
             }
-            flush()
+            writeOut()
             buf.discardReadBytes()
             if (!readMore(buf, rate)) break
         }
     }
 
-    /** One read, with the frame read rate applied to it; false at EOF. */
-    private suspend fun readMore(buf: neton.io.bytes.Buffer, rate: FrameRateTracker): Boolean {
+    /** One read, with the frame read rate applied to it; false at EOF. Inline: no frame of its own. */
+    private suspend inline fun readMore(buf: neton.io.bytes.Buffer, rate: FrameRateTracker): Boolean {
         if (readRate != null) io.stream.setReadTimeout(rate.timeoutForNextRead(partial = buf.readableBytes > 0))
         val n = io.stream.read(buf)
         if (n < 0) return false
