@@ -41,13 +41,14 @@ class BufferPool internal constructor() {
         }
     }
 
-    private val stacks = Array(CLASSES) { arrayOfNulls<ByteArray>(0) }
-    private val counts = IntArray(CLASSES)
-    private var cachedBytes = 0
     // BufferPoolConfig read once per thread (it is set before reactors start), not on every call.
     private var enabled = BufferPoolConfig.enabled
     private var maxPerClass = BufferPoolConfig.maxArraysPerClass
     private var maxBytes = BufferPoolConfig.maxBytesPerThread
+    // One flat array of stacks: class c occupies [c * maxPerClass, (c + 1) * maxPerClass).
+    private var cache = arrayOfNulls<ByteArray>(CLASSES * maxPerClass)
+    private val counts = IntArray(CLASSES)
+    private var cachedBytes = 0
 
     /** Counters for tests and diagnostics (this thread only). */
     var hits = 0L; private set
@@ -59,31 +60,25 @@ class BufferPool internal constructor() {
     /** An array of at least [min] bytes (exactly [sizeFor] bytes); contents are unspecified. */
     fun acquire(min: Int): ByteArray {
         if (min > MAX_SIZE || !enabled) return ByteArray(sizeFor(min))
-        val c = classOf(min)
-        val n = counts[c]
-        if (n > 0) {
-            val stack = stacks[c]
-            val a = stack[n - 1]!!
-            stack[n - 1] = null
-            counts[c] = n - 1
-            cachedBytes -= a.size
-            hits++
-            return a
-        }
-        misses++
-        return ByteArray(MIN_SIZE shl c)
+        val c = if (min <= MIN_SIZE) 0 else (32 - (min - 1).countLeadingZeroBits()) - MIN_CLASS_SHIFT
+        val n = counts[c] - 1
+        if (n < 0) { misses++; return ByteArray(MIN_SIZE shl c) }
+        val i = c * maxPerClass + n
+        val a = cache[i]!!
+        cache[i] = null
+        counts[c] = n
+        cachedBytes -= a.size
+        hits++
+        return a
     }
 
     /** Give [array] back. Arrays that are not a size class, or over the caps, are left to the GC. */
     fun release(array: ByteArray) {
         val size = array.size
-        if (!enabled || size < MIN_SIZE || size > MAX_SIZE || size and (size - 1) != 0) { dropped++; return }
         val c = size.countTrailingZeroBits() - MIN_CLASS_SHIFT
-        val n = counts[c]
+        val n = if (c in 0 until CLASSES && size == MIN_SIZE shl c && enabled) counts[c] else maxPerClass
         if (n >= maxPerClass || cachedBytes + size > maxBytes) { dropped++; return }
-        var stack = stacks[c]
-        if (n == stack.size) { stack = stack.copyOf(maxOf(8, n * 2).coerceAtMost(maxPerClass)); stacks[c] = stack }
-        stack[n] = array
+        cache[c * maxPerClass + n] = array
         counts[c] = n + 1
         cachedBytes += size
         returned++
@@ -92,14 +87,12 @@ class BufferPool internal constructor() {
     /** Drop every cached array (tests). */
     fun clear() {
         enabled = BufferPoolConfig.enabled; maxPerClass = BufferPoolConfig.maxArraysPerClass; maxBytes = BufferPoolConfig.maxBytesPerThread
-        for (c in 0 until CLASSES) { stacks[c] = arrayOfNulls(0); counts[c] = 0 }
+        cache = arrayOfNulls(CLASSES * maxPerClass)
+        for (c in 0 until CLASSES) counts[c] = 0
         cachedBytes = 0
         hits = 0; misses = 0; returned = 0; dropped = 0
     }
 
-    /** Size class holding [min] (<= MAX_SIZE) bytes: ceil(log2(min)) - MIN_CLASS_SHIFT, at least 0. */
-    private fun classOf(min: Int): Int =
-        if (min <= MIN_SIZE) 0 else (32 - (min - 1).countLeadingZeroBits()) - MIN_CLASS_SHIFT
 }
 
 @kotlin.native.concurrent.ThreadLocal

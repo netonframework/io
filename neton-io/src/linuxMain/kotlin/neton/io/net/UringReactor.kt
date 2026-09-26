@@ -167,11 +167,15 @@ internal class UringReactor : Reactor() {
 
     private fun releaseSlot(idx: Int, slot: Slot) {
         slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false; slot.isWrite = false
-        // Reached only after the op's CQE (or before its SQE existed): the kernel no longer touches these.
-        slot.extraPins?.let { for (p in it) p.unpin() }; slot.extraPins = null
-        slot.nativeBlock?.let { free(it) }; slot.nativeBlock = null
+        if (slot.nativeBlock != null) releaseVectored(slot)     // writev only; keeps this path small enough to inline
         freeSlots[freeTop++] = idx
         liveOps--
+    }
+
+    /** Reached only after the op's CQE (or before its SQE existed): the kernel no longer touches these. */
+    private fun releaseVectored(slot: Slot) {
+        slot.extraPins?.let { for (p in it) p.unpin() }; slot.extraPins = null
+        slot.nativeBlock?.let { free(it) }; slot.nativeBlock = null
     }
 
     // ---- SPEC §17c step 6: multishot recv with provided buffers. One IORING_OP_RECV|MULTISHOT per
