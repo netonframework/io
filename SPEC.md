@@ -570,7 +570,12 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 
 ## 20. 全平台（2026-09-26 用户决定：Kotlin/Native 支持的平台全部要支持）
 
-> **收窄（2026-09-26，用户）**：neton-io 必须支持 **macOS、Linux、Windows**，性能优先。现有的 iOS 目标保留（PulseKit iOS SDK 经 msgtrans 依赖它，
+> **最终范围（2026-09-26，用户）**：neton-io 只负责**高性能 I/O 与网络**；安全（TLS 等）由上层业务负责，不在 neton-io 范围内。
+> 必须支持的平台：**macOS、Linux、Windows、iOS、Android**。目标：macosArm64/X64、linuxX64/Arm64、mingwX64、iosArm64/SimulatorArm64/X64、
+> androidNativeArm64/Arm32/X64/X86。驱动：Linux 为 io_uring/epoll/poll，Android 为 epoll/poll（与 Linux 共用 epoll），Apple 为 kqueue/poll，Windows 为 IOCP（先 WSAPoll）。
+> 源码集：`nativeMain` → `posixMain`（Linux + Android + Apple）→ `epollMain`（Linux + Android）/ `appleMain`；`linuxMain` 仅 io_uring；`mingwMain`（Winsock + IOCP）。
+>
+> **收窄（2026-09-26，用户，已被上一条取代）**：neton-io 必须支持 **macOS、Linux、Windows**，性能优先。现有的 iOS 目标保留（PulseKit iOS SDK 经 msgtrans 依赖它，
 > 不增加工作量）；Android / tvOS / watchOS 不做。下面的 20 目标矩阵作为背景保留，已不是目标。实际目标：macosArm64、macosX64、linuxX64、linuxArm64、
 > mingwX64，以及 iosArm64、iosSimulatorArm64、iosX64。源码集：`nativeMain` → `posixMain`（Linux + Apple）→ `linuxMain`（epoll + io_uring）/ `appleMain`；`mingwMain`（Winsock + IOCP）。
 
@@ -618,6 +623,8 @@ Windows 的 SOCKET 是句柄而非小整数 fd：Windows 驱动内部用自己�
 **阶段**：P1 构建矩阵（全部目标可编译链接）→ P2 Android / Linux arm64 / iOS 模拟器测试 → P3 Windows（先 WSAPoll 打通，再 IOCP 做性能）。msgtrans、pulsekit 随后跟进同一矩阵。
 
 ## 21. TLS 1.3（Kotlin 实现，性能优先；2026-09-26 用户选定方案 A）
+
+> **移出 neton-io 范围（2026-09-26，用户）**：TLS 属于上层业务的安全职责，neton-io 不做。本节与 §18.5、§21.1 的评估保留作为资料，供上层将来参考。
 
 **范围（第一版）**：只做 TLS 1.3；客户端 + 服务端；密码套件 TLS_AES_128_GCM_SHA256、TLS_AES_256_GCM_SHA384、TLS_CHACHA20_POLY1305_SHA256；
 密钥交换组 x25519、secp256r1；签名 ecdsa_secp256r1_sha256、rsa_pss_rsae_sha256、ed25519（证书链中另需验 rsa_pkcs1_sha256）；SNI、ALPN、HelloRetryRequest、

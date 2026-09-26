@@ -31,15 +31,14 @@
 - [ ] 公平前提下的剩余差距：×4/12 连接（0.87）、io_uring 整体（0.76–0.91）、1000 连接 p99（10–14 ms vs 7 ms）
 - [ ] 测试端口移出临时端口范围后，153 三驱动复跑
 
-## §20 平台（收窄：macOS / Linux / Windows 必须，iOS 保留）
-- [x] P1 源码集拆分：nativeMain 只放 expect，posixMain（Linux + Apple）放 POSIX socket，linuxMain 放 epoll + io_uring；非 Windows 目标全部编译，macOS 两驱动 33/33
-- [x] P1 mingwMain：Winsock 的 socket/地址/唤醒实现 + WSAPoll 驱动，mingwX64 编译 + 链接通过（echoServer.exe、test.exe 为 PE32+）；**未在 Windows 上运行过**
-- [ ] P2 linuxArm64 测试（colima arm64 容器）
-- [ ] P3 Windows 测试机（待用户提供）→ WSAPoll 打通 → IOCP 驱动（性能）
+## §20 平台（最终：macOS / Linux / Windows / iOS / Android；neton-io 只做 I/O 与网络，不做 TLS）
+- [x] 源码集拆分：nativeMain（expect）/ posixMain / linuxMain / appleMain / mingwMain；macOS 两驱动 33/33
+- [x] mingwMain：Winsock + WSAPoll，mingwX64 编译链接通过（未在 Windows 运行）
+- [ ] Android：androidNative 四个目标恢复；epollMain（Linux + Android 共用 epoll）；编译
+- [ ] Android 测试：Pixel_9 模拟器（arm64-v8a）上跑测试二进制
+- [ ] iOS 模拟器测试（iosSimulatorArm64）
+- [ ] linuxArm64 测试（colima arm64 容器）
+- [ ] Windows：IOCP 驱动（性能）；需要 Windows 测试机或 CI
+- [ ] 各平台性能基线（同机回显，公平客户端）
 
-## §21 TLS 1.3
-- [ ] 依赖接入（native-builds libcrypto 3.6.4 + cryptography-kotlin nativebuilds provider + 自写 EVP 声明），20 目标可编译
-- [ ] 记录层（常驻 EVP 上下文、原地加解密）+ RFC 8448 向量
-- [ ] 握手状态机（客户端、服务端）
-- [ ] X.509 与各平台信任锚
-- [ ] 互通（openssl、Go）与性能对比（geario + rustls）
+## §21 TLS — 移出 neton-io 范围（上层负责）；评估资料见 SPEC §18.5、§21.1
