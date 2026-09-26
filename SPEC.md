@@ -752,3 +752,30 @@ reuseAddress = true, reusePort = false, lingerSec = null, connectTimeoutMillis =
 
 ### 执行顺序
 23.5 → 23.3 → 23.2 → 23.4 → 23.6 → 23.7 → 23.1（IOCP 代码随时推 CI，验证取决于能否读取 CI 结果）。
+
+## 24. Linux 吞吐第一：零分配收发路径（2026-09-27 用户确认：Linux 优先，先把吞吐做到第一，macOS / Windows 之后再优化）
+
+### 24.1 测量依据（153，单核绑定，12 连接，128 B；raw：`docs/benchmarks/2026-09-27-153-p0/p1/p2-raw.txt`）
+- 每请求 CPU 约 9.7 µs，其中内核态约 8.8 µs；neton 用户态约 840 ns，geario 约 600 ns。
+- 系统调用/请求：neton epoll 3.1、io_uring 1.5，geario（默认 io_uring）0.29。
+- 其中 `sched_yield` 每请求 0.84（epoll）/ 1.13（io_uring）次，gdb 调用栈全部来自 Kotlin/Native 的 `MainGCThread::PerformFullGC`：
+  GC 线程等待反应器到达安全点时自旋让出。GC 触发频繁，源于每个请求在堆上分配约 3 个协程续体
+  （`ReactorStream.read`、`ReadinessReactor.read`、`ReadinessReactor.write` 的状态机）以及 Int 结果装箱。
+- 同一份代码的 GC 变体（6 轮成对，对 geario）：默认 epoll 0.87 / io_uring 0.98；关闭 GC epoll 0.97 / io_uring 1.01（未带内联选项，偏保守）；
+  固定 128 MB 目标堆只到 0.92 / 0.99；STW 更差。**结论：去掉每请求的堆分配就是主要的吞吐杠杆。**
+
+### 24.2 设计
+- **尾调用链**：`ReactorStream.read/write` → `Reactor.read/write` → 挂起原语，全部是尾调用，不生成状态机；挂起时交给反应器的是调用方
+  （如连接处理循环）自己的续体，一个连接只在其处理协程启动时分配一次。
+- **反应器完成读写**：读先尝试一次非挂起的 recv（快路径）；需要等待时把 `(续体, 目标缓冲, 读大小策略)` 登记在按 fd 的槽里，
+  就绪事件到来（或公平规则推迟到下一轮）时由反应器执行 recv，再以结果恢复续体。写同理：先非挂起地发送，剩余部分登记后由可写事件续发，
+  全部发完再恢复。io_uring：multishot 读由 CQE 到达时直接拷入登记的缓冲；SEND 在 CQE 里续发剩余部分，发完才恢复。
+- **自适应读大小**移到接口 `ReadSizer`（`ReactorStream` 实现，反应器在读成功时回调），不再需要调用返回后的处理。
+- **结果不装箱**：恢复续体时使用预装箱的 Int 缓存（0..65536），更大的值才按常规装箱。
+- 公平规则（§19.5）、取消、超时（§23.2）、关闭语义保持不变；带超时的路径仍可走状态机（非默认）。
+- 暂不改动：io_uring 非 multishot 读、`writev`、accept / connect、IOCP（Windows 之后再做）。
+
+### 24.3 验收
+- 153 单核绑定 12 连接回显：`sched_yield`/请求 ≤ 0.05；cachegrind 下每请求 `CustomAllocator::Allocate` 调用为 0（稳态）。
+- 吞吐：单核绑定与 ×4 100 连接，epoll 与 io_uring 对 geario 成对中位数 ≥ 1.00。
+- 用户态指令/请求不高于 v34；全部测试通过（Linux 三驱动、macOS 两驱动、msgtrans）。
