@@ -34,11 +34,13 @@
 ## §20 平台（最终：macOS / Linux / Windows / iOS / Android；neton-io 只做 I/O 与网络，不做 TLS）
 - [x] 源码集拆分：nativeMain（expect）/ posixMain / linuxMain / appleMain / mingwMain；macOS 两驱动 33/33
 - [x] mingwMain：Winsock + WSAPoll，mingwX64 编译链接通过（未在 Windows 运行）
-- [ ] Android：androidNative 四个目标恢复；epollMain（Linux + Android 共用 epoll）；编译
-- [ ] Android 测试：Pixel_9 模拟器（arm64-v8a）上跑测试二进制
-- [ ] iOS 模拟器测试（iosSimulatorArm64）
-- [ ] linuxArm64 测试（colima arm64 容器）
+- [x] Android：androidNative 四个目标恢复；epollMain（Linux + Android 共用 epoll）；全部目标编译通过
+- [x] Android 测试：Pixel_9 模拟器（Android 16 / API 36，arm64-v8a）epoll 与 poll 各 33/33
+- [x] iOS 模拟器测试（iosSimulatorArm64）33/33
+- [x] linuxArm64 测试（colima 的 aarch64 Ubuntu 虚拟机，内核 6.8）epoll / poll / io_uring 各 34/34
 - [ ] Windows：IOCP 驱动（性能）；需要 Windows 测试机或 CI
 - [ ] 各平台性能基线（同机回显，公平客户端）
 
 ## §21 TLS — 移出 neton-io 范围（上层负责）；评估资料见 SPEC §18.5、§21.1
+- [ ] linuxX64（153）：epoll / poll 34/34；io_uring 在 Gradle 下出现过 2 次 `io_uring_setup` 失败（AddressTest、UringMappingLeakTest），直接运行 8 次 + 全套 2 次均通过。
+      假设：Gradle 守护进程占用约 3 GB 内存时的内存压力（153 共 3.6 GB）；已让失败信息带上 errno（下次出现即可确认）

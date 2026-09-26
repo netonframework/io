@@ -368,7 +368,7 @@ internal class UringReactor : Reactor() {
             modernSetup = false
         } else modernSetup = true
         ringFd = fd
-        check(ringFd >= 0) { "io_uring_setup failed (fd=$ringFd)" }
+        check(ringFd >= 0) { val e = platform.posix.errno; "io_uring_setup failed: ${errnoMessage(e)} (errno $e)" }
 
         val prot = PROT_READ or PROT_WRITE
         val flags = MAP_SHARED or MAP_POPULATE
