@@ -13,3 +13,6 @@ internal actual fun currentThreadId(): ULong = pthread_self().toULong()
 internal actual val TCP_KEEP_IDLE_OPTION: Int = platform.posix.TCP_KEEPIDLE
 internal actual val TCP_KEEP_INTERVAL_OPTION: Int = platform.posix.TCP_KEEPINTVL
 internal actual val TCP_KEEP_COUNT_OPTION: Int = platform.posix.TCP_KEEPCNT
+
+/** Linux/Android hash incoming connections across the SO_REUSEPORT sockets of a port. */
+internal actual val reusePortBalancesLoad: Boolean = true

@@ -29,4 +29,7 @@ suspend fun connect(host: String, port: Int, options: SocketOptions = SocketOpti
     connectStream(host, port, options)
 
 /** A TCP connect that failed (refused, unreachable, timed out by the OS). */
-class ConnectException(message: String) : Exception(message)
+class ConnectException(message: String) : Exception(message) {
+    /** The platform error code (errno / Winsock), 0 if none; lets Unix-socket connect tell "refused" from "retry". */
+    internal var code: Int = 0
+}

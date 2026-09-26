@@ -31,3 +31,6 @@ internal actual fun currentThreadId(): ULong = pthread_self()!!.rawValue.toLong(
 internal actual val TCP_KEEP_IDLE_OPTION: Int = platform.posix.TCP_KEEPALIVE
 internal actual val TCP_KEEP_INTERVAL_OPTION: Int = platform.posix.TCP_KEEPINTVL
 internal actual val TCP_KEEP_COUNT_OPTION: Int = platform.posix.TCP_KEEPCNT
+
+/** Apple accepts SO_REUSEPORT but does not load-balance between the sockets. */
+internal actual val reusePortBalancesLoad: Boolean = false

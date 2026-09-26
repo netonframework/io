@@ -32,6 +32,12 @@ class SocketOptions(
     /** Per-address connect timeout in ms for [connect]; 0 waits as long as the OS does. */
     val connectTimeoutMillis: Long = 0,
 ) {
+    /** A copy with SO_REUSEPORT on (used by [AcceptMode.ReusePort]). */
+    internal fun withReusePort(): SocketOptions = SocketOptions(
+        noDelay, keepAlive, sendBufferSize, receiveBufferSize, backlog, reuseAddress, reusePort = true,
+        lingerSeconds = lingerSeconds, connectTimeoutMillis = connectTimeoutMillis,
+    )
+
     companion object {
         val Default = SocketOptions()
     }

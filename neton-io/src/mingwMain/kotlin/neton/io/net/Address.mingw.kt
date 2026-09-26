@@ -132,7 +132,7 @@ internal actual fun tcpConnectAddr(addr: SockAddr, display: String, options: Soc
         val e = WSAGetLastError()
         if (e != WSAEWOULDBLOCK && e != WSAEINPROGRESS) {
             closeFd(fd)
-            throw ConnectException("connect to $display failed: Winsock error $e")
+            throw ConnectException("connect to $display failed: Winsock error $e").also { it.code = e }
         }
     }
     return fd

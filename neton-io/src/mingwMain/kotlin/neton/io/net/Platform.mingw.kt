@@ -22,3 +22,6 @@ actual fun cpuCount(): Int = memScoped {
     GetSystemInfo(info.ptr)
     info.dwNumberOfProcessors.toInt().coerceAtLeast(1)
 }
+
+/** Windows has no SO_REUSEPORT. */
+internal actual val reusePortBalancesLoad: Boolean = false

@@ -17,15 +17,21 @@ internal class TcpServer(
     private val options: SocketOptions = SocketOptions.Default,
 ) {
     private var closed = false
+    /** Run once after [close] (a Unix listener removes its socket file). */
+    internal var afterClose: (() -> Unit)? = null
+
+    /** A closed listener's fd number may already belong to someone else: never accept on it. */
+    private fun checkOpen() { if (closed) throw neton.io.core.ClosedException("listener closed") }
 
     suspend fun accept(): IoStream {
+        checkOpen()
         val fd = reactor.accept(listenFd)
         applyStreamOptions(fd, options)
         return ReactorStream(fd, reactor)
     }
 
     /** Accept and return the raw client fd without binding it to this reactor (for hand-off). */
-    suspend fun acceptFd(): Int = reactor.accept(listenFd).also { applyStreamOptions(it, options) }
+    suspend fun acceptFd(): Int { checkOpen(); return reactor.accept(listenFd).also { applyStreamOptions(it, options) } }
 
     /**
      * Close the listener the way a stream is closed: on the reactor thread, waking any coroutine
@@ -41,6 +47,7 @@ internal class TcpServer(
         reactor.checkOwnerPublic("close")
         closed = true
         reactor.closeStream(listenFd)
+        afterClose?.invoke()
     }
 }
 
@@ -72,23 +79,31 @@ internal suspend fun connectStream(host: String, port: Int, options: SocketOptio
     var last: ConnectException? = null
     for (a in addrs) {
         val fd = try { tcpConnectAddr(a, display, options) } catch (e: ConnectException) { last = e; continue }
-        if (options.connectTimeoutMillis > 0) {
-            // SPEC §23.5: per-address timeout. On expiry the half-open socket is closed through the
-            // reactor (drops the driver's interest; a bare close would leave poll(2) spinning on it).
-            val done = withTimeoutOrNull(options.connectTimeoutMillis) { reactor.awaitConnect(fd); true }
-            if (done == null) {
-                reactor.closeStream(fd)
-                last = ConnectException("connect to $display timed out after ${options.connectTimeoutMillis} ms")
-                continue
-            }
-        } else {
-            reactor.awaitConnect(fd)
-        }
-        // A failed non-blocking connect also reports "writable"; the outcome is in SO_ERROR.
-        val err = socketError(fd)
-        if (err == 0) return ReactorStream(fd, reactor)
-        closeFd(fd)
-        last = ConnectException("connect to $display failed: ${errnoMessage(err)} (errno $err)")
+        try { return finishConnect(reactor, fd, display, options) } catch (e: ConnectException) { last = e }
     }
     throw last ?: ConnectException("connect to $display failed: no addresses")
+}
+
+/**
+ * Complete a non-blocking connect started on [fd]: wait for writability (bounded by the connect
+ * timeout, SPEC §23.5), then read the outcome from SO_ERROR. Throws [ConnectException] and closes
+ * [fd] on failure.
+ */
+internal suspend fun finishConnect(reactor: Reactor, fd: Int, display: String, options: SocketOptions): IoStream {
+    if (options.connectTimeoutMillis > 0) {
+        // On expiry the half-open socket is closed through the reactor (drops the driver's
+        // interest; a bare close would leave poll(2) spinning on it).
+        val done = withTimeoutOrNull(options.connectTimeoutMillis) { reactor.awaitConnect(fd); true }
+        if (done == null) {
+            reactor.closeStream(fd)
+            throw ConnectException("connect to $display timed out after ${options.connectTimeoutMillis} ms")
+        }
+    } else {
+        reactor.awaitConnect(fd)
+    }
+    // A failed non-blocking connect also reports "writable"; the outcome is in SO_ERROR.
+    val err = socketError(fd)
+    if (err == 0) return ReactorStream(fd, reactor)
+    closeFd(fd)
+    throw ConnectException("connect to $display failed: ${errnoMessage(err)} (errno $err)").also { it.code = err }
 }

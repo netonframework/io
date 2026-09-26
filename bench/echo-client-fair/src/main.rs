@@ -16,6 +16,9 @@ fn main() {
     let conns: usize = args.next().and_then(|v| v.parse().ok()).unwrap_or(64);
     let secs: u64 = args.next().and_then(|v| v.parse().ok()).unwrap_or(10);
     let payload: usize = args.next().and_then(|v| v.parse().ok()).unwrap_or(128);
+    // Pipelining depth: send `depth` requests back to back, then read `depth` replies (SPEC §23.2).
+    // Each request ends in '\n' so a line-framed server sees one request per payload.
+    let depth: usize = args.next().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total = Arc::new(AtomicU64::new(0));
@@ -27,15 +30,17 @@ fn main() {
         handles.push(std::thread::spawn(move || {
             let mut sock = TcpStream::connect(&addr).expect("connect");
             sock.set_nodelay(true).unwrap();
-            let out = vec![b'x'; payload];
-            let mut buf = vec![0u8; payload];
+            let mut one = vec![b'x'; payload];
+            if let Some(last) = one.last_mut() { *last = b'\n'; }
+            let out: Vec<u8> = one.iter().cycle().take(payload * depth).cloned().collect();
+            let mut buf = vec![0u8; payload * depth];
             let mut lat = Vec::with_capacity(1 << 16);
             while !stop.load(Ordering::Relaxed) {
                 let t = Instant::now();
                 if sock.write_all(&out).is_err() { break; }
                 if sock.read_exact(&mut buf).is_err() { break; }
                 lat.push(t.elapsed().as_nanos() as u64);
-                total.fetch_add(1, Ordering::Relaxed);
+                total.fetch_add(depth as u64, Ordering::Relaxed);
             }
             lat
         }));
@@ -61,6 +66,7 @@ fn main() {
     println!("target      {addr}");
     println!("conns       {conns}");
     println!("payload     {payload} bytes");
+    println!("depth       {depth}");
     println!("duration    {elapsed:.2} s");
     println!("requests    {count}");
     println!("qps         {:.0}", count as f64 / elapsed);

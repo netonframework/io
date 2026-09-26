@@ -123,7 +123,7 @@ internal actual fun tcpConnectAddr(addr: SockAddr, display: String, options: Soc
     if (rc != 0 && errno != EINPROGRESS) {
         val err = errno
         closeFd(fd)
-        throw ConnectException("connect to $display failed: ${errnoMessage(err)} (errno $err)")
+        throw ConnectException("connect to $display failed: ${errnoMessage(err)} (errno $err)").also { it.code = err }
     }
     return fd
 }
