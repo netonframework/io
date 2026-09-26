@@ -634,3 +634,20 @@ KeyUpdate、告警与 close_notify。不做 0-RTT；PSK 会话恢复放第二版
 - **API**：`TlsStream` 实现 `IoStream`，msgtrans 与以后的 HTTP 直接叠在上面；`connectTls(host, port, config)`、`listenTls(...)`。
 
 **验收**：RFC 8448 测试向量；与 `openssl s_server/s_client`、Go `crypto/tls` 互通；性能与 geario + rustls 同机成对比较（TLS 回显，128 B / 16 KB，1/12/100 连接）；全部目标可编译，验证矩阵同 §20。
+
+### 21.1 可行性与性能评估（2026-09-26，用户问"能否用 Kotlin Native 实现类似 rustls 的库"）
+
+**结论：可以，而且架构与 rustls 同构。** rustls 本身不实现密码学：协议状态机用 Rust 写（sans-I/O），原语交给 provider（默认 aws-lc-rs，即 aws-lc 的 C/汇编）。
+Kotlin 版是同样的分工：协议用 Kotlin，原语薄调用 libcrypto。性能取决于三块，均已在 153 单核实测（`docs/benchmarks/2026-09-26-tls-feasibility.md`）：
+
+| | 估计（相对 rustls） | 依据 |
+|---|---|---|
+| 批量数据（16 KB 记录） | **0.95–1.0×** | 每条 16 KB 记录：aws-lc 4,390 ns，Kotlin→OpenSSL 4,435 ns；rustls 实测 3,328 MB/s |
+| 小记录（128 B） | 每条多约 110 ns；RPC 场景约 −2.5% | aws-lc 176 ns，C→OpenSSL 220 ns，Kotlin→OpenSSL 285 ns |
+| 完整握手 | **服务端约 0.7–0.75×、客户端约 0.85×** | 差距在原语：OpenSSL 的 X25519 比 aws-lc 慢约 2×，ECDSA 慢约 20%；rustls 服务端 8,931 次/秒 |
+| 每连接内存 | 相当（估 5–20 KB；rustls 约 13 KB） | §19.4 的自适应缓冲 |
+
+握手要追平，把原语后端从 OpenSSL 换成 aws-lc 即可（同样是 C、同样的薄调用层；native-builds 不提供，需要自己为我们的目标构建）。
+设计上原语调用集中在一层内部接口之后，先用 OpenSSL，之后可换 aws-lc。
+
+**质量与安全**：RFC 8448 测试向量；BoringSSL 的 BoGo 协议一致性测试套件（rustls 也在用，语言无关，通过 shim 程序接入）；与 OpenSSL、Go、rustls 互通；模糊测试。
