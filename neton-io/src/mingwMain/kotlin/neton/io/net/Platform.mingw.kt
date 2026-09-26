@@ -10,8 +10,14 @@ import platform.windows.GetCurrentThreadId
 import platform.windows.GetSystemInfo
 import platform.windows.SYSTEM_INFO
 
-/** Windows reactor (SPEC §20): WSAPoll readiness for now; IOCP (completion) is the performance driver to come. */
-internal actual fun createReactor(): Reactor = ReadinessReactor(WsaPollPoller())
+/**
+ * Windows reactor (SPEC §23.1): IOCP completion by default; NETON_IO_DRIVER=wsapoll (or poll /
+ * polling) selects the WSAPoll readiness driver.
+ */
+internal actual fun createReactor(): Reactor = when (driverSelection()) {
+    "wsapoll", "poll", "polling" -> ReadinessReactor(WsaPollPoller())
+    else -> IocpReactor()
+}
 
 internal actual fun createPoller(): Poller = WsaPollPoller()
 

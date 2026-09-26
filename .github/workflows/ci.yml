@@ -1,7 +1,7 @@
 name: CI
 
 # Functional validation on every platform GitHub hosts (SPEC §20): macOS (kqueue, poll), Linux x64
-# (epoll, poll, io_uring), Windows (WSAPoll; IOCP once it lands). Any branch, PRs, or by hand.
+# (epoll, poll, io_uring), Windows (IOCP, WSAPoll). Any branch, PRs, or by hand.
 on:
   push:
   pull_request:
@@ -34,10 +34,14 @@ jobs:
             os: ubuntu-latest
             task: linuxX64Test
             driver: iouring
-          - name: Windows WSAPoll
+          - name: Windows IOCP
             os: windows-latest
             task: mingwX64Test
             driver: ""
+          - name: Windows WSAPoll
+            os: windows-latest
+            task: mingwX64Test
+            driver: wsapoll
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:

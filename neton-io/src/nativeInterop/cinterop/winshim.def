@@ -25,3 +25,163 @@ static int neton_wsa_startup(void) {
     WSADATA data;
     return WSAStartup(MAKEWORD(2, 2), &data);
 }
+
+/* ---- IOCP (SPEC §22, §23.1). Only primitive types cross into Kotlin; Win32 structs stay here. ---- */
+#include <mswsock.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* One in-flight operation. OVERLAPPED comes first, so a completion's OVERLAPPED* is the op. */
+typedef struct neton_op {
+    OVERLAPPED ov;
+    unsigned int slot, gen;          /* the reactor's slot for this op */
+    SOCKET sock;                     /* socket the op runs on (result lookup, cancel) */
+    SOCKET accepted;                 /* AcceptEx: the socket prepared for the peer */
+    WSABUF one;
+    DWORD flags;
+    DWORD bytes;                     /* bytes transferred when the op completed at once */
+    char addrbuf[2 * (sizeof(SOCKADDR_STORAGE) + 16)];
+} neton_op;
+
+static void* neton_op_new(void) {
+    neton_op* op = (neton_op*) calloc(1, sizeof(neton_op));
+    if (op) op->accepted = INVALID_SOCKET;
+    return op;
+}
+static void neton_op_free(void* p) { free(p); }
+static void neton_op_set_id(void* p, unsigned int slot, unsigned int gen) { neton_op* op = (neton_op*) p; op->slot = slot; op->gen = gen; }
+static unsigned int neton_op_slot(void* p) { return ((neton_op*) p)->slot; }
+static unsigned int neton_op_gen(void* p) { return ((neton_op*) p)->gen; }
+static unsigned int neton_op_bytes(void* p) { return (unsigned int) ((neton_op*) p)->bytes; }
+
+static void* neton_iocp_create(void) { return (void*) CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1); }
+static void neton_iocp_close(void* port) { CloseHandle((HANDLE) port); }
+
+/* Associate socket s with the port. Returns 0 or a Win32 error. *skip = 1 when completions for ops
+   that finish at once are skipped (FILE_SKIP_COMPLETION_PORT_ON_SUCCESS): the caller takes the result
+   directly and no packet follows. */
+static int neton_iocp_associate(void* port, unsigned long long s, int wantSkip, int* skip) {
+    *skip = 0;
+    if (CreateIoCompletionPort((HANDLE) (SOCKET) s, (HANDLE) port, 0, 0) == NULL) return (int) GetLastError();
+    if (wantSkip && SetFileCompletionNotificationModes((HANDLE) (SOCKET) s,
+            FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | FILE_SKIP_SET_EVENT_ON_HANDLE)) *skip = 1;
+    return 0;
+}
+
+/* Cross-thread wakeup: a packet with no OVERLAPPED. */
+static int neton_iocp_post(void* port) { return PostQueuedCompletionStatus((HANDLE) port, 0, 1, NULL) ? 0 : (int) GetLastError(); }
+
+/* Wait up to timeoutMs (0xFFFFFFFF = forever) for at most max (<= 256) completions. For each:
+   ops[i] = the op (NULL for a wakeup), bytes[i], errs[i] = 0 or the Winsock error.
+   Returns the count (0 on timeout) or -(Win32 error). */
+static int neton_iocp_wait(void* port, void** ops, unsigned int* bytes, int* errs, int max, unsigned int timeoutMs) {
+    OVERLAPPED_ENTRY entries[256];
+    ULONG n = 0, i;
+    if (max > 256) max = 256;
+    if (!GetQueuedCompletionStatusEx((HANDLE) port, entries, (ULONG) max, &n, (DWORD) timeoutMs, FALSE)) {
+        DWORD e = GetLastError();
+        return e == WAIT_TIMEOUT ? 0 : -(int) e;
+    }
+    for (i = 0; i < n; i++) {
+        OVERLAPPED* ov = entries[i].lpOverlapped;
+        if (ov == NULL) { ops[i] = NULL; bytes[i] = 0; errs[i] = 0; continue; }
+        neton_op* op = (neton_op*) ov;
+        DWORD b = 0, fl = 0;
+        ops[i] = op;
+        if (WSAGetOverlappedResult(op->sock, ov, &b, FALSE, &fl)) { bytes[i] = b; errs[i] = 0; }
+        else { bytes[i] = entries[i].dwNumberOfBytesTransferred; errs[i] = WSAGetLastError(); if (errs[i] == 0) errs[i] = WSAECONNABORTED; }
+    }
+    return (int) n;
+}
+
+/* Start results: 0 = completed now (bytes in the op), 1 = pending (a completion will follow),
+   anything else = the Winsock error (always > 1). */
+static int neton_start_result(int ok, int skip) {
+    int e;
+    if (ok) return skip ? 0 : 1;
+    e = WSAGetLastError();
+    return e == WSA_IO_PENDING ? 1 : e;
+}
+
+static int neton_recv(unsigned long long s, void* p, char* buf, unsigned int len, int skip) {
+    neton_op* op = (neton_op*) p;
+    memset(&op->ov, 0, sizeof op->ov);
+    op->sock = (SOCKET) s; op->one.buf = buf; op->one.len = len; op->flags = 0; op->bytes = 0;
+    return neton_start_result(WSARecv((SOCKET) s, &op->one, 1, &op->bytes, &op->flags, &op->ov, NULL) == 0, skip);
+}
+
+static int neton_send(unsigned long long s, void* p, char* buf, unsigned int len, int skip) {
+    neton_op* op = (neton_op*) p;
+    memset(&op->ov, 0, sizeof op->ov);
+    op->sock = (SOCKET) s; op->one.buf = buf; op->one.len = len; op->bytes = 0;
+    return neton_start_result(WSASend((SOCKET) s, &op->one, 1, &op->bytes, 0, &op->ov, NULL) == 0, skip);
+}
+
+static void* neton_wsabufs_new(unsigned int n) { return calloc(n ? n : 1, sizeof(WSABUF)); }
+static void neton_wsabuf_set(void* a, unsigned int i, char* buf, unsigned int len) { ((WSABUF*) a)[i].buf = buf; ((WSABUF*) a)[i].len = len; }
+static void neton_free(void* p) { free(p); }
+
+static int neton_sendv(unsigned long long s, void* p, void* bufs, unsigned int n, int skip) {
+    neton_op* op = (neton_op*) p;
+    memset(&op->ov, 0, sizeof op->ov);
+    op->sock = (SOCKET) s; op->bytes = 0;
+    return neton_start_result(WSASend((SOCKET) s, (WSABUF*) bufs, n, &op->bytes, 0, &op->ov, NULL) == 0, skip);
+}
+
+static LPFN_ACCEPTEX neton_acceptex = NULL;
+
+/* AcceptEx on listen socket l: prepares a socket of the listener's family and starts the accept. */
+static int neton_accept(unsigned long long l, void* p, int skip) {
+    neton_op* op = (neton_op*) p;
+    WSAPROTOCOL_INFOW info;
+    int il = (int) sizeof info, e;
+    const DWORD al = (DWORD) (sizeof(SOCKADDR_STORAGE) + 16);
+    SOCKET a;
+    if (neton_acceptex == NULL) {
+        GUID g = WSAID_ACCEPTEX;
+        LPFN_ACCEPTEX fn = NULL;
+        DWORD out = 0;
+        if (WSAIoctl((SOCKET) l, SIO_GET_EXTENSION_FUNCTION_POINTER, &g, sizeof g, &fn, sizeof fn, &out, NULL, NULL) != 0) return WSAGetLastError();
+        neton_acceptex = fn;
+    }
+    if (getsockopt((SOCKET) l, SOL_SOCKET, SO_PROTOCOL_INFOW, (char*) &info, &il) != 0) return WSAGetLastError();
+    a = WSASocketW(info.iAddressFamily, info.iSocketType, info.iProtocol, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (a == INVALID_SOCKET) return WSAGetLastError();
+    memset(&op->ov, 0, sizeof op->ov);
+    op->sock = (SOCKET) l; op->accepted = a; op->bytes = 0;
+    if (neton_acceptex((SOCKET) l, a, op->addrbuf, 0, al, al, &op->bytes, &op->ov)) return skip ? 0 : 1;
+    e = WSAGetLastError();
+    if (e == ERROR_IO_PENDING) return 1;
+    closesocket(a); op->accepted = INVALID_SOCKET;
+    return e;
+}
+
+/* After an accept completed: the accepted socket, or 0 if it could not be set up (it is closed). */
+static unsigned long long neton_accept_finish(unsigned long long l, void* p) {
+    neton_op* op = (neton_op*) p;
+    SOCKET a = op->accepted, ls = (SOCKET) l;
+    op->accepted = INVALID_SOCKET;
+    if (a == INVALID_SOCKET) return 0;
+    if (setsockopt(a, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*) &ls, (int) sizeof ls) != 0) { closesocket(a); return 0; }
+    return (unsigned long long) a;
+}
+
+/* An accept that failed or whose awaiter is gone: close the prepared socket. */
+static void neton_accept_discard(void* p) {
+    neton_op* op = (neton_op*) p;
+    if (op->accepted != INVALID_SOCKET) { closesocket(op->accepted); op->accepted = INVALID_SOCKET; }
+}
+
+/* Cancel one op (p) or every op on s (p == NULL). Its completion still arrives (aborted). */
+static void neton_cancel(unsigned long long s, void* p) { CancelIoEx((HANDLE) (SOCKET) s, p ? &((neton_op*) p)->ov : NULL); }
+
+/* Non-blocking connect finished (successfully or not)? 1 yes, 0 not yet. */
+static int neton_connect_done(unsigned long long s) {
+    WSAPOLLFD f;
+    int err = 0, len = (int) sizeof err, rc;
+    f.fd = (SOCKET) s; f.events = POLLOUT; f.revents = 0;
+    rc = WSAPoll(&f, 1, 0);
+    if (rc != 0) return 1;                      /* ready, failed, or WSAPoll error: the caller reads SO_ERROR */
+    if (getsockopt((SOCKET) s, SOL_SOCKET, SO_ERROR, (char*) &err, &len) == 0 && err != 0) return 1;
+    return 0;
+}

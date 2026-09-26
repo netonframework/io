@@ -122,8 +122,14 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     // ---- cross-thread dispatch: MPSC stack + self-pipe wakeup
     private class ExtNode(val block: Runnable, val next: ExtNode?)
     private val external = AtomicReference<ExtNode?>(null)
-    private val wakePipe: IntArray = createWakePipe()
+    // The self-pipe is created on first use (SPEC §23.1): readiness and io_uring drivers touch
+    // [wakeReadFd] while setting up; IOCP overrides [wakeup] and never creates one.
+    private val wakePipeLazy = lazy { createWakePipe() }
+    private val wakePipe: IntArray by wakePipeLazy
     protected val wakeReadFd: Int get() = wakePipe[0]
+
+    /** Wake the loop from another thread after [dispatch] queued work. Must be thread-safe. */
+    protected open fun wakeup() { signalWakePipe(wakePipe[1]) }
 
     // ---- timers (min-heap by deadline, lazy cancellation)
     private class Timer(val deadlineNs: Long, val seq: Long, val block: Runnable) : DisposableHandle {
@@ -179,7 +185,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     fun checkOwnerPublic(what: String) = checkOwner(what)
 
-    protected fun closeWakePipe() { closeFd(wakePipe[0]); closeFd(wakePipe[1]) }
+    protected fun closeWakePipe() { if (wakePipeLazy.isInitialized()) { closeFd(wakePipe[0]); closeFd(wakePipe[1]) } }
 
     /**
      * Close a stream's fd: fail every coroutine parked on it with [neton.io.core.ClosedException],
@@ -200,7 +206,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
             val head = external.load()
             if (external.compareAndSet(head, ExtNode(block, head))) break
         }
-        signalWakePipe(wakePipe[1])
+        wakeup()
     }
 
     /**
