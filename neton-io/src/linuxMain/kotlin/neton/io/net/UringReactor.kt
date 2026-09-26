@@ -297,7 +297,7 @@ internal class UringReactor : Reactor() {
     private suspend fun readMultishot(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         ensureMsFd(fd)
         val n = msTake(fd, dst, sizer)
-        if (n != NOTHING_QUEUED) return n
+        if (n != NOTHING_QUEUED) return intResult(n)
         if (!msArmed[fd] && !msPaused[fd]) armMultishot(fd)
         return msPark(fd, dst, sizer)
     }

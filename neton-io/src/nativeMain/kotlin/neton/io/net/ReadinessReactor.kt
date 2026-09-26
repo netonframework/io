@@ -203,7 +203,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         // whose edge was consumed waits for the next edge instead of a speculative recv.
         if (servedRound[fd] != round && (!persistent[fd] || readyRead[fd])) {
             val n = tryRecv(fd, dst, sizer)
-            if (n != RECV_WAIT) return n
+            if (n != RECV_WAIT) return intResult(n)
         }
         return parkRead(fd, dst, sizer)
     }
@@ -271,7 +271,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             else if (n == WOULD_BLOCK) return parkWrite(fd, src, total)
             else { val e = lastSocketError(); throw IoException("write failed: ${errnoMessage(e)}", e) }
         }
-        return total
+        return intResult(total)
     }
 
     private suspend fun parkWrite(fd: Int, src: Buffer, sentSoFar: Int): Int = suspendCoroutineUninterceptedOrReturn { cont ->

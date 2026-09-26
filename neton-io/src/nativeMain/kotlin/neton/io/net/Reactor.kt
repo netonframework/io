@@ -461,6 +461,16 @@ internal fun boxedInt(v: Int): Any {
     return intBoxes[v] ?: (v as Any).also { intBoxes[v] = it }
 }
 
+/**
+ * Return [n] from a suspend function without allocating (SPEC §24). A suspend function's result is
+ * an `Any?` at the ABI level, so `return n` boxes every Int outside -128..127 — one heap object per
+ * read or write. Returning through the intrinsic hands the shared box from [boxedInt] up the tail
+ * calls unchanged; the caller's state machine unboxes it.
+ */
+@Suppress("NOTHING_TO_INLINE")
+internal suspend inline fun intResult(n: Int): Int =
+    kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { boxedInt(n) }
+
 /** [neton.io.core.IoStream] over a fd, delegating every operation to the [Reactor]. */
 internal class ReactorStream(
     internal val fd: Int,
