@@ -279,7 +279,7 @@ internal class UringReactor : Reactor() {
                     msPaused[fd] = false
                     if (!msArmed[fd] && !msEof[fd]) armMultishot(fd)
                 }
-                dst.reserve(len)
+                dst.reserve(len, bufferPool)
                 val pin = pinFor(fd, dst.backingArray())
                 memcpy(pin.pinned.addressOf(dst.writerIndex()), bufBase!! + bid * bufSize, len.convert())
                 dst.commitWrite(len)
@@ -550,7 +550,7 @@ internal class UringReactor : Reactor() {
 
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
         if (multishot) return readMultishot(fd, dst)
-        val cap = dst.reserve(chunk)                 // may replace the backing array: pin after
+        val cap = dst.reserve(chunk, bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val res = submit(NETON_IORING_OP_READ, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pin)
         stats?.let { it.reads++; if (res > 0) it.readBytes += res }
@@ -564,7 +564,7 @@ internal class UringReactor : Reactor() {
             val pin = pinFor(fd, src.backingArray())
             val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin, cancelOnAbort = false, isWrite = true)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
-            src.consume(res); total += res
+            src.consume(res, bufferPool); total += res
         }
         return total
     }

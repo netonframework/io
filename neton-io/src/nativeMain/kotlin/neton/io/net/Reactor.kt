@@ -184,7 +184,11 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     /** The thread that runs the loop; set by [runUntil] callers via [bindOwner]. */
     private var ownerThread: ULong = 0uL
 
-    fun bindOwner() { ownerThread = currentThreadId() }
+    /** This reactor thread's buffer pool, passed explicitly on the drivers' hot paths (SPEC §23.7). */
+    internal var bufferPool: neton.io.bytes.BufferPool = neton.io.bytes.BufferPool.current
+        private set
+
+    fun bindOwner() { ownerThread = currentThreadId(); bufferPool = neton.io.bytes.BufferPool.current }
 
     /** True when called on the reactor's own thread. */
     fun isOwnerThread(): Boolean = ownerThread == 0uL || ownerThread == currentThreadId()
@@ -274,10 +278,10 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
         // The clock is read once per round, and only while something is timed (SPEC §23.2): with no
         // timers and no stream deadlines the loop reads no clock at all.
         if (wheel.size == 0 && timers.isEmpty()) return
-        cachedNowMs = reactorNowMs()
+        val now = nowNs()                                   // one clock read per round
+        cachedNowMs = now / 1_000_000L
         if (wheel.size > 0) wheel.tick(cachedNowMs)
         if (timers.isEmpty()) return
-        val now = nowNs()
         while (timers.isNotEmpty() && (timers[0].cancelled || timers[0].deadlineNs <= now)) {
             val t = popTimer()
             if (!t.cancelled) t.block.run()

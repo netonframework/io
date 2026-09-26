@@ -276,7 +276,7 @@ internal class IocpReactor : Reactor() {
         checkOwner("read")
         val i = ix(fd)
         if (servedRound[i] == round) waitNextRound()
-        val cap = dst.reserve(chunk)                 // may replace the backing array: pin after
+        val cap = dst.reserve(chunk, bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val at = dst.writerIndex()
         val r0 = round
@@ -303,7 +303,7 @@ internal class IocpReactor : Reactor() {
                 neton_send(fd.toSocket(), op, pin.pinned.addressOf(at), len.toUInt(), skip)
             }
             stats?.let { it.writes++; it.writeBytes += n }
-            src.consume(n); total += n
+            src.consume(n, bufferPool); total += n
         }
         return total
     }

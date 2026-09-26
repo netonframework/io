@@ -14,26 +14,31 @@ package neton.io.bytes
  * never writes into already-read space of that array again (no compaction, no reset to 0); when it
  * would, it moves to a fresh array instead, and the shared one is left to the slices and the GC —
  * never returned to the pool.
+ *
+ * Reactors call the internal overloads taking their thread's [BufferPool]; everything else finds
+ * the pool itself, and only when a pooled buffer actually takes or returns an array.
  */
 class Buffer private constructor(
     private var array: ByteArray,
-    /** Whether arrays come from, and go back to, the thread's [BufferPool]. */
-    val pooled: Boolean,
+    /** [POOLED] | [SHARED] | [BORROWED]: one field, so the common path tests a single value. */
+    private var mode: Int,
     /** Capacity of the first array taken lazily (pooled, or after leaving a shared array). */
     private val firstCapacity: Int,
 ) {
     constructor(initialCapacity: Int = DEFAULT_CAPACITY, pooled: Boolean = false) : this(
         if (pooled) EMPTY_ARRAY else ByteArray(initialCapacity.coerceAtLeast(16)),
-        pooled,
+        if (pooled) POOLED else 0,
         initialCapacity.coerceAtLeast(16),
     )
 
     private var readerIndex = 0
     private var writerIndex = 0
-    /** Slices point into [array]: already-read space must not be rewritten. */
-    private var shared = false
-    /** [array] belongs to someone else (a wrapped [Bytes]): nothing may be written into it. */
-    private var borrowed = false
+
+    /** Whether arrays come from, and go back to, the thread's [BufferPool]. */
+    val pooled: Boolean get() = mode and POOLED != 0
+    // SHARED: slices point into [array], already-read space must not be rewritten.
+    // BORROWED: [array] belongs to someone else (a wrapped [Bytes]), nothing may be written into it.
+    private val sharedOrBorrowed: Boolean get() = mode and (SHARED or BORROWED) != 0
 
     /** Number of bytes available to read. */
     val readableBytes: Int get() = writerIndex - readerIndex
@@ -46,14 +51,14 @@ class Buffer private constructor(
     // ---- write ----
 
     fun writeByte(b: Byte) {
-        ensureWritable(1)
+        ensureWritable(1, null)
         array[writerIndex++] = b
     }
 
     fun writeBytes(src: ByteArray, offset: Int = 0, length: Int = src.size - offset) {
         require(offset >= 0 && length >= 0 && offset + length <= src.size) { "bad range" }
         if (length == 0) return
-        ensureWritable(length)
+        ensureWritable(length, null)
         src.copyInto(array, writerIndex, offset, offset + length)
         writerIndex += length
     }
@@ -61,7 +66,7 @@ class Buffer private constructor(
     /** Append a copy of [src]. */
     fun writeBytes(src: Bytes) {
         if (src.size == 0) return
-        ensureWritable(src.size)
+        ensureWritable(src.size, null)
         src.copyInto(array, writerIndex)
         writerIndex += src.size
     }
@@ -73,7 +78,7 @@ class Buffer private constructor(
         require(length in 0..readableBytes) { "length=$length readable=$readableBytes" }
         val out = array.copyOfRange(readerIndex, readerIndex + length)
         readerIndex += length
-        resetIfDrained()
+        resetIfDrained(null)
         return out
     }
 
@@ -82,9 +87,9 @@ class Buffer private constructor(
         require(length in 0..readableBytes) { "length=$length readable=$readableBytes" }
         if (length == 0) return Bytes.EMPTY
         val out = Bytes(array, readerIndex, length)
-        shared = true
+        mode = mode or SHARED
         readerIndex += length
-        resetIfDrained()
+        resetIfDrained(null)
         return out
     }
 
@@ -95,7 +100,7 @@ class Buffer private constructor(
     fun skip(n: Int) {
         require(n in 0..readableBytes)
         readerIndex += n
-        resetIfDrained()
+        resetIfDrained(null)
     }
 
     /** Readable byte at offset [i] from the reader cursor, without consuming. */
@@ -117,13 +122,13 @@ class Buffer private constructor(
     fun clear() {
         readerIndex = 0
         writerIndex = 0
-        if (shared || borrowed) leaveArray()
+        if (sharedOrBorrowed) leaveArray()
     }
 
     /** Move unread data to the front, reclaiming already-read space (into a fresh array if shared). */
     fun discardReadBytes() {
         if (readerIndex == 0) return
-        if (shared || borrowed) { moveTo(allocate(maxOf(array.size, readableBytes))); return }
+        if (sharedOrBorrowed) { moveTo(allocate(maxOf(array.size, readableBytes), null), null); return }
         array.copyInto(array, 0, readerIndex, writerIndex)
         writerIndex -= readerIndex
         readerIndex = 0
@@ -133,9 +138,11 @@ class Buffer private constructor(
      * Give a pooled buffer's array back if nothing is left to read, so a connection parked in a
      * read holds no memory. Drivers call this before parking; a no-op for unpooled buffers.
      */
-    fun releaseIfIdle() {
-        if (!pooled || readerIndex != writerIndex || array.isEmpty() || shared || borrowed) return
-        BufferPool.release(array)
+    fun releaseIfIdle() = releaseIfIdle(null)
+
+    internal fun releaseIfIdle(pool: BufferPool?) {
+        if (mode != POOLED || readerIndex != writerIndex || array.isEmpty()) return
+        (pool ?: BufferPool.current).release(array)
         array = EMPTY_ARRAY
         readerIndex = 0; writerIndex = 0
     }
@@ -143,8 +150,10 @@ class Buffer private constructor(
     // ---- direct I/O (fill/drain the backing memory in place, no intermediate copy) ----
 
     /** Ensure at least [min] writable bytes and return the writable capacity now available. */
-    fun reserve(min: Int): Int {
-        ensureWritable(min)
+    fun reserve(min: Int): Int = reserve(min, null)
+
+    internal fun reserve(min: Int, pool: BufferPool?): Int {
+        ensureWritable(min, pool)
         return array.size - writerIndex
     }
 
@@ -164,73 +173,79 @@ class Buffer private constructor(
     }
 
     /** Consume [n] readable bytes drained directly from the backing array. */
-    fun consume(n: Int) {
+    fun consume(n: Int) = consume(n, null)
+
+    internal fun consume(n: Int, pool: BufferPool?) {
         require(n in 0..readableBytes)
         readerIndex += n
-        resetIfDrained()
+        resetIfDrained(pool)
     }
 
-    private fun resetIfDrained() {
+    private fun resetIfDrained(pool: BufferPool?) {
         if (readerIndex != writerIndex) return
         readerIndex = 0
         writerIndex = 0
-        if (pooled || shared || borrowed) drainedSlow()
+        if (mode != 0) drainedSlow(pool)
     }
 
-    private fun drainedSlow() {
-        if (shared || borrowed) leaveArray()
-        else if (array.isNotEmpty()) { BufferPool.release(array); array = EMPTY_ARRAY }
+    private fun drainedSlow(pool: BufferPool?) {
+        if (sharedOrBorrowed) leaveArray()
+        else if (array.isNotEmpty()) { (pool ?: BufferPool.current).release(array); array = EMPTY_ARRAY }
     }
 
     /** Stop using a shared or borrowed array (never pooled); the next write takes a fresh one. Buffer must be empty. */
     private fun leaveArray() {
         array = EMPTY_ARRAY
-        shared = false
-        borrowed = false
+        mode = mode and POOLED
     }
 
-    private fun allocate(min: Int): ByteArray =
-        if (pooled) BufferPool.acquire(min) else ByteArray(min)
+    private fun allocate(min: Int, pool: BufferPool?): ByteArray =
+        if (mode and POOLED != 0) (pool ?: BufferPool.current).acquire(min) else ByteArray(min)
 
     /** Copy the unread bytes into [dst] and switch to it, releasing the old array when it is ours alone. */
-    private fun moveTo(dst: ByteArray) {
+    private fun moveTo(dst: ByteArray, pool: BufferPool?) {
         val n = readableBytes
         array.copyInto(dst, 0, readerIndex, writerIndex)
-        if (pooled && !shared && !borrowed && array.isNotEmpty()) BufferPool.release(array)
+        if (mode == POOLED && array.isNotEmpty()) (pool ?: BufferPool.current).release(array)
         array = dst
         readerIndex = 0
         writerIndex = n
-        shared = false
-        borrowed = false
+        mode = mode and POOLED
     }
 
-    private fun ensureWritable(length: Int) {
+    private fun ensureWritable(length: Int, pool: BufferPool?) {
         // Past writerIndex is ours even when slices share the array (they only cover read space).
-        if (!borrowed && writerIndex + length <= array.size) return
+        if (writerIndex + length <= array.size && mode and BORROWED == 0) return
+        growOrMove(length, pool)
+    }
+
+    private fun growOrMove(length: Int, pool: BufferPool?) {
         if (array.isEmpty()) {                  // nothing held (pooled, or left a shared array)
-            array = allocate(maxOf(firstCapacity, length))
+            array = allocate(maxOf(firstCapacity, length), pool)
             return
         }
-        if (readerIndex > 0 && !shared && !borrowed) {
+        if (readerIndex > 0 && !sharedOrBorrowed) {
             discardReadBytes()
             if (writerIndex + length <= array.size) return
         }
         val need = readableBytes + length
         var newCapacity = maxOf(array.size, 16)
         while (newCapacity < need) newCapacity *= 2
-        moveTo(allocate(newCapacity))
+        moveTo(allocate(newCapacity, pool), pool)
     }
 
     companion object {
         const val DEFAULT_CAPACITY = 1024
+        private const val POOLED = 1
+        private const val SHARED = 2
+        private const val BORROWED = 4
         private val EMPTY_ARRAY = ByteArray(0)
 
         /** A read-only buffer over [src]'s bytes without copying (for vectored writes of slices). */
         internal fun wrap(src: Bytes): Buffer {
-            val b = Buffer(src.array, pooled = false, firstCapacity = DEFAULT_CAPACITY)
+            val b = Buffer(src.array, BORROWED, DEFAULT_CAPACITY)
             b.readerIndex = src.offset
             b.writerIndex = src.offset + src.size
-            b.borrowed = true
             return b
         }
     }

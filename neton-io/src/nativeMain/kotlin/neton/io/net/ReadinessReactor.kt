@@ -164,14 +164,14 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         ensureFd(fd)
         while (true) {
             // Parking: a pooled, empty buffer gives its array back first (idle connections hold none, SPEC §23.7).
-            if (persistent[fd] && !readyRead[fd]) { dst.releaseIfIdle(); waitReadable(fd); continue }
+            if (persistent[fd] && !readyRead[fd]) { dst.releaseIfIdle(bufferPool); waitReadable(fd); continue }
             if (servedRound[fd] == round) {
                 deferToNextRound(fd)
                 // A deferred reader is not in a waiter slot, so cancellation is checked here.
                 kotlin.coroutines.coroutineContext[Job]?.let { if (!it.isActive) throw it.getCancellationException() }
                 continue
             }
-            val cap = dst.reserve(chunk)                 // may replace the backing array: pin after
+            val cap = dst.reserve(chunk, bufferPool)     // may replace the backing array: pin after
             val n = recvPinned(fd, pinFor(fd, dst.backingArray()), dst.writerIndex(), cap)
             stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
             when {
@@ -180,7 +180,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                 // arrived meanwhile without a poll round; the EAGAIN recv it costs is cheap.
                 n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; return n }
                 n == EOF_RESULT -> return -1
-                n == WOULD_BLOCK -> { readyRead[fd] = false; dst.releaseIfIdle(); waitReadable(fd) }
+                n == WOULD_BLOCK -> { readyRead[fd] = false; dst.releaseIfIdle(bufferPool); waitReadable(fd) }
                 else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
             }
         }
@@ -193,7 +193,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val n = sendPinned(fd, pinFor(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
             stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
             when {
-                n >= 0 -> { src.consume(n); total += n }
+                n >= 0 -> { src.consume(n, bufferPool); total += n }
                 n == WOULD_BLOCK -> waitWritable(fd)
                 else -> { val e = lastSocketError(); throw IoException("write failed: ${errnoMessage(e)}", e) }
             }
@@ -236,8 +236,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     override suspend fun awaitConnect(fd: Int) { ensureFd(fd); waitWritable(fd) }
 
     override fun runUntil(root: Job) {
-        ensureFd(wakeReadFd)
-        poller.armRead(wakeReadFd)
+        val wakeFd = wakeReadFd                     // read once: the property is a lazy (SPEC §23.1)
+        ensureFd(wakeFd)
+        poller.armRead(wakeFd)
         while (!root.isCompleted) {
             absorbExternal()
             fireTimers()
@@ -247,7 +248,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val timeout = if (hasTasks() || deferredCount > 0) 0 else nextTimerMillis()
             var woke = false
             val n = poller.poll(timeout) { fd, readable, writable ->
-                if (fd == wakeReadFd) { woke = true; return@poll }
+                if (fd == wakeFd) { woke = true; return@poll }
                 if (fd >= persistent.size) return@poll   // never registered here (cannot happen; be safe)
                 if (readable) {
                     // Persistent fds: record the edge *before* resuming, so the resumed read() sees
@@ -261,7 +262,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                     if (w != null) { writeWaiters[fd] = null; enqueueResume(w) }
                 }
             }
-            if (woke) { onWake(); poller.armRead(wakeReadFd) }
+            if (woke) { onWake(); poller.armRead(wakeFd) }
             countPoll(timeout == 0, n)
             // New round: readers deferred in the last one get their turn now (SPEC §19.5).
             round++

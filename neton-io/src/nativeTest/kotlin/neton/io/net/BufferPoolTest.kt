@@ -21,7 +21,7 @@ class BufferPoolTest {
 
     @Test
     fun pooledBufferTakesAnArrayOnlyWhileItHoldsData() {
-        BufferPool.clear()
+        BufferPool.current.clear()
         val b = Buffer(pooled = true)
         assertEquals(0, b.capacity, "no array before the first write")
         b.writeBytes(bytes(100))
@@ -29,37 +29,37 @@ class BufferPoolTest {
         val first = b.backingArray()
         b.skip(100)                                        // drained: the array goes back
         assertEquals(0, b.capacity)
-        assertEquals(1, BufferPool.returned)
+        assertEquals(1, BufferPool.current.returned)
         b.writeByte(1)
         assertTrue(b.backingArray() === first, "the same array comes back (LIFO)")
-        assertEquals(1, BufferPool.hits)
+        assertEquals(1, BufferPool.current.hits)
     }
 
     @Test
     fun growthMovesUpAClassAndReturnsTheOldArray() {
-        BufferPool.clear()
+        BufferPool.current.clear()
         val b = Buffer(pooled = true)
         val data = bytes(10_000)
         b.writeBytes(data, 0, 1000)
         b.writeBytes(data, 1000, 9000)                     // 2 KiB -> 16 KiB
         assertEquals(16 * 1024, b.capacity)
-        assertTrue(BufferPool.returned >= 1, "outgrown array returned")
+        assertTrue(BufferPool.current.returned >= 1, "outgrown array returned")
         assertContentEquals(data, b.readAll())
     }
 
     @Test
     fun oversizedArraysAreNotCached() {
-        BufferPool.clear()
+        BufferPool.current.clear()
         val b = Buffer(pooled = true)
         b.writeBytes(bytes(200_000))
         b.skip(200_000)
-        assertEquals(0, BufferPool.cachedBytesNow)
-        assertTrue(BufferPool.dropped >= 1)
+        assertEquals(0, BufferPool.current.cachedBytesNow)
+        assertTrue(BufferPool.current.dropped >= 1)
     }
 
     @Test
     fun releaseIfIdleOnlyReleasesAnEmptyBuffer() {
-        BufferPool.clear()
+        BufferPool.current.clear()
         val b = Buffer(pooled = true)
         b.reserve(10)
         b.releaseIfIdle()
@@ -76,7 +76,7 @@ class BufferPoolTest {
     @Test
     fun slicesStayIntactWhateverTheBufferDoesNext() {
         for (pooled in listOf(false, true)) {
-            BufferPool.clear()
+            BufferPool.current.clear()
             val b = Buffer(64, pooled = pooled)
             val src = bytes(3000, seed = 1)
             b.writeBytes(src, 0, 40)

@@ -17,16 +17,29 @@ object BufferPoolConfig {
 
 /**
  * Per-thread cache of byte arrays in power-of-two size classes from 2 KiB to 64 KiB (SPEC §23.7).
- * One instance per thread, so no locking: an array released on another thread than the one that
- * acquired it simply joins that thread's cache. Larger requests are allocated and never cached.
+ * One instance per thread ([current]), so no locking: an array released on another thread than the
+ * one that acquired it simply joins that thread's cache. Larger requests are allocated and never
+ * cached. Reactors look their thread's pool up once and pass it on their hot paths.
  */
-@kotlin.native.concurrent.ThreadLocal
-object BufferPool {
-    const val MIN_CLASS_SHIFT = 11           // 2 KiB
-    const val MAX_CLASS_SHIFT = 16           // 64 KiB
-    const val MIN_SIZE = 1 shl MIN_CLASS_SHIFT
-    const val MAX_SIZE = 1 shl MAX_CLASS_SHIFT
-    private const val CLASSES = MAX_CLASS_SHIFT - MIN_CLASS_SHIFT + 1
+class BufferPool internal constructor() {
+    companion object {
+        const val MIN_CLASS_SHIFT = 11           // 2 KiB
+        const val MAX_CLASS_SHIFT = 16           // 64 KiB
+        const val MIN_SIZE = 1 shl MIN_CLASS_SHIFT
+        const val MAX_SIZE = 1 shl MAX_CLASS_SHIFT
+        private const val CLASSES = MAX_CLASS_SHIFT - MIN_CLASS_SHIFT + 1
+
+        /** The calling thread's pool. */
+        val current: BufferPool get() = threadPool
+
+        /** Smallest size class holding [min] bytes, or [min] itself above [MAX_SIZE]. */
+        fun sizeFor(min: Int): Int {
+            if (min > MAX_SIZE) return min
+            var s = MIN_SIZE
+            while (s < min) s = s shl 1
+            return s
+        }
+    }
 
     private val stacks = Array(CLASSES) { arrayOfNulls<ByteArray>(0) }
     private val counts = IntArray(CLASSES)
@@ -42,14 +55,6 @@ object BufferPool {
     var returned = 0L; private set
     var dropped = 0L; private set
     val cachedBytesNow: Int get() = cachedBytes
-
-    /** Smallest size class holding [min] bytes, or [min] itself above [MAX_SIZE]. */
-    fun sizeFor(min: Int): Int {
-        if (min > MAX_SIZE) return min
-        var s = MIN_SIZE
-        while (s < min) s = s shl 1
-        return s
-    }
 
     /** An array of at least [min] bytes (exactly [sizeFor] bytes); contents are unspecified. */
     fun acquire(min: Int): ByteArray {
@@ -96,3 +101,6 @@ object BufferPool {
     private fun classOf(min: Int): Int =
         if (min <= MIN_SIZE) 0 else (32 - (min - 1).countLeadingZeroBits()) - MIN_CLASS_SHIFT
 }
+
+@kotlin.native.concurrent.ThreadLocal
+private val threadPool = BufferPool()
