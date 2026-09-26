@@ -1,0 +1,288 @@
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 6b9b6ce133a8e382d9e2f3f6c89f56f0  echoServer-v34.kexe
+v34pool-epoll secs=5 requests=154106 Ir=524243585
+v34pool-epoll secs=15 requests=479455 Ir=1627611161
+v34nopool-epoll secs=5 requests=159144 Ir=539119797
+v34nopool-epoll secs=15 requests=481215 Ir=1627041096
+v34pool-iouring secs=5 requests=171556 Ir=789504631
+v34pool-iouring secs=15 requests=509507 Ir=2331064336
+v34nopool-iouring secs=5 requests=168324 Ir=759772056
+v34nopool-iouring secs=15 requests=533377 Ir=2440774099
+# M: idle memory, 1 reactor, 1000 connections echoed once then idle
+nopool-epoll 1000 128 rss_kb=12236 base_kb=6988 delta_kb=5248
+pool-epoll 1000 128 rss_kb=9216 base_kb=7040 delta_kb=2176
+nopool-epoll 1000 16384 rss_kb=37572 base_kb=6980 delta_kb=30592
+pool-epoll 1000 16384 rss_kb=9868 base_kb=6924 delta_kb=2944
+nopool-iouring 1000 128 rss_kb=16156 base_kb=7328 delta_kb=8828
+pool-iouring 1000 128 rss_kb=15208 base_kb=7404 delta_kb=7804
+nopool-iouring 1000 16384 rss_kb=33636 base_kb=7396 delta_kb=26240
+pool-iouring 1000 16384 rss_kb=16724 base_kb=7380 delta_kb=9344
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 d329c955b9ddb401a617aad114f4ad3e  echoServer-v33.kexe
+v33pool-epoll secs=5 requests=144920 Ir=531887067
+v33pool-epoll secs=15 requests=424210 Ir=1553661716
+v33nopool-epoll secs=5 requests=150449 Ir=509908610
+v33nopool-epoll secs=15 requests=478056 Ir=1618432112
+v33pool-iouring secs=5 requests=158312 Ir=761450321
+v33pool-iouring secs=15 requests=465024 Ir=2225273691
+v33nopool-iouring secs=5 requests=173762 Ir=789915009
+v33nopool-iouring secs=15 requests=542140 Ir=2465413073
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 2a67d018038d98dddcdeae579e162948  echoServer-v30.kexe
+v30pool-epoll secs=5 requests=143472 Ir=539327948
+v30pool-epoll secs=15 requests=417444 Ir=1564927645
+v30nopool-epoll secs=5 requests=152320 Ir=536583591
+v30nopool-epoll secs=15 requests=465231 Ir=1636463304
+v30pool-iouring secs=5 requests=158675 Ir=781593132
+v30pool-iouring secs=15 requests=478745 Ir=2348206968
+v30nopool-iouring secs=5 requests=169420 Ir=791933593
+v30nopool-iouring secs=15 requests=522784 Ir=2449203662
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 fe2f45f5cb0b0d47582cd0babe91b52e  echoServer-v31.kexe
+v31pool-epoll secs=5 requests=136710 Ir=505052893
+v31pool-epoll secs=15 requests=435364 Ir=1606925501
+v31nopool-epoll secs=5 requests=161392 Ir=547562530
+v31nopool-epoll secs=15 requests=463859 Ir=1570161026
+v31pool-iouring secs=5 requests=148875 Ir=728544671
+v31pool-iouring secs=15 requests=467555 Ir=2299195198
+v31nopool-iouring secs=5 requests=173091 Ir=797435552
+v31nopool-iouring secs=15 requests=539935 Ir=2500267529
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 2a67d018038d98dddcdeae579e162948  echoServer-v30.kexe
+v30pool-epoll secs=5 requests=143472 Ir=539327948
+v30pool-epoll secs=15 requests=417444 Ir=1564927645
+v30nopool-epoll secs=5 requests=152320 Ir=536583591
+v30nopool-epoll secs=15 requests=465231 Ir=1636463304
+v30pool-iouring secs=5 requests=158675 Ir=781593132
+v30pool-iouring secs=15 requests=478745 Ir=2348206968
+v30nopool-iouring secs=5 requests=169420 Ir=791933593
+v30nopool-iouring secs=15 requests=522784 Ir=2449203662
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 63e1e0f35cb305da246d61e6cb359d07  echoServer-v32.kexe
+v32pool-epoll secs=5 requests=142166 Ir=525382678
+v32pool-epoll secs=15 requests=422845 Ir=1559537279
+v32nopool-epoll secs=5 requests=154639 Ir=523781835
+v32nopool-epoll secs=15 requests=467707 Ir=1583739742
+v32pool-iouring secs=5 requests=154029 Ir=747465776
+v32pool-iouring secs=15 requests=467053 Ir=2253622947
+v32nopool-iouring secs=5 requests=172553 Ir=782445636
+v32nopool-iouring secs=15 requests=532089 Ir=2430959066
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 2a67d018038d98dddcdeae579e162948  echoServer-v30.kexe
+v30pool-epoll secs=5 requests=143472 Ir=539327948
+v30pool-epoll secs=15 requests=417444 Ir=1564927645
+v30nopool-epoll secs=5 requests=152320 Ir=536583591
+v30nopool-epoll secs=15 requests=465231 Ir=1636463304
+v30pool-iouring secs=5 requests=158675 Ir=781593132
+v30pool-iouring secs=15 requests=478745 Ir=2348206968
+v30nopool-iouring secs=5 requests=169420 Ir=791933593
+v30nopool-iouring secs=15 requests=522784 Ir=2449203662
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 fe2f45f5cb0b0d47582cd0babe91b52e  echoServer-v31.kexe
+v31pool-epoll secs=5 requests=136710 Ir=505052893
+v31pool-epoll secs=15 requests=435364 Ir=1606925501
+v31nopool-epoll secs=5 requests=161392 Ir=547562530
+v31nopool-epoll secs=15 requests=463859 Ir=1570161026
+v31pool-iouring secs=5 requests=148875 Ir=728544671
+v31pool-iouring secs=15 requests=467555 Ir=2299195198
+v31nopool-iouring secs=5 requests=173091 Ir=797435552
+v31nopool-iouring secs=15 requests=539935 Ir=2500267529
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done
+linuxX64 iouring tests=68 failures=0
+linuxX64 epoll tests=68 failures=0
+linuxX64 polling tests=68 failures=0
+# host=service md5 2a67d018038d98dddcdeae579e162948  echoServer-v30.kexe
+v30pool-epoll secs=5 requests=143472 Ir=539327948
+v30pool-epoll secs=15 requests=417444 Ir=1564927645
+v30nopool-epoll secs=5 requests=152320 Ir=536583591
+v30nopool-epoll secs=15 requests=465231 Ir=1636463304
+v30pool-iouring secs=5 requests=158675 Ir=781593132
+v30pool-iouring secs=15 requests=478745 Ir=2348206968
+v30nopool-iouring secs=5 requests=169420 Ir=791933593
+v30nopool-iouring secs=15 requests=522784 Ir=2449203662
+# done
+# host=service valgrind=valgrind-3.26.0
+v25-epoll secs=5 requests=155558 Ir=521120216
+v25-epoll secs=15 requests=462951 Ir=1548248324
+v27-epoll secs=5 requests=143928 Ir=549795252
+v27-epoll secs=15 requests=433626 Ir=1654824173
+v29pool-epoll secs=5 requests=130243 Ir=534057824
+v29pool-epoll secs=15 requests=395403 Ir=1619080124
+v29nopool-epoll secs=5 requests=142360 Ir=547974431
+v29nopool-epoll secs=15 requests=433329 Ir=1665694279
+v25-iouring secs=5 requests=176850 Ir=794562936
+v25-iouring secs=15 requests=528798 Ir=2358725785
+v27-iouring secs=5 requests=155178 Ir=798701227
+v27-iouring secs=15 requests=451833 Ir=2326734645
+v29pool-iouring secs=5 requests=137324 Ir=747573310
+v29pool-iouring secs=15 requests=425321 Ir=2343210878
+v29nopool-iouring secs=5 requests=151175 Ir=784390853
+v29nopool-iouring secs=15 requests=448375 Ir=2327974738
+# done

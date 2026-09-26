@@ -48,8 +48,8 @@
 ## §23 补齐功能差距（用户确认 1–7；顺序 23.5 → 23.3 → 23.2 → 23.4 → 23.6 → 23.7 → 23.1）
 - [x] 23.5 SocketOptions（listen / listenGroup / connect），getsockopt 读回测试（macOS 两驱动 38/38；153 三驱动 39/39，连接超时用例真实执行）
 - [x] 23.3 writev（sendmsg / IORING_OP_SENDMSG / WSASend）+ shutdownOutput，测试（macOS 两驱动 42/42；153 三驱动 43/43，含 io_uring SENDMSG）
-- [x] 23.2 计时轮 + 读/写/空闲超时 + 连接超时 + 帧读取速率 + closeGracefully + Framed.feed/批量 flush + io_uring 读侧反压，测试（macOS 两驱动 50/50）；153 测试与成对测量见下
-- [ ] 23.4 maxConnections / pause / resume / shutdown(graceful) + SO_REUSEPORT 接收模式，测试 + 153 成对（吞吐与 Jain）
-- [ ] 23.6 Unix 域套接字（POSIX + Windows），测试 + 153 与 TCP 回环对比
-- [ ] 23.7 BufferPool + 池化 Buffer + Bytes 零拷贝切片，测试 + 内存与成对测量
-- [ ] 23.1 IocpReactor + 可覆盖唤醒，推 CI（结果读取待令牌）
+- [x] 23.2 计时轮 + 读/写/空闲超时 + 连接超时 + 帧读取速率 + closeGracefully + Framed.feed/批量 flush + io_uring 读侧反压，测试（macOS 两驱动 50/50；153 三驱动 51/51）；流水线深度 16 批量 flush ×3.6（epoll）/ ×4.8（io_uring）。热路径：cachegrind 发现 +14–16% 用户态指令，修复后 +1.1%（epoll）/ +3.6%（io_uring）（docs/benchmarks/2026-09-26-gap-closing.md）
+- [x] 23.4 maxConnections / pause / resume / shutdown(graceful) + SO_REUSEPORT 接收模式，测试（macOS 54/54、Linux 三驱动 55/55、Android、iOS）；153 成对 ReusePort ≈ Handoff（0.98–1.02），默认保持 Handoff
+- [x] 23.6 Unix 域套接字（POSIX + Windows），测试（Linux 含抽象命名空间；Android shell 不允许 socket 文件，相应用例跳过）；153 上比 TCP 回环快 1.2–1.64 倍
+- [x] 23.7 BufferPool + 池化 Buffer + Bytes 零拷贝切片，测试；1000 空闲连接 16 KiB：epoll 30.6 MB → 2.9 MB；池化后指令数与不池化相当（+1.5% / +2.6% vs v25）
+- [ ] 23.1 IocpReactor + 可覆盖唤醒：已实现、mingwX64 编译链接通过、已推 ci/windows-validation；**Windows 上运行结果未验证**（GitHub API 仍 404，需查看 Actions 页面的 Windows IOCP / WSAPoll 任务）

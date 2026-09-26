@@ -688,6 +688,12 @@ IOCP 是 Windows 上的完成型 I/O，与 io_uring 同属一类，沿用 `Uring
 `IocpReactor`（mingwMain），默认驱动；`NETON_IO_DRIVER=wsapoll` 回退。`Reactor` 的跨线程唤醒改为可覆盖（`wakeup()`），IOCP 用
 `PostQueuedCompletionStatus`，唤醒管道改为惰性创建。验收：CI 上 Windows 的 IOCP 与 WSAPoll 两个任务全部测试通过。
 **限制**：只能通过 CI 验证，结果需要仓库 API 访问（令牌问题待用户处理）或用户查看 Actions 页面。
+**实现记录（2026-09-26）**：`IocpReactor` 已实现并推到 `ci/windows-validation`（C 垫片 `winshim.def` 封装 OVERLAPPED、AcceptEx、GetQueuedCompletionStatusEx，
+Kotlin 只传基本类型）。与设计的差异：
+- connect 未用 ConnectEx（需要重构 `tcpConnectAddr` 的发起方式），完成检测为零超时 WSAPoll + 1→10 ms 退避；建连时延最多多 10 ms，稳态收发不受影响。
+- accept 先试一次非阻塞 `accept()`（积压中已有连接时不发重叠操作），否则 AcceptEx；AcceptEx 被拒（AF_UNIX）时退回轮询 `accept()`。
+- 公平规则只约束"立即完成"（skip-on-success）的读：等完成包的读本来就跨轮，不再额外推迟。
+- 本机无法运行（无 Windows、无 Wine），mingwX64 编译与测试二进制链接通过；**Windows 上的运行结果未验证**，需要查看 Actions 页面的 "Windows IOCP" 与 "Windows WSAPoll" 两个任务。
 
 ### 23.2 连接层：超时与反压
 - **计时轮**（`Reactor` 内，与驱动无关）：分层级的哈希计时轮，精度 10 ms；流只记录截止时间，活动时只改字段（O(1)，无堆操作），轮到时再核对，过期才触发。
@@ -716,6 +722,10 @@ IOCP 是 Windows 上的完成型 I/O，与 io_uring 同属一类，沿用 `Uring
 - **SO_REUSEPORT 接收模式**（Linux）：每个 reactor 各自一个监听 socket、各自 accept，内核分发，无跨线程移交。`acceptMode = Handoff | ReusePort`，
   153 上成对测量吞吐与公平性，胜出者作为 Linux 默认。
 - 验收：上限、暂停/恢复、平滑停机的测试；ReusePort 的吞吐与 Jain 指数。
+- **实现记录**：连接协程直接挂在各 reactor 的作用域下，组内按 reactor 记录连接 Job（仅在本线程访问）用于停机时取消，没有另建 SupervisorJob。
+  接收槽位在 accept 之前预留（多个 ReusePort 接收循环不会超过上限），连接结束时在其所在线程释放。`close()` 会唤醒停在上限或暂停闸门上的接收循环；
+  已关闭的监听器拒绝 accept（旧实现对已关闭的 fd 号 accept 会永久挂起）。
+  153 成对结果（x4，6 轮）：ReusePort / Handoff 在 100 与 1000 连接下吞吐比 0.98–1.02、Jain 相当，**无胜出者，Linux 默认保持 Handoff**；ReusePort 作为选项保留。
 
 ### 23.5 套接字选项
 `SocketOptions(noDelay = true, keepAlive = null | KeepAlive(idleSec, intervalSec, count), sendBufferSize, receiveBufferSize, backlog = 1024,
@@ -727,6 +737,9 @@ reuseAddress = true, reusePort = false, lingerSec = null, connectTimeoutMillis =
 `listenUnix(path, options)`、`connectUnix(path)`，以及 `listenGroup` 的 Unix 版本；Linux / Android / Apple 与 Windows（10 1803+ 的 AF_UNIX）。
 `sockaddr_un` 按平台布局构造（Apple 有 `sun_len`）；Linux 支持抽象命名空间（路径以 `@` 开头）。监听前若路径是无人监听的旧 socket 文件则删除。
 验收：本机回显、路径过长报错、旧 socket 文件处理；153 上与 TCP 回环的吞吐对比。
+**实现记录**：复用 TCP 的 listen / connect / accept 路径，只有 `sockaddr_un` 布局与错误码按平台区分。旧文件处理改为"先 bind，失败才探测"：
+探测连接若打到仍在监听的进程，会出现在对方的 accept 队列里，所以只在 bind 已失败时才探测。Android 的 adb shell（SELinux）不允许在 /data/local/tmp 创建 socket 文件，
+相关测试在该环境跳过；抽象命名空间在 Android 上通过。
 
 ### 23.7 缓冲池与零拷贝
 - **`BufferPool`**：每线程一个（无锁），按 2 KB–64 KB 的 2 的幂分级缓存数组，每级数量与总字节有上限。
@@ -734,6 +747,8 @@ reuseAddress = true, reusePort = false, lingerSec = null, connectTimeoutMillis =
 - **`Bytes`**：不可变零拷贝切片（数组 + 偏移 + 长度），`Buffer.readSlice(n)` 不拷贝；被切片引用的数组标记为共享，之后 `Buffer` 需要整理或复用时改为换新数组（写时复制），
   共享数组不再回池，由 GC 回收——切片永不会被改写。`writev` 接受 `Bytes`。
 - 验收：池化后 1000 个空闲连接的内存；切片在后续读写、整理后内容不变的测试；153 上回显成对 ≥ 0.98。
+- **实现记录**：`clear()` 不归还数组（驱动可能仍持有该数组的 pin），只有读空时归还；readiness 驱动在挂起读之前归还空的池化缓冲。
+  io_uring 单发读在挂起期间把数组交给内核，不能归还（multishot 模式不占用）。空缓冲的 iovec 用空指针（池化缓冲读空后持有 0 长度数组）。
 
 ### 执行顺序
 23.5 → 23.3 → 23.2 → 23.4 → 23.6 → 23.7 → 23.1（IOCP 代码随时推 CI，验证取决于能否读取 CI 结果）。
