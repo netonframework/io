@@ -11,12 +11,7 @@ import platform.posix.POLLHUP
 import platform.posix.POLLNVAL
 import platform.posix.POLLIN
 import platform.posix.POLLOUT
-import platform.posix.getenv
 import platform.posix.pollfd
-
-/** Selected driver name from NETON_IO_DRIVER (lowercased), or null. */
-@OptIn(ExperimentalForeignApi::class)
-internal fun driverSelection(): String? = getenv("NETON_IO_DRIVER")?.toKString()?.lowercase()
 
 /**
  * Portable poll(2) [Poller]. Readiness-based like epoll/kqueue but O(n) per call; it is the

@@ -31,15 +31,11 @@
 - [ ] 公平前提下的剩余差距：×4/12 连接（0.87）、io_uring 整体（0.76–0.91）、1000 连接 p99（10–14 ms vs 7 ms）
 - [ ] 测试端口移出临时端口范围后，153 三驱动复跑
 
-## §20 全平台
-- [ ] P1 neton-io 构建矩阵：20 个目标可编译 + 链接；源码集 posix/epoll/apple/linux(io_uring)/mingw
-- [ ] P1 Windows 最小可编译（Winsock 地址/套接字 actual、WSAPoll 驱动占位）
-- [ ] P2 androidNativeArm64 测试（Pixel_9 模拟器）
+## §20 平台（收窄：macOS / Linux / Windows 必须，iOS 保留）
+- [x] P1 源码集拆分：nativeMain 只放 expect，posixMain（Linux + Apple）放 POSIX socket，linuxMain 放 epoll + io_uring；非 Windows 目标全部编译，macOS 两驱动 33/33
+- [ ] P1 mingwMain：Winsock 的 socket/地址/唤醒实现 + WSAPoll 驱动，mingwX64 可编译链接
 - [ ] P2 linuxArm64 测试（colima arm64 容器）
-- [ ] P2 iosSimulatorArm64 测试
-- [ ] P2 tvOS / watchOS 模拟器测试（需下载运行时，待用户同意）
-- [ ] P3 Windows WSAPoll 驱动打通 → IOCP 驱动（需 Windows 测试机，待用户提供）
-- [ ] msgtrans、pulsekit 跟进同一矩阵
+- [ ] P3 Windows 测试机（待用户提供）→ WSAPoll 打通 → IOCP 驱动（性能）
 
 ## §21 TLS 1.3
 - [ ] 依赖接入（native-builds libcrypto 3.6.4 + cryptography-kotlin nativebuilds provider + 自写 EVP 声明），20 目标可编译

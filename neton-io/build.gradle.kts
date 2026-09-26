@@ -5,28 +5,40 @@ repositories { mavenCentral() }
 // the reactor ship together. The packages (neton.io.bytes / codec / core / net) keep the layering
 // readable; the artifact boundary does not need to.
 //
-// Targets are the ones the reactor runs on. Windows is out until the IOCP driver exists — a
-// Windows klib carrying buffers and codecs but no I/O would be an I/O library in name only.
+// Targets (SPEC §20, narrowed 2026-09-26): required — macOS, Linux, Windows; plus iOS, which the
+// PulseKit iOS SDK already depends on. Drivers: io_uring/epoll on Linux, kqueue on Apple, IOCP on
+// Windows (WSAPoll first, for correctness).
 kotlin {
-    val macos = listOf(macosArm64(), macosX64())
     val linux = listOf(linuxX64(), linuxArm64())
-    // iOS client targets (device + simulator) reuse the appleMain kqueue reactor. No executable
-    // entry points and no io_uring (Linux-only); the transport is a library here.
+    val macos = listOf(macosArm64(), macosX64())
+    val windows = listOf(mingwX64())
     iosArm64(); iosSimulatorArm64(); iosX64()
 
-    (macos + linux).forEach { target ->
+    // POSIX sockets are shared by Linux and Apple; Windows (Winsock) has its own layer in mingwMain.
+    applyDefaultHierarchyTemplate {
+        common {
+            group("native") {
+                group("posix") { group("linux"); group("apple") }
+            }
+        }
+    }
+
+    // Desktop executables (bench servers/clients). Mobile targets ship the library only.
+    (macos + linux + windows).forEach { target ->
         target.binaries {
             // SPEC §19.2: IR inlining before codegen measured +3.2% on one core (9/12 paired rounds).
             executable("echoServer") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("preCodegenInlineThreshold", "40") }
-            // Same server, stop-the-world mark&sweep (no GC thread): bench variable for SPEC §17c.
+            executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
+        }
+    }
+    (macos + linux).forEach { target ->
+        target.binaries {
+            // Bench-only variants (SPEC §17c, §19.2).
             executable("echoServerStw") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "stwms") }
-            // Same server, no GC at all: bench-only upper bound for "what if allocation were free".
             executable("echoServerNoGc") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "noop") }
-            // SPEC §19.2 single-variable variants of the same server (bench only).
             executable("echoServerPmcs") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gc", "pmcs") }
             executable("echoServerMarkSt") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("gcMarkSingleThreaded", "true") }
             executable("echoServerInline40") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("preCodegenInlineThreshold", "40") }
-            executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
         }
     }
 

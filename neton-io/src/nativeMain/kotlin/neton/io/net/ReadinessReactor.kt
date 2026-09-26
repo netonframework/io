@@ -9,7 +9,6 @@ import kotlinx.coroutines.Job
 import neton.io.bytes.Buffer
 import neton.io.core.ClosedException
 import neton.io.core.IoException
-import platform.posix.errno
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
@@ -162,7 +161,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                 n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; return n }
                 n == EOF_RESULT -> return -1
                 n == WOULD_BLOCK -> { readyRead[fd] = false; waitReadable(fd) }
-                else -> { val e = errno; throw IoException("read failed: ${errnoMessage(e)}", e) }
+                else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
             }
         }
     }
@@ -176,7 +175,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             when {
                 n >= 0 -> { src.consume(n); total += n }
                 n == WOULD_BLOCK -> waitWritable(fd)
-                else -> { val e = errno; throw IoException("write failed: ${errnoMessage(e)}", e) }
+                else -> { val e = lastSocketError(); throw IoException("write failed: ${errnoMessage(e)}", e) }
             }
         }
         return total

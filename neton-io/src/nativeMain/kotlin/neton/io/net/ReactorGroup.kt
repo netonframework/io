@@ -9,8 +9,6 @@ import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.launch
 import neton.io.core.ClosedException
 import neton.io.core.IoStream
-import platform.posix._SC_NPROCESSORS_ONLN
-import platform.posix.sysconf
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.EmptyCoroutineContext
@@ -18,8 +16,8 @@ import kotlin.coroutines.coroutineContext
 import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 
-/** Online CPU count (sysconf), at least 1. */
-fun cpuCount(): Int = sysconf(_SC_NPROCESSORS_ONLN).toInt().coerceAtLeast(1)
+/** Online CPU count, at least 1. */
+expect fun cpuCount(): Int
 
 /**
  * One reactor per core (SPEC §16). Reactor 0 runs on the calling thread and is the acceptor;

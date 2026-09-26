@@ -1,5 +1,9 @@
 package neton.io.net
 
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.toKString
+import platform.posix.getenv
+
 /**
  * Readiness poller SPI. Backends: kqueue (Apple), epoll and poll (Linux); io_uring (Linux)
  * and IOCP (Windows) are completion-based and land as separate drivers.
@@ -35,3 +39,7 @@ internal interface Poller {
 
 /** Create the poller for this platform, honoring the NETON_IO_DRIVER selection where applicable. */
 internal expect fun createPoller(): Poller
+
+/** Selected driver name from NETON_IO_DRIVER (lowercased), or null. */
+@OptIn(ExperimentalForeignApi::class)
+internal fun driverSelection(): String? = getenv("NETON_IO_DRIVER")?.toKString()?.lowercase()

@@ -570,6 +570,10 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 
 ## 20. 全平台（2026-09-26 用户决定：Kotlin/Native 支持的平台全部要支持）
 
+> **收窄（2026-09-26，用户）**：neton-io 必须支持 **macOS、Linux、Windows**，性能优先。现有的 iOS 目标保留（PulseKit iOS SDK 经 msgtrans 依赖它，
+> 不增加工作量）；Android / tvOS / watchOS 不做。下面的 20 目标矩阵作为背景保留，已不是目标。实际目标：macosArm64、macosX64、linuxX64、linuxArm64、
+> mingwX64，以及 iosArm64、iosSimulatorArm64、iosX64。源码集：`nativeMain` → `posixMain`（Linux + Apple）→ `linuxMain`（epoll + io_uring）/ `appleMain`；`mingwMain`（Winsock + IOCP）。
+
 **目标矩阵（Kotlin/Native 2.4.0 实测）**：20 个目标——kotlinx-coroutines 1.10.2、native-builds OpenSSL 3.6.4、cryptography-kotlin 0.6.0 三者发布的集合完全一致：
 
 | 平台族 | 目标 |
