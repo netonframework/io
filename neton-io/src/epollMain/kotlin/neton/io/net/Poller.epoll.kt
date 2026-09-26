@@ -6,6 +6,7 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.ptr
 import platform.linux.EPOLLERR
 import platform.linux.EPOLLET
@@ -13,6 +14,7 @@ import platform.linux.EPOLLHUP
 import platform.linux.EPOLLIN
 import platform.linux.EPOLLONESHOT
 import platform.linux.EPOLLOUT
+import platform.linux.EPOLLRDHUP
 import platform.linux.EPOLL_CTL_ADD
 import platform.linux.EPOLL_CTL_MOD
 import platform.linux.epoll_create1
@@ -39,7 +41,7 @@ internal class EpollPoller : Poller {
 
     override fun watchRead(fd: Int) {
         edgeFds.add(fd)
-        ctl(fd, EPOLLIN.toInt() or EPOLLET.toInt())
+        ctl(fd, EPOLLIN.toInt() or EPOLLRDHUP.toInt() or EPOLLET.toInt())
     }
 
     override fun armRead(fd: Int) = arm(fd, EPOLLIN.toInt())
@@ -49,7 +51,7 @@ internal class EpollPoller : Poller {
     // instead (once); a writable edge with nobody waiting is simply ignored by the reactor.
     override fun armWrite(fd: Int) {
         if (fd in edgeFds) {
-            if (edgeWriteFds.add(fd)) ctl(fd, EPOLLIN.toInt() or EPOLLOUT.toInt() or EPOLLET.toInt())
+            if (edgeWriteFds.add(fd)) ctl(fd, EPOLLIN.toInt() or EPOLLRDHUP.toInt() or EPOLLOUT.toInt() or EPOLLET.toInt())
         } else arm(fd, EPOLLOUT.toInt())
     }
 
@@ -79,28 +81,35 @@ internal class EpollPoller : Poller {
     // epoll drops a closed fd from the set by itself; interest is armed immediately, so nothing is pending.
     override fun forget(fd: Int) { edgeFds.remove(fd); edgeWriteFds.remove(fd) }
 
-    override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int = memScoped {
-        val maxEvents = 64
-        val events = allocArray<epoll_event>(maxEvents)
+    // SPEC §24: the event array lives as long as the poller; poll() allocates nothing.
+    private val maxEvents = 64
+    private val events = nativeHeap.allocArray<epoll_event>(maxEvents)
+    private val ready = ReadyEvents(maxEvents)
+
+    override fun poll(timeoutMillis: Int): Int {
         val n = epoll_wait(epfd, events, maxEvents, timeoutMillis)
-        var count = 0
+        ready.reset()
         for (i in 0 until n) {
             val ev = events[i]
-            val fd = ev.data.fd
             val e = ev.events.toInt()
             // EPOLLERR / EPOLLHUP wake both sides (same rule as the poll(2) driver): the woken
             // recv/send/SO_ERROR reports the actual outcome. With nothing parked, a readable edge
             // only marks the fd ready and a writable one is ignored, so this is harmless.
             val err = (e and (EPOLLERR.toInt() or EPOLLHUP.toInt())) != 0
-            val readable = (e and EPOLLIN.toInt()) != 0 || err
-            val writable = (e and EPOLLOUT.toInt()) != 0 || err
-            onReady(fd, readable, writable)
-            count++
+            var f = 0
+            if ((e and EPOLLIN.toInt()) != 0 || err) f = f or READY_READ
+            if ((e and EPOLLOUT.toInt()) != 0 || err) f = f or READY_WRITE
+            if (err || (e and EPOLLRDHUP.toInt()) != 0) f = f or READY_HUP
+            ready.add(ev.data.fd, f)
         }
-        count
+        return ready.count
     }
 
+    override fun readyFd(i: Int): Int = ready.fds[i]
+    override fun readyFlags(i: Int): Int = ready.flags[i]
+
     override fun close() {
+        nativeHeap.free(events.rawValue)
         close(epfd)
     }
 }

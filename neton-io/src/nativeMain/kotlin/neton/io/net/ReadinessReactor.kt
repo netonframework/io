@@ -3,6 +3,7 @@ package neton.io.net
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.pin
+import kotlinx.cinterop.toKString
 import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -72,6 +73,11 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private var sweepEpoch = 1
     private var roundsSinceSweep = 0
     private var idleArrays = false          // some parked read may hold an idle pooled array
+    // The last event for the fd carried EOF / hang-up: its FIN may already be in, with no edge to follow.
+    private var peerClosed = BooleanArray(64)
+    // SPEC §24 A/B (NETON_IO_SHORT_READ=1): after a short recv an edge-triggered fd waits for its next
+    // edge instead of a recv that returns EAGAIN — unless the peer closed (then EOF must still be read).
+    private val shortReadRule: Boolean = platform.posix.getenv("NETON_IO_SHORT_READ")?.toKString() == "1"
 
     private fun ensureFd(fd: Int) {
         if (fd < persistent.size) return
@@ -87,6 +93,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         persistent = persistent.copyOf(n); readyRead = readyRead.copyOf(n)
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
         wPinnedArrays = wPinnedArrays.copyOf(n); wPins = wPins.copyOf(n); parkEpoch = parkEpoch.copyOf(n)
+        peerClosed = peerClosed.copyOf(n)
     }
 
     private fun pinFor(fd: Int, array: ByteArray): Pinned<ByteArray> {
@@ -209,7 +216,11 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         return when {
             // Deliberately no short-read rule (SPEC §17b, rejected): the ready flag stays set after a
             // successful recv, so the next read() picks up data that arrived meanwhile without a poll.
-            n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; sizer.onRead(n); n }
+            n > 0 -> {
+                dst.commitWrite(n); servedRound[fd] = round; sizer.onRead(n)
+                if (shortReadRule && n < cap && persistent[fd] && !peerClosed[fd]) readyRead[fd] = false
+                n
+            }
             n == EOF_RESULT -> -1
             n == WOULD_BLOCK -> { readyRead[fd] = false; RECV_WAIT }
             else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
@@ -338,17 +349,21 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val sweepWait = idleArrays && (timeout < 0 || timeout > IDLE_SWEEP_MS)
             if (sweepWait) timeout = IDLE_SWEEP_MS
             var woke = false
-            val n = poller.poll(timeout) { fd, readable, writable ->
-                if (fd == wakeFd) { woke = true; return@poll }
-                if (fd >= persistent.size) return@poll   // never registered here (cannot happen; be safe)
-                if (readable) {
+            val n = poller.poll(timeout)
+            for (i in 0 until n) {
+                val fd = poller.readyFd(i)
+                if (fd == wakeFd) { woke = true; continue }
+                if (fd >= persistent.size) continue       // never registered here (cannot happen; be safe)
+                val f = poller.readyFlags(i)
+                if (f and READY_HUP != 0) peerClosed[fd] = true
+                if (f and READY_READ != 0) {
                     // Persistent fds: record the edge first — it is not repeated.
                     if (persistent[fd]) readyRead[fd] = true
                     val w = readWaiters[fd]
                     if (w != null) { readWaiters[fd] = null; enqueueResume(w) }
                     if (readConts[fd] != null) completeRead(fd)
                 }
-                if (writable) {
+                if (f and READY_WRITE != 0) {
                     val w = writeWaiters[fd]
                     if (w != null) { writeWaiters[fd] = null; enqueueResume(w) }
                     if (writeConts[fd] != null) completeWrite(fd)
@@ -381,7 +396,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         finishWrite(fd, 0, ClosedException())
         forgetCancellation(fd)
         servedRound[fd] = 0
-        persistent[fd] = false; readyRead[fd] = false
+        persistent[fd] = false; readyRead[fd] = false; peerClosed[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         wPins[fd]?.unpin(); wPins[fd] = null; wPinnedArrays[fd] = null
         poller.forget(fd)

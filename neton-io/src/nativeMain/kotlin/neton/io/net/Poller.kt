@@ -29,12 +29,32 @@ internal interface Poller {
     fun forget(fd: Int)
 
     /**
-     * Block for up to [timeoutMillis] (-1 until an event, 0 to return immediately), calling
-     * [onReady] once per ready fd. Returns the number of events.
+     * Block for up to [timeoutMillis] (-1 until an event, 0 to return immediately). Returns the
+     * number of ready events; event i is [readyFd] (i) / [readyFlags] (i) until the next call.
+     * Nothing is allocated per call (SPEC §24): no callback, buffers owned by the poller.
      */
-    fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int
+    fun poll(timeoutMillis: Int): Int
+    fun readyFd(i: Int): Int
+    /** [READY_READ] | [READY_WRITE] | [READY_HUP] (peer closed or error: the event may be the last edge). */
+    fun readyFlags(i: Int): Int
 
     fun close()
+}
+
+internal const val READY_READ = 1
+internal const val READY_WRITE = 2
+internal const val READY_HUP = 4
+
+/** Ready-event storage shared by the pollers: fd and flags per event, grown on demand. */
+internal class ReadyEvents(capacity: Int = 64) {
+    var fds = IntArray(capacity); private set
+    var flags = IntArray(capacity); private set
+    var count = 0
+    fun reset() { count = 0 }
+    fun add(fd: Int, f: Int) {
+        if (count == fds.size) { fds = fds.copyOf(count * 2); flags = flags.copyOf(count * 2) }
+        fds[count] = fd; flags[count] = f; count++
+    }
 }
 
 /** Create the poller for this platform, honoring the NETON_IO_DRIVER selection where applicable. */

@@ -29,7 +29,12 @@ internal class PollPoller : Poller {
     // poll(2) has no registration: a closed fd left in the set would report POLLNVAL forever.
     override fun forget(fd: Int) { readFds.remove(fd); writeFds.remove(fd) }
 
-    override fun poll(timeoutMillis: Int, onReady: (fd: Int, readable: Boolean, writable: Boolean) -> Unit): Int {
+    private val ready = ReadyEvents()
+    override fun readyFd(i: Int): Int = ready.fds[i]
+    override fun readyFlags(i: Int): Int = ready.flags[i]
+
+    override fun poll(timeoutMillis: Int): Int {
+        ready.reset()
         val fds = IntArray(readFds.size + writeFds.size)
         var m = 0
         val union = HashSet<Int>(readFds.size + writeFds.size)
@@ -64,7 +69,7 @@ internal class PollPoller : Poller {
                 if (readable || writable) {
                     if (readable) readFds.remove(fd)
                     if (writable) writeFds.remove(fd)
-                    onReady(fd, readable, writable)
+                    ready.add(fd, (if (readable) READY_READ else 0) or (if (writable) READY_WRITE else 0) or (if (err) READY_HUP else 0))
                     count++
                 }
             }
