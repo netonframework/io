@@ -21,6 +21,19 @@ class UnixSocketTest {
         return f.incoming().first()
     }
 
+    /**
+     * Whether this environment lets us create socket files here. Android's SELinux policy forbids
+     * the adb shell domain from creating them in /data/local/tmp (bind fails with EACCES); the
+     * abstract namespace still works there.
+     */
+    private suspend fun socketFilesAllowed(test: String): Boolean {
+        val probe = "neton-uds-probe.sock"
+        return try { listenUnix(probe).close(); true } catch (e: IllegalStateException) {
+            if (e.message?.contains("errno=13") != true) throw e
+            println("SKIP $test: socket files are not allowed here (${e.message})"); false
+        }
+    }
+
     private suspend fun echoOnce(l: UnixListener) {
         val s = l.accept()
         try { val f = Framed(Io(s), LineCodec, LineCodec); f.send(f.incoming().first()) } finally { s.close() }
@@ -28,6 +41,7 @@ class UnixSocketTest {
 
     @Test
     fun echoOverASocketFile() = runReactor {
+        if (!socketFilesAllowed("echoOverASocketFile")) return@runReactor
         val path = "neton-uds-echo.sock"
         val l = listenUnix(path)
         val server = launch { echoOnce(l) }
@@ -43,11 +57,12 @@ class UnixSocketTest {
         val path = "p".repeat(SUN_PATH_SIZE)
         assertFailsWith<IllegalArgumentException> { listenUnix(path) }
         assertFailsWith<IllegalArgumentException> { connectUnix(path) }
-        listenUnix("q".repeat(90)).close()                        // long but within every platform's limit
+        if (socketFilesAllowed("tooLongPathIsRejected (bind part)")) listenUnix("q".repeat(90)).close()                        // long but within every platform's limit
     }
 
     @Test
     fun staleSocketFileIsReplacedButALiveOneIsNot() = runReactor {
+        if (!socketFilesAllowed("staleSocketFileIsReplacedButALiveOneIsNot")) return@runReactor
         val path = "neton-uds-stale.sock"
         // A "crashed" listener: its fd is closed but the socket file stays behind.
         val crashed = listenUnixServer(path, SocketOptions.Default)
@@ -81,6 +96,7 @@ class UnixSocketTest {
 
     @Test
     fun groupServesOverAUnixSocket() = runReactor {
+        if (!socketFilesAllowed("groupServesOverAUnixSocket")) return@runReactor
         val path = "neton-uds-group.sock"
         val g = listenUnixGroup(path, reactors = 2)
         val serveJob = launch {
