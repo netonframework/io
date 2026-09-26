@@ -76,16 +76,19 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     // The last event for the fd carried EOF / hang-up: its FIN may already be in, with no edge to follow.
     private var peerClosed = BooleanArray(64)
     // SPEC §24.5 short-read rule. After a short recv the next recv on an edge-triggered fd is
-    // speculative: it may find the peer's next request already there, or return EAGAIN. Per fd we
-    // remember how the last speculative recv went and skip speculating while it keeps missing
-    // (re-probing every 16th short read). Never after a hang-up event: EOF must still be read.
-    // NETON_IO_SHORT_READ: 0 never skip, 1 always skip, default auto.
+    // speculative: it may find the peer's next request already there, or return EAGAIN. The reactor
+    // (not each fd: a mix let speculating connections jump the edge queue, p99 +60 % and Jain 0.87 at
+    // 1000 connections) watches the last 256 speculative recvs and stops speculating while more than
+    // half miss, still sampling every 16th short read. Never after a hang-up event: EOF must still be
+    // read. NETON_IO_SHORT_READ: 0 never skip, 1 always skip, default auto.
     private val shortReadMode: Int = when (platform.posix.getenv("NETON_IO_SHORT_READ")?.toKString()) {
         "0" -> SHORT_OFF; "1" -> SHORT_ALWAYS; else -> SHORT_AUTO
     }
     private var specPending = BooleanArray(64)   // the next recv on the fd is speculative
-    private var specMisses = BooleanArray(64)    // its last speculative recv returned EAGAIN
-    private var shortReads = IntArray(64)
+    private var skipSpeculation = false
+    private var specSeen = 0
+    private var specMissed = 0
+    private var shortCount = 0
 
     private fun ensureFd(fd: Int) {
         if (fd < persistent.size) return
@@ -102,7 +105,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
         wPinnedArrays = wPinnedArrays.copyOf(n); wPins = wPins.copyOf(n); parkEpoch = parkEpoch.copyOf(n)
         peerClosed = peerClosed.copyOf(n)
-        specPending = specPending.copyOf(n); specMisses = specMisses.copyOf(n); shortReads = shortReads.copyOf(n)
+        specPending = specPending.copyOf(n)
     }
 
     private fun pinFor(fd: Int, array: ByteArray): Pinned<ByteArray> {
@@ -221,7 +224,12 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private fun tryRecv(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val n = recvPinned(fd, pinFor(fd, dst.backingArray()), dst.writerIndex(), cap)
-        if (specPending[fd]) { specPending[fd] = false; specMisses[fd] = n == WOULD_BLOCK }
+        if (specPending[fd]) {
+            specPending[fd] = false
+            specSeen++
+            if (n == WOULD_BLOCK) specMissed++
+            if (specSeen >= 256) { skipSpeculation = specMissed * 2 > specSeen; specSeen = 0; specMissed = 0 }
+        }
         stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
         return when {
             // Deliberately no short-read rule (SPEC §17b, rejected): the ready flag stays set after a
@@ -240,7 +248,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     /** A short recv on an edge-triggered fd: speculate on the next recv, or wait for the next edge (SPEC §24.5). */
     private fun afterShortRead(fd: Int) {
         if (peerClosed[fd]) return                          // a FIN may already be in: keep reading until EOF
-        val skip = shortReadMode == SHORT_ALWAYS || (specMisses[fd] && (++shortReads[fd] and 15) != 0)
+        val skip = shortReadMode == SHORT_ALWAYS || (skipSpeculation && (++shortCount and 15) != 0)
         if (skip) readyRead[fd] = false else specPending[fd] = true
     }
 
@@ -415,7 +423,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         forgetCancellation(fd)
         servedRound[fd] = 0
         persistent[fd] = false; readyRead[fd] = false; peerClosed[fd] = false
-        specPending[fd] = false; specMisses[fd] = false; shortReads[fd] = 0
+        specPending[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         wPins[fd]?.unpin(); wPins[fd] = null; wPinnedArrays[fd] = null
         poller.forget(fd)
