@@ -174,10 +174,12 @@ class Buffer private constructor(
         if (readerIndex != writerIndex) return
         readerIndex = 0
         writerIndex = 0
-        when {
-            shared || borrowed -> leaveArray()
-            pooled && array.isNotEmpty() -> { BufferPool.release(array); array = EMPTY_ARRAY }
-        }
+        if (pooled || shared || borrowed) drainedSlow()
+    }
+
+    private fun drainedSlow() {
+        if (shared || borrowed) leaveArray()
+        else if (array.isNotEmpty()) { BufferPool.release(array); array = EMPTY_ARRAY }
     }
 
     /** Stop using a shared or borrowed array (never pooled); the next write takes a fresh one. Buffer must be empty. */

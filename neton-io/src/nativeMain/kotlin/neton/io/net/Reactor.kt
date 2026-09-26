@@ -146,6 +146,16 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     // streams stamp activity and deadlines with this cached value, so the hot path reads no clock.
     internal var cachedNowMs: Long = 0L
         private set
+
+    /**
+     * The clock for stamping stream deadlines and activity: the per-round cached value while the loop
+     * keeps it fresh (something is timed), otherwise read now — the first deadline set on an idle
+     * reactor must not be computed from a stale clock.
+     */
+    internal fun timeoutClockMs(): Long {
+        if (wheel.size == 0 && timers.isEmpty()) cachedNowMs = reactorNowMs()
+        return cachedNowMs
+    }
     internal val wheel = TimerWheel()
 
     /**
@@ -261,6 +271,9 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     }
 
     protected fun fireTimers() {
+        // The clock is read once per round, and only while something is timed (SPEC §23.2): with no
+        // timers and no stream deadlines the loop reads no clock at all.
+        if (wheel.size == 0 && timers.isEmpty()) return
         cachedNowMs = reactorNowMs()
         if (wheel.size > 0) wheel.tick(cachedNowMs)
         if (timers.isEmpty()) return
@@ -429,7 +442,7 @@ internal class ReactorStream(
         readTimeoutMs = readTimeoutMillis.coerceAtLeast(0); writeTimeoutMs = writeTimeoutMillis.coerceAtLeast(0)
         idleTimeoutMs = idleTimeoutMillis.coerceAtLeast(0)
         if (idleTimeoutMs > 0) {
-            lastActivityMs = reactor.cachedNowMs
+            lastActivityMs = reactor.timeoutClockMs()
             reactor.wheel.schedule(this, lastActivityMs + idleTimeoutMs)
         }
     }
@@ -473,9 +486,8 @@ internal class ReactorStream(
     override suspend fun read(dst: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("read")
-        if (readTimeoutMs > 0) { readDeadline = reactor.cachedNowMs + readTimeoutMs; reactor.wheel.schedule(this, readDeadline) }
-        val n = try { reactor.read(fd, dst, readGuess) } finally { readDeadline = 0 }
-        if (idleTimeoutMs > 0) lastActivityMs = reactor.cachedNowMs
+        // No timeouts (the default): no deadline bookkeeping on the hot path (SPEC §23.2).
+        val n = if (readTimeoutMs == 0L && idleTimeoutMs == 0L) reactor.read(fd, dst, readGuess) else timedRead(dst)
         if (n >= readGuess) {
             if (readGuess < maxReadChunk) readGuess = (readGuess * 2).coerceAtMost(maxReadChunk)
             smallReads = 0
@@ -485,14 +497,28 @@ internal class ReactorStream(
         return n
     }
 
+    private suspend fun timedRead(dst: Buffer): Int {
+        if (readTimeoutMs > 0) { readDeadline = reactor.timeoutClockMs() + readTimeoutMs; reactor.wheel.schedule(this, readDeadline) }
+        val n = try { reactor.read(fd, dst, readGuess) } finally { readDeadline = 0 }
+        if (idleTimeoutMs > 0) lastActivityMs = reactor.timeoutClockMs()
+        return n
+    }
+
     private companion object { const val MIN_READ_CHUNK = 2 * 1024 }
 
+    // Without timeouts write/writev end in a tail call, so they compile without a state machine and
+    // allocate no continuation per call (SPEC §23.2: timeouts off costs nothing on the hot path).
     override suspend fun write(src: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("write")
-        if (writeTimeoutMs > 0) { writeDeadline = reactor.cachedNowMs + writeTimeoutMs; reactor.wheel.schedule(this, writeDeadline) }
+        if (writeTimeoutMs == 0L && idleTimeoutMs == 0L) return reactor.write(fd, src)
+        return timedWrite(src)
+    }
+
+    private suspend fun timedWrite(src: Buffer): Int {
+        if (writeTimeoutMs > 0) { writeDeadline = reactor.timeoutClockMs() + writeTimeoutMs; reactor.wheel.schedule(this, writeDeadline) }
         val n = try { reactor.write(fd, src) } finally { writeDeadline = 0 }
-        if (idleTimeoutMs > 0) lastActivityMs = reactor.cachedNowMs
+        if (idleTimeoutMs > 0) lastActivityMs = reactor.timeoutClockMs()
         return n
     }
 
@@ -500,9 +526,14 @@ internal class ReactorStream(
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("writev")
         require(count in 0..buffers.size) { "count $count out of 0..${buffers.size}" }
-        if (writeTimeoutMs > 0) { writeDeadline = reactor.cachedNowMs + writeTimeoutMs; reactor.wheel.schedule(this, writeDeadline) }
+        if (writeTimeoutMs == 0L && idleTimeoutMs == 0L) return reactor.writev(fd, buffers, count)
+        return timedWritev(buffers, count)
+    }
+
+    private suspend fun timedWritev(buffers: Array<Buffer>, count: Int): Long {
+        if (writeTimeoutMs > 0) { writeDeadline = reactor.timeoutClockMs() + writeTimeoutMs; reactor.wheel.schedule(this, writeDeadline) }
         val n = try { reactor.writev(fd, buffers, count) } finally { writeDeadline = 0 }
-        if (idleTimeoutMs > 0) lastActivityMs = reactor.cachedNowMs
+        if (idleTimeoutMs > 0) lastActivityMs = reactor.timeoutClockMs()
         return n
     }
 

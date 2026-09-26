@@ -3,8 +3,8 @@ package neton.io.bytes
 import kotlin.concurrent.Volatile
 
 /**
- * Settings for the per-thread [BufferPool] (SPEC §23.7). Set them before starting reactors; each
- * thread's pool reads them when it caches an array.
+ * Settings for the per-thread [BufferPool] (SPEC §23.7). Set them before starting reactors: each
+ * thread's pool reads them once, on its first use ([BufferPool.clear] re-reads them).
  */
 object BufferPoolConfig {
     /** When false, pooled buffers allocate and drop arrays like plain ones. */
@@ -31,6 +31,10 @@ object BufferPool {
     private val stacks = Array(CLASSES) { arrayOfNulls<ByteArray>(0) }
     private val counts = IntArray(CLASSES)
     private var cachedBytes = 0
+    // BufferPoolConfig read once per thread (it is set before reactors start), not on every call.
+    private var enabled = BufferPoolConfig.enabled
+    private var maxPerClass = BufferPoolConfig.maxArraysPerClass
+    private var maxBytes = BufferPoolConfig.maxBytesPerThread
 
     /** Counters for tests and diagnostics (this thread only). */
     var hits = 0L; private set
@@ -49,31 +53,32 @@ object BufferPool {
 
     /** An array of at least [min] bytes (exactly [sizeFor] bytes); contents are unspecified. */
     fun acquire(min: Int): ByteArray {
-        val size = sizeFor(min)
-        if (size > MAX_SIZE || !BufferPoolConfig.enabled) return ByteArray(size)
-        val c = classOf(size)
+        if (min > MAX_SIZE || !enabled) return ByteArray(sizeFor(min))
+        val c = classOf(min)
         val n = counts[c]
         if (n > 0) {
-            val a = stacks[c][n - 1]!!
-            stacks[c][n - 1] = null
+            val stack = stacks[c]
+            val a = stack[n - 1]!!
+            stack[n - 1] = null
             counts[c] = n - 1
-            cachedBytes -= size
+            cachedBytes -= a.size
             hits++
             return a
         }
         misses++
-        return ByteArray(size)
+        return ByteArray(MIN_SIZE shl c)
     }
 
     /** Give [array] back. Arrays that are not a size class, or over the caps, are left to the GC. */
     fun release(array: ByteArray) {
         val size = array.size
-        if (!BufferPoolConfig.enabled || size < MIN_SIZE || size > MAX_SIZE || size and (size - 1) != 0) { dropped++; return }
-        val c = classOf(size)
+        if (!enabled || size < MIN_SIZE || size > MAX_SIZE || size and (size - 1) != 0) { dropped++; return }
+        val c = size.countTrailingZeroBits() - MIN_CLASS_SHIFT
         val n = counts[c]
-        if (n >= BufferPoolConfig.maxArraysPerClass || cachedBytes + size > BufferPoolConfig.maxBytesPerThread) { dropped++; return }
-        if (n == stacks[c].size) stacks[c] = stacks[c].copyOf(maxOf(8, n * 2).coerceAtMost(BufferPoolConfig.maxArraysPerClass))
-        stacks[c][n] = array
+        if (n >= maxPerClass || cachedBytes + size > maxBytes) { dropped++; return }
+        var stack = stacks[c]
+        if (n == stack.size) { stack = stack.copyOf(maxOf(8, n * 2).coerceAtMost(maxPerClass)); stacks[c] = stack }
+        stack[n] = array
         counts[c] = n + 1
         cachedBytes += size
         returned++
@@ -81,10 +86,13 @@ object BufferPool {
 
     /** Drop every cached array (tests). */
     fun clear() {
+        enabled = BufferPoolConfig.enabled; maxPerClass = BufferPoolConfig.maxArraysPerClass; maxBytes = BufferPoolConfig.maxBytesPerThread
         for (c in 0 until CLASSES) { stacks[c] = arrayOfNulls(0); counts[c] = 0 }
         cachedBytes = 0
         hits = 0; misses = 0; returned = 0; dropped = 0
     }
 
-    private fun classOf(size: Int): Int = size.countTrailingZeroBits() - MIN_CLASS_SHIFT
+    /** Size class holding [min] (<= MAX_SIZE) bytes: ceil(log2(min)) - MIN_CLASS_SHIFT, at least 0. */
+    private fun classOf(min: Int): Int =
+        if (min <= MIN_SIZE) 0 else (32 - (min - 1).countLeadingZeroBits()) - MIN_CLASS_SHIFT
 }
