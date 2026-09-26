@@ -181,6 +181,20 @@ class Buffer private constructor(
         resetIfDrained(pool)
     }
 
+    /**
+     * The drivers' write path: consume [n] sent bytes, but a drained pooled buffer *keeps* its array —
+     * it is usually refilled at once (echo, request/response), and a read that parks returns it via
+     * [releaseIfIdle]. Saves a release/acquire pair per request (SPEC §23.7, cachegrind).
+     */
+    internal fun consumeSent(n: Int) {
+        require(n in 0..readableBytes)
+        readerIndex += n
+        if (readerIndex != writerIndex) return
+        readerIndex = 0
+        writerIndex = 0
+        if (sharedOrBorrowed) leaveArray()
+    }
+
     private fun resetIfDrained(pool: BufferPool?) {
         if (readerIndex != writerIndex) return
         readerIndex = 0

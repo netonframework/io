@@ -293,6 +293,8 @@ internal class UringReactor : Reactor() {
             if (msEof[fd]) return -1
             if (msErr[fd] != 0) { val e = msErr[fd]; msErr[fd] = 0; throw IoException("io_uring recv failed: ${errnoMessage(e)}", e) }
             if (!msArmed[fd] && !msPaused[fd]) armMultishot(fd)
+            // Parking: an empty pooled buffer gives its array back first (SPEC §23.7).
+            dst.releaseIfIdle(bufferPool)
             // The multishot op stays armed across a cancelled read; only the parked reader is woken.
             suspendCoroutineUninterceptedOrReturn<Unit> { cont ->
                 watchCancellation(fd, cont)
@@ -568,7 +570,7 @@ internal class UringReactor : Reactor() {
             val pin = pinFor(fd, src.backingArray())
             val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin, cancelOnAbort = false, isWrite = true)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
-            src.consume(res, bufferPool); total += res
+            src.consumeSent(res); total += res
         }
         return total
     }

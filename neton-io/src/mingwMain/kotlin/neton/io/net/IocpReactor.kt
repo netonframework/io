@@ -303,7 +303,7 @@ internal class IocpReactor : Reactor() {
                 neton_send(fd.toSocket(), op, pin.pinned.addressOf(at), len.toUInt(), skip)
             }
             stats?.let { it.writes++; it.writeBytes += n }
-            src.consume(n, bufferPool); total += n
+            src.consumeSent(n); total += n
         }
         return total
     }

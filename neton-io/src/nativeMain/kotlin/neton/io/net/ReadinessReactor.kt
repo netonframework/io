@@ -193,7 +193,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val n = sendPinned(fd, pinFor(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
             stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK) it.writesWouldBlock++ }
             when {
-                n >= 0 -> { src.consume(n, bufferPool); total += n }
+                n >= 0 -> { src.consumeSent(n); total += n }
                 n == WOULD_BLOCK -> waitWritable(fd)
                 else -> { val e = lastSocketError(); throw IoException("write failed: ${errnoMessage(e)}", e) }
             }

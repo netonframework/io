@@ -65,7 +65,7 @@ internal fun advanceBuffers(bufs: Array<neton.io.bytes.Buffer>, from: Int, end: 
     while (i < end && left > 0) {
         val b = bufs[i]
         val take = minOf(left, b.readableBytes.toLong()).toInt()
-        b.consume(take); left -= take
+        b.consumeSent(take); left -= take
         if (b.readableBytes == 0) i++
     }
     while (i < end && bufs[i].readableBytes == 0) i++
