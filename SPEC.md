@@ -567,3 +567,66 @@ io_uring multishot 路径本来按块精确 `reserve`，不受影响。基准 `e
 2. 记录层与所有热路径：neton-io 自己的仅声明 cinterop（只声明用到的 EVP 函数）+ 薄 Kotlin 封装（每方向常驻上下文、原地加解密）。
 3. 握手：cryptography-kotlin（`openssl3-prebuilt-nativebuilds`），与第 2 条共用同一份 libcrypto。
 4. 不需要复制 native-builds 的构建设施（vcpkg + Zig）；只有当它不提供某个库时才考虑自建。
+
+## 20. 全平台（2026-09-26 用户决定：Kotlin/Native 支持的平台全部要支持）
+
+**目标矩阵（Kotlin/Native 2.4.0 实测）**：20 个目标——kotlinx-coroutines 1.10.2、native-builds OpenSSL 3.6.4、cryptography-kotlin 0.6.0 三者发布的集合完全一致：
+
+| 平台族 | 目标 |
+|---|---|
+| Linux | linuxX64、linuxArm64 |
+| macOS | macosArm64、macosX64 † |
+| iOS | iosArm64、iosSimulatorArm64、iosX64 |
+| tvOS | tvosArm64、tvosSimulatorArm64、tvosX64 † |
+| watchOS | watchosArm64、watchosDeviceArm64、watchosSimulatorArm64、watchosArm32、watchosX64 † |
+| Windows | mingwX64 |
+| Android（Native） | androidNativeArm64、androidNativeArm32、androidNativeX64、androidNativeX86 |
+
+† 2.4.0 中已标记弃用（"将在未来版本移除"），仍支持。**不含 linuxArm32Hfp**：2.4.0 已弃用，且 kotlinx-coroutines 与 OpenSSL 都不再为它发布。
+
+**I/O 驱动**
+
+| 平台族 | 默认 | 其它 |
+|---|---|---|
+| Linux | epoll | io_uring、poll(2) |
+| Android | epoll | poll(2)；io_uring 启动时探测（应用沙箱的 seccomp 可能禁止），失败自动回退 |
+| Apple（macOS/iOS/tvOS/watchOS） | kqueue | poll(2) |
+| Windows | **IOCP**（完成型，同 io_uring 的抽象） | WSAPoll（就绪型，先用于打通正确性） |
+
+watchOS 说明：Apple 对 watchOS 应用的底层 socket 有政策限制（仅特定场景允许）；库在 watchOS 上可编译、可在系统允许处运行。
+
+**源码集层次**：`nativeMain`（反应器通用逻辑）→ `posixMain`（Linux + Android + Apple 的 POSIX socket）→ `epollMain`（Linux + Android）/ `appleMain`；`linuxMain` 仅放 io_uring；`mingwMain`（Winsock + IOCP）。
+Windows 的 SOCKET 是句柄而非小整数 fd：Windows 驱动内部用自己的连接表（小整数 id → SOCKET），对上仍是 `Int`，不改反应器 API。
+
+**验证矩阵**
+
+| 目标 | 方式 |
+|---|---|
+| macosArm64 | 本机测试 |
+| iosSimulatorArm64 | 本机 iOS 模拟器测试 |
+| tvosSimulatorArm64、watchosSimulatorArm64 | 需要下载 Xcode 的 tvOS/watchOS 模拟器运行时（待用户同意） |
+| linuxX64 | 153（三驱动） |
+| linuxArm64 | 本机 colima/Docker 的 arm64 容器 |
+| androidNativeArm64 | 本机 Android 模拟器 Pixel_9（arm64-v8a，API 36.1），adb 推送测试二进制运行 |
+| mingwX64 | **需要 Windows 测试机或 CI**（待用户提供） |
+| 其余架构变体（x64 模拟器、arm32、x86、device arm64） | 编译 + 链接 |
+
+**阶段**：P1 构建矩阵（全部目标可编译链接）→ P2 Android / Linux arm64 / iOS 模拟器测试 → P3 Windows（先 WSAPoll 打通，再 IOCP 做性能）。msgtrans、pulsekit 随后跟进同一矩阵。
+
+## 21. TLS 1.3（Kotlin 实现，性能优先；2026-09-26 用户选定方案 A）
+
+**范围（第一版）**：只做 TLS 1.3；客户端 + 服务端；密码套件 TLS_AES_128_GCM_SHA256、TLS_AES_256_GCM_SHA384、TLS_CHACHA20_POLY1305_SHA256；
+密钥交换组 x25519、secp256r1；签名 ecdsa_secp256r1_sha256、rsa_pss_rsae_sha256、ed25519（证书链中另需验 rsa_pkcs1_sha256）；SNI、ALPN、HelloRetryRequest、
+KeyUpdate、告警与 close_notify。不做 0-RTT；PSK 会话恢复放第二版；不做 TLS 1.2。
+
+**依赖（§18.5 已验证可共用一份 libcrypto）**：native-builds `openssl-libcrypto` 3.6.4；cryptography-kotlin `openssl3-prebuilt-nativebuilds` 0.6.0 用于握手。
+
+**设计**
+- **记录层（热路径）**：neton-io 自己的仅声明 EVP 绑定。每个方向一个常驻 `EVP_CIPHER_CTX`（密钥扩展只做一次），每条记录只设 nonce（`iv XOR seq`），
+  在 neton-io `Buffer` 上原地加解密、零额外分配；写侧把一次 `write` 切成 ≤ 16 KB 的记录；读侧按记录头攒齐整条记录再解密。
+- **握手**：状态机用 Kotlin 写；X25519/ECDH、签名/验签、公私钥编解码用 cryptography-kotlin；HKDF-Extract/Expand-Label 用 HMAC；握手转录哈希按需计算。
+- **X.509**：DER 解析、链构建、签名校验、有效期、SAN 主机名匹配、KeyUsage/EKU；信任锚按平台取：Linux 系统 CA 包、Apple Security.framework（`SecTrust`）、
+  Windows 证书存储、Android `/system/etc/security/cacerts`；另提供证书/公钥固定（自有服务端与 SDK 之间）。
+- **API**：`TlsStream` 实现 `IoStream`，msgtrans 与以后的 HTTP 直接叠在上面；`connectTls(host, port, config)`、`listenTls(...)`。
+
+**验收**：RFC 8448 测试向量；与 `openssl s_server/s_client`、Go `crypto/tls` 互通；性能与 geario + rustls 同机成对比较（TLS 回显，128 B / 16 KB，1/12/100 连接）；全部目标可编译，验证矩阵同 §20。
