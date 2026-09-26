@@ -29,13 +29,13 @@ class FrameReadRate(val timeoutMillis: Long, val maxTimeoutMillis: Long, val rat
  * [incoming] is a Flow, and each `emit` resumes the collector's suspend lambda, which allocates.
  */
 class Framed<In, Out>(
-    private val io: Io,
-    private val decoder: Decoder<In>,
-    private val encoder: Encoder<Out>,
+    @PublishedApi internal val io: Io,
+    @PublishedApi internal val decoder: Decoder<In>,
+    @PublishedApi internal val encoder: Encoder<Out>,
     /** Buffered output above this many bytes is flushed by [feed] itself. */
-    private val highWatermark: Int = 64 * 1024,
+    @PublishedApi internal val highWatermark: Int = 64 * 1024,
     /** Optional per-frame read rate; when set, Framed manages the stream's read timeout. */
-    private val readRate: FrameReadRate? = null,
+    @PublishedApi internal val readRate: FrameReadRate? = null,
 ) {
     /** Frame stream: read then decode; read more when a frame is incomplete; end at EOF. */
     fun incoming(): Flow<In> = flow {
@@ -59,21 +59,44 @@ class Framed<In, Out>(
     /** Write everything buffered by [feed]. */
     suspend fun flush() = writeOut()
 
-    /** Send one frame: encode, write, flush. */
-    suspend fun send(item: Out) {
+    /**
+     * Send one frame: encode, write, flush. Inline (SPEC §24): inside the caller's loop it adds no
+     * coroutine frame, so sending allocates nothing.
+     */
+    suspend inline fun send(item: Out) {
         feedOut(item)
         writeOut()
+    }
+
+    /**
+     * Pull-style read loop (SPEC §24): call [onFrame] for every frame until EOF. Inline, so the loop
+     * and [onFrame] run in the caller's own coroutine frame — unlike [incoming], whose Flow `emit`
+     * resumes a collector lambda (an allocation per frame).
+     */
+    suspend inline fun receiveEach(crossinline onFrame: suspend (In) -> Unit) {
+        val buf = io.readBuf
+        val rate = FrameRateTracker(readRate)
+        while (true) {
+            var item = decoder.decode(buf)
+            while (item != null) {
+                rate.frameDone()
+                onFrame(item)
+                item = decoder.decode(buf)
+            }
+            buf.discardReadBytes()
+            if (!readMore(buf, rate)) break // EOF
+        }
     }
 
     // Inline bodies (SPEC §24): called from serveLoop's own loop they add no coroutine frame, so a
     // request/response costs no allocation here. A separate suspend function would allocate its
     // continuation on every call.
-    private suspend inline fun feedOut(item: Out) {
+    @PublishedApi internal suspend inline fun feedOut(item: Out) {
         encoder.encode(item, io.writeBuf)
         if (io.writeBuf.readableBytes >= highWatermark) writeOut()
     }
 
-    private suspend inline fun writeOut() {
+    @PublishedApi internal suspend inline fun writeOut() {
         val out = io.writeBuf
         if (out.readableBytes > 0) {
             io.stream.write(out)
@@ -103,7 +126,7 @@ class Framed<In, Out>(
     }
 
     /** One read, with the frame read rate applied to it; false at EOF. Inline: no frame of its own. */
-    private suspend inline fun readMore(buf: neton.io.bytes.Buffer, rate: FrameRateTracker): Boolean {
+    @PublishedApi internal suspend inline fun readMore(buf: neton.io.bytes.Buffer, rate: FrameRateTracker): Boolean {
         if (readRate != null) io.stream.setReadTimeout(rate.timeoutForNextRead(partial = buf.readableBytes > 0))
         val n = io.stream.read(buf)
         if (n < 0) return false
@@ -112,7 +135,7 @@ class Framed<In, Out>(
     }
 
     /** Deadline bookkeeping for [FrameReadRate]; inert when the rate is null. */
-    private class FrameRateTracker(private val rate: FrameReadRate?) {
+    @PublishedApi internal class FrameRateTracker(private val rate: FrameReadRate?) {
         private val clock = TimeSource.Monotonic
         private var frameStart: TimeSource.Monotonic.ValueTimeMark? = null
         private var deadlineMs = 0L          // relative to frameStart
