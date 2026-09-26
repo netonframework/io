@@ -108,7 +108,7 @@ internal fun boundAddress(fd: Int): SockAddr = memScoped {
 
 internal actual fun tcpListenAddr(addr: SockAddr, display: String, options: SocketOptions): Int {
     ensureWinsock()
-    val s = socket(addr.family, SOCK_STREAM, IPPROTO_TCP)
+    val s = socket(addr.family, SOCK_STREAM, if (addr.family == AF_UNIX_FAMILY) 0 else IPPROTO_TCP)
     check(s != INVALID_SOCKET) { "socket() failed (${WSAGetLastError()})" }
     val fd = s.toFd()
     applyListenerOptions(fd, options)   // no SO_REUSEADDR on Windows: it would let another socket take over a port in use
@@ -122,7 +122,7 @@ internal actual fun tcpListenAddr(addr: SockAddr, display: String, options: Sock
 
 internal actual fun tcpConnectAddr(addr: SockAddr, display: String, options: SocketOptions): Int {
     ensureWinsock()
-    val s = socket(addr.family, SOCK_STREAM, IPPROTO_TCP)
+    val s = socket(addr.family, SOCK_STREAM, if (addr.family == AF_UNIX_FAMILY) 0 else IPPROTO_TCP)
     check(s != INVALID_SOCKET) { "socket() failed (${WSAGetLastError()})" }
     val fd = s.toFd()
     setNonBlocking(fd)

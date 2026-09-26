@@ -17,6 +17,7 @@ import neton.io.core.IoStream
  * the [IoStream] read/write path itself. One coroutine per connection, all on one reactor.
  *
  * Usage: echoServer [host=0.0.0.0] [port=9000] [reactors=1 | NETON_IO_REACTORS]
+ * A host of `unix:/path` listens on that Unix domain socket instead (the port is ignored; SPEC §23.6).
  *
  * NETON_IO_ECHO_MODE: `raw` (default) echoes bytes; `lines` echoes newline-framed requests through
  * Framed + serve() (batched flush, SPEC §23.2); `lines-unbatched` does the same with one flush per
@@ -39,13 +40,24 @@ fun echoServerMain(args: Array<String>) {
         println("gc target heap = $mb MiB (autotune off)")
     }
     println("echo-server listening on $host:$port reactors=$reactors accept=${platform.posix.getenv("NETON_IO_ACCEPT_MODE")?.toKString() ?: "handoff"}")
-    if (reactors <= 1) {
+    val unixPath = host.removePrefix("unix:").takeIf { host.startsWith("unix:") }
+    if (unixPath != null && reactors > 1) {
         runReactor {
-            val server = listen(host, port)
-            if (runSeconds != null) launch { delay(runSeconds * 1000L); server.close() }
+            val group = listenUnixGroup(unixPath, reactors)
+            if (runSeconds != null) launch { delay(runSeconds * 1000L); group.close() }
+            group.serve { conn -> echoConnection(conn) }
+            group.awaitWorkers()
+        }
+    } else if (reactors <= 1) {
+        runReactor {
+            val accept: suspend () -> IoStream
+            val close: () -> Unit
+            if (unixPath != null) { val l = listenUnix(unixPath); accept = { l.accept() }; close = { l.close() } }
+            else { val l = listen(host, port); accept = { l.accept() }; close = { l.close() } }
+            if (runSeconds != null) launch { delay(runSeconds * 1000L); close() }
             try {
                 while (true) {
-                    val conn = server.accept()
+                    val conn = accept()
                     launch { echoConnection(conn) }
                 }
             } catch (_: neton.io.core.ClosedException) {

@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+trait ReadWrite: std::io::Read + std::io::Write {}
+impl<T: std::io::Read + std::io::Write> ReadWrite for T {}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let addr = args.next().unwrap_or_else(|| "127.0.0.1:8080".into());
@@ -28,8 +31,11 @@ fn main() {
         let stop = stop.clone();
         let total = total.clone();
         handles.push(std::thread::spawn(move || {
-            let mut sock = TcpStream::connect(&addr).expect("connect");
-            sock.set_nodelay(true).unwrap();
+            // `unix:/path` measures a Unix domain socket instead of TCP (SPEC §23.6).
+            let mut sock: Box<dyn ReadWrite> = match addr.strip_prefix("unix:") {
+                Some(path) => Box::new(std::os::unix::net::UnixStream::connect(path).expect("connect")),
+                None => { let s = TcpStream::connect(&addr).expect("connect"); s.set_nodelay(true).unwrap(); Box::new(s) }
+            };
             let mut one = vec![b'x'; payload];
             if let Some(last) = one.last_mut() { *last = b'\n'; }
             let out: Vec<u8> = one.iter().cycle().take(payload * depth).cloned().collect();

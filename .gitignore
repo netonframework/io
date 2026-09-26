@@ -6,3 +6,5 @@ build/
 *.hprof
 local.properties
 .kotlin/
+# Unix-socket test files
+*.sock
