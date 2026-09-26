@@ -23,6 +23,7 @@ import neton.io.core.IoStream
  * Framed + serve() (batched flush, SPEC §23.2); `lines-unbatched` does the same with one flush per
  * request (the pre-§23.2 behaviour, kept here for comparison only).
  *
+ * NETON_IO_POOL=0 turns buffer pooling off (SPEC §23.7), for paired comparisons.
  * NETON_IO_RUN_SECONDS=n stops the server after n seconds (orderly, so NETON_IO_STATS is printed);
  * otherwise it runs until killed.
  */
@@ -39,6 +40,7 @@ fun echoServerMain(args: Array<String>) {
         run { kotlin.native.runtime.GC.autotune = false; kotlin.native.runtime.GC.targetHeapBytes = mb shl 20 }
         println("gc target heap = $mb MiB (autotune off)")
     }
+    if (!pooling) neton.io.bytes.BufferPoolConfig.enabled = false
     println("echo-server listening on $host:$port reactors=$reactors accept=${platform.posix.getenv("NETON_IO_ACCEPT_MODE")?.toKString() ?: "handoff"}")
     val unixPath = host.removePrefix("unix:").takeIf { host.startsWith("unix:") }
     if (unixPath != null && reactors > 1) {
@@ -75,6 +77,8 @@ fun echoServerMain(args: Array<String>) {
     }
 }
 
+private val pooling: Boolean = platform.posix.getenv("NETON_IO_POOL")?.toKString() != "0"
+
 private val echoMode: String =
     platform.posix.getenv("NETON_IO_ECHO_MODE")?.toKString() ?: "raw"
 
@@ -83,8 +87,9 @@ private suspend fun echoConnection(conn: IoStream) {
         "lines" -> return echoLines(conn, batched = true)
         "lines-unbatched" -> return echoLines(conn, batched = false)
     }
-    // Default initial capacity, grown on demand (SPEC §19.4) — geario's echo holds buffers the same way.
-    val buf = Buffer()
+    // Default initial capacity, grown on demand (SPEC §19.4). Pooled unless NETON_IO_POOL=0 (SPEC §23.7):
+    // an idle connection then holds no buffer while its read is parked.
+    val buf = Buffer(pooled = pooling)
     try {
         while (true) {
             buf.clear()

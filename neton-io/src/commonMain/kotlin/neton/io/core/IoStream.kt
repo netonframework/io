@@ -1,6 +1,7 @@
 package neton.io.core
 
 import neton.io.bytes.Buffer
+import neton.io.bytes.Bytes
 
 /** Filter readiness state. */
 enum class Readiness { Ready, Shutdown, Terminate }
@@ -119,4 +120,13 @@ class BaseFilter(private val inner: IoStream) : Filter {
     override fun setTimeouts(readTimeoutMillis: Long, writeTimeoutMillis: Long, idleTimeoutMillis: Long) =
         inner.setTimeouts(readTimeoutMillis, writeTimeoutMillis, idleTimeoutMillis)
     override fun setReadTimeout(millis: Long) = inner.setReadTimeout(millis)
+}
+
+/**
+ * Write [slices] in order with vectored sends, without copying them (SPEC §23.7): each slice's
+ * array is sent in place. Returns the bytes written (all of them, unless an exception is thrown).
+ */
+suspend fun IoStream.writev(slices: List<Bytes>): Long {
+    if (slices.isEmpty()) return 0
+    return writev(Array(slices.size) { Buffer.wrap(slices[it]) }, slices.size)
 }

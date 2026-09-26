@@ -31,7 +31,7 @@ internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: 
         val iov = allocArray<iovec>(count)
         for (i in 0 until count) {
             val b = bufs[from + i]
-            iov[i].iov_base = pins[i].addressOf(b.readerIndex())
+            iov[i].iov_base = if (b.readableBytes == 0) null else pins[i].addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
             iov[i].iov_len = b.readableBytes.convert()
         }
         val msg = alloc<msghdr>()

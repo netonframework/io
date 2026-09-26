@@ -586,7 +586,7 @@ internal class UringReactor : Reactor() {
             val iov = (block + sizeOf<msghdr>())!!.reinterpret<iovec>()
             for (k in 0 until n) {
                 val b = bufs[i + k]
-                iov[k].iov_base = pins[k].addressOf(b.readerIndex())
+                iov[k].iov_base = if (b.readableBytes == 0) null else pins[k].addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
                 iov[k].iov_len = b.readableBytes.convert()
             }
             msg.pointed.msg_iov = iov

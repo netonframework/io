@@ -32,7 +32,7 @@ internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: 
         for (i in 0 until count) {
             val b = bufs[from + i]
             wsabufs[i].len = b.readableBytes.convert()
-            wsabufs[i].buf = pins[i].addressOf(b.readerIndex())
+            wsabufs[i].buf = if (b.readableBytes == 0) null else pins[i].addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
         }
         val sent = alloc<UIntVar>()
         val rc = WSASend(fd.toSocket(), wsabufs, count.convert(), sent.ptr, 0u, null, null)

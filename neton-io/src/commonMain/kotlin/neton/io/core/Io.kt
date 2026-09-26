@@ -9,8 +9,9 @@ import neton.io.bytes.Buffer
  * performs the actual transfer, which may be a raw driver stream or a stack of [Filter]s.
  */
 class Io(val stream: IoStream) {
-    val readBuf: Buffer = Buffer()
-    val writeBuf: Buffer = Buffer()
+    // Pooled (SPEC §23.7): arrays come from the thread's BufferPool and go back when drained.
+    val readBuf: Buffer = Buffer(pooled = true)
+    val writeBuf: Buffer = Buffer(pooled = true)
 
     fun close() = stream.close()
 

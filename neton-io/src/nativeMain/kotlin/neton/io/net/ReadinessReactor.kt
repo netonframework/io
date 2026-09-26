@@ -163,7 +163,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     override suspend fun read(fd: Int, dst: Buffer, chunk: Int): Int {
         ensureFd(fd)
         while (true) {
-            if (persistent[fd] && !readyRead[fd]) { waitReadable(fd); continue }
+            // Parking: a pooled, empty buffer gives its array back first (idle connections hold none, SPEC §23.7).
+            if (persistent[fd] && !readyRead[fd]) { dst.releaseIfIdle(); waitReadable(fd); continue }
             if (servedRound[fd] == round) {
                 deferToNextRound(fd)
                 // A deferred reader is not in a waiter slot, so cancellation is checked here.
@@ -179,7 +180,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                 // arrived meanwhile without a poll round; the EAGAIN recv it costs is cheap.
                 n > 0 -> { dst.commitWrite(n); servedRound[fd] = round; return n }
                 n == EOF_RESULT -> return -1
-                n == WOULD_BLOCK -> { readyRead[fd] = false; waitReadable(fd) }
+                n == WOULD_BLOCK -> { readyRead[fd] = false; dst.releaseIfIdle(); waitReadable(fd) }
                 else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
             }
         }
