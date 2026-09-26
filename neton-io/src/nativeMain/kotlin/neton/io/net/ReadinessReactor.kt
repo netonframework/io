@@ -79,7 +79,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     // speculative: it may find the peer's next request already there, or return EAGAIN. The reactor
     // (not each fd: a mix let speculating connections jump the edge queue, p99 +60 % and Jain 0.87 at
     // 1000 connections) watches the last 256 speculative recvs and stops speculating while more than
-    // half miss, still sampling every 16th short read. Never after a hang-up event: EOF must still be
+    // 90 % miss, still sampling every 16th short read. Never after a hang-up event: EOF must still be
     // read. NETON_IO_SHORT_READ: 0 never skip, 1 always skip, default auto.
     private val shortReadMode: Int = when (platform.posix.getenv("NETON_IO_SHORT_READ")?.toKString()) {
         "0" -> SHORT_OFF; "1" -> SHORT_ALWAYS; else -> SHORT_AUTO
@@ -228,7 +228,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             specPending[fd] = false
             specSeen++
             if (n == WOULD_BLOCK) specMissed++
-            if (specSeen >= 256) { skipSpeculation = specMissed * 2 > specSeen; specSeen = 0; specMissed = 0 }
+            // Skip only when speculation almost never pays (> 90 % misses): at a ~50 % miss rate (4 cores,
+            // fast clients) skipping cost more edge round trips than it saved recvs (v40: 0.91 vs 0.96).
+            if (specSeen >= 256) { skipSpeculation = specMissed * 10 > specSeen * 9; specSeen = 0; specMissed = 0 }
         }
         stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
         return when {
