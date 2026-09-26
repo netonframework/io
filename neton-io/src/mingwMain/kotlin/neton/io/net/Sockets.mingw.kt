@@ -98,7 +98,7 @@ internal actual fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, 
 internal actual fun createWakePipe(): IntArray {
     ensureWinsock()
     val addr = loopbackAnyPort()
-    val listener = tcpListenAddr(addr, "127.0.0.1:0", 1)
+    val listener = tcpListenAddr(addr, "127.0.0.1:0", SocketOptions(backlog = 1))
     try {
         val bound = boundAddress(listener)
         val writer = tcpConnectAddr(bound, "wake pipe")

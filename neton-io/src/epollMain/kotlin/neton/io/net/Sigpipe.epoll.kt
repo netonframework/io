@@ -9,3 +9,7 @@ internal actual fun suppressSigpipe(fd: Int) {}
 internal actual val SEND_FLAGS: Int = MSG_NOSIGNAL
 
 internal actual fun currentThreadId(): ULong = pthread_self().toULong()
+
+internal actual val TCP_KEEP_IDLE_OPTION: Int = platform.posix.TCP_KEEPIDLE
+internal actual val TCP_KEEP_INTERVAL_OPTION: Int = platform.posix.TCP_KEEPINTVL
+internal actual val TCP_KEEP_COUNT_OPTION: Int = platform.posix.TCP_KEEPCNT

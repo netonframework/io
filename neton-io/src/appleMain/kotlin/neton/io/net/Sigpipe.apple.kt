@@ -26,3 +26,8 @@ internal actual val SEND_FLAGS: Int = 0
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun currentThreadId(): ULong = pthread_self()!!.rawValue.toLong().toULong()
+
+/** Apple names the keepalive idle time TCP_KEEPALIVE (seconds), where Linux uses TCP_KEEPIDLE. */
+internal actual val TCP_KEEP_IDLE_OPTION: Int = platform.posix.TCP_KEEPALIVE
+internal actual val TCP_KEEP_INTERVAL_OPTION: Int = platform.posix.TCP_KEEPINTVL
+internal actual val TCP_KEEP_COUNT_OPTION: Int = platform.posix.TCP_KEEPCNT

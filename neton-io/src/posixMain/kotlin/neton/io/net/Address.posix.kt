@@ -91,11 +91,10 @@ internal actual suspend fun resolve(host: String, port: Int, passive: Boolean): 
 }
 
 @OptIn(ExperimentalForeignApi::class)
-internal actual fun tcpListenAddr(addr: SockAddr, display: String, backlog: Int): Int = memScoped {
+internal actual fun tcpListenAddr(addr: SockAddr, display: String, options: SocketOptions): Int = memScoped {
     val fd = socket(addr.family, SOCK_STREAM, 0)
     check(fd >= 0) { "socket() failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
-    val one = alloc<IntVar>(); one.value = 1
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one.ptr, sizeOf<IntVar>().convert())
+    applyListenerOptions(fd, options)
     if (addr.isIpv6) {
         val zero = alloc<IntVar>(); zero.value = 0
         setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, zero.ptr, sizeOf<IntVar>().convert())
@@ -105,7 +104,7 @@ internal actual fun tcpListenAddr(addr: SockAddr, display: String, backlog: Int)
         val e = errno; closeFd(fd)
         error("bind($display) failed: ${strerror(e)?.toKString()} (errno=$e)")
     }
-    if (listen(fd, backlog) != 0) {
+    if (listen(fd, options.backlog) != 0) {
         val e = errno; closeFd(fd)
         error("listen($display) failed: ${strerror(e)?.toKString()} (errno=$e)")
     }
@@ -114,12 +113,12 @@ internal actual fun tcpListenAddr(addr: SockAddr, display: String, backlog: Int)
 }
 
 @OptIn(ExperimentalForeignApi::class)
-internal actual fun tcpConnectAddr(addr: SockAddr, display: String): Int {
+internal actual fun tcpConnectAddr(addr: SockAddr, display: String, options: SocketOptions): Int {
     val fd = socket(addr.family, SOCK_STREAM, 0)
     check(fd >= 0) { "socket() failed: ${strerror(errno)?.toKString()} (errno=$errno)" }
     setNonBlocking(fd)
     suppressSigpipe(fd)
-    setNoDelay(fd)
+    applyStreamOptions(fd, options)          // before connect: buffer sizes fix the window scale
     val rc = addr.bytes.usePinned { connect(fd, it.addressOf(0).reinterpret<sockaddr>(), addr.bytes.size.convert()) }
     if (rc != 0 && errno != EINPROGRESS) {
         val err = errno

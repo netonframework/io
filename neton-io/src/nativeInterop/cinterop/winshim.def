@@ -15,6 +15,11 @@ static int neton_getsockopt_int(unsigned long long s, int level, int opt, int* v
     int len = (int) sizeof *value;
     return getsockopt((SOCKET) s, level, opt, (char*) value, &len);
 }
+/* SO_LINGER: Windows' struct linger has u_short fields. */
+static int neton_setsockopt_linger(unsigned long long s, int onoff, int seconds) {
+    struct linger l; l.l_onoff = (u_short) onoff; l.l_linger = (u_short) seconds;
+    return setsockopt((SOCKET) s, SOL_SOCKET, SO_LINGER, (const char*) &l, (int) sizeof l);
+}
 /* Winsock must be started once per process before any socket call. */
 static int neton_wsa_startup(void) {
     WSADATA data;

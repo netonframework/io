@@ -20,10 +20,10 @@ internal class ResolveException(message: String) : Exception(message)
 internal expect suspend fun resolve(host: String, port: Int, passive: Boolean): List<SockAddr>
 
 /** Open, bind and listen on [addr]; non-blocking. `::` listens dual-stack. */
-internal expect fun tcpListenAddr(addr: SockAddr, display: String, backlog: Int = 1024): Int
+internal expect fun tcpListenAddr(addr: SockAddr, display: String, options: SocketOptions = SocketOptions.Default): Int
 
-/** Open a socket for [addr] and start a non-blocking connect; throws [ConnectException] on immediate failure. */
-internal expect fun tcpConnectAddr(addr: SockAddr, display: String): Int
+/** Open a socket for [addr], apply [options], and start a non-blocking connect; throws [ConnectException] on immediate failure. */
+internal expect fun tcpConnectAddr(addr: SockAddr, display: String, options: SocketOptions = SocketOptions.Default): Int
 
 /** Disable Nagle on a TCP stream (SPEC §19.6). */
 internal expect fun setNoDelay(fd: Int)

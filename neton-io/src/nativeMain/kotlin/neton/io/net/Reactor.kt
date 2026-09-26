@@ -374,7 +374,7 @@ internal expect fun createReactor(): Reactor
 
 /** [neton.io.core.IoStream] over a fd, delegating every operation to the [Reactor]. */
 internal class ReactorStream(
-    private val fd: Int,
+    internal val fd: Int,
     private val reactor: Reactor,
     private val maxReadChunk: Int = 64 * 1024,
 ) : neton.io.core.IoStream {

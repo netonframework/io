@@ -150,11 +150,16 @@ class TcpServerGroup internal constructor(
  * called inside a running reactor: that reactor accepts and is reactor 0; `reactors - 1` more
  * are started on their own threads. Handlers on reactor 0 run as children of the caller's job.
  */
-suspend fun listenGroup(host: String, port: Int, reactors: Int = cpuCount()): TcpServerGroup {
+suspend fun listenGroup(
+    host: String,
+    port: Int,
+    reactors: Int = cpuCount(),
+    options: SocketOptions = SocketOptions.Default,
+): TcpServerGroup {
     require(reactors >= 1) { "reactors must be >= 1" }
     val localScope = CoroutineScope(coroutineContext)
     // Bind first: if the port is taken, no threads have been started.
-    val server = listenTcpServer(host, port)
+    val server = listenTcpServer(host, port, options)
     val group = if (reactors > 1) ReactorGroup(reactors).also { it.start(currentReactor(), localScope) } else null
     return TcpServerGroup(server, group, localScope, reactors)
 }

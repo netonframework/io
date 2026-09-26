@@ -106,27 +106,27 @@ internal fun boundAddress(fd: Int): SockAddr = memScoped {
     SockAddr(family, family == AF_INET6, bytes)
 }
 
-internal actual fun tcpListenAddr(addr: SockAddr, display: String, backlog: Int): Int {
+internal actual fun tcpListenAddr(addr: SockAddr, display: String, options: SocketOptions): Int {
     ensureWinsock()
     val s = socket(addr.family, SOCK_STREAM, IPPROTO_TCP)
     check(s != INVALID_SOCKET) { "socket() failed (${WSAGetLastError()})" }
     val fd = s.toFd()
-    // No SO_REUSEADDR: on Windows it lets another socket take over a port that is in use.
+    applyListenerOptions(fd, options)   // no SO_REUSEADDR on Windows: it would let another socket take over a port in use
     if (addr.isIpv6) neton_setsockopt_int(s, IPPROTO_IPV6, IPV6_V6ONLY, 0)
     val rc = addr.bytes.usePinned { bind(s, it.addressOf(0).reinterpret<sockaddr>(), addr.bytes.size) }
     if (rc == SOCKET_ERROR) { val e = WSAGetLastError(); closeFd(fd); error("bind($display) failed: Winsock error $e") }
-    if (listen(s, backlog) == SOCKET_ERROR) { val e = WSAGetLastError(); closeFd(fd); error("listen($display) failed: Winsock error $e") }
+    if (listen(s, options.backlog) == SOCKET_ERROR) { val e = WSAGetLastError(); closeFd(fd); error("listen($display) failed: Winsock error $e") }
     setNonBlocking(fd)
     return fd
 }
 
-internal actual fun tcpConnectAddr(addr: SockAddr, display: String): Int {
+internal actual fun tcpConnectAddr(addr: SockAddr, display: String, options: SocketOptions): Int {
     ensureWinsock()
     val s = socket(addr.family, SOCK_STREAM, IPPROTO_TCP)
     check(s != INVALID_SOCKET) { "socket() failed (${WSAGetLastError()})" }
     val fd = s.toFd()
     setNonBlocking(fd)
-    setNoDelay(fd)
+    applyStreamOptions(fd, options)
     val rc = addr.bytes.usePinned { connect(s, it.addressOf(0).reinterpret<sockaddr>(), addr.bytes.size) }
     if (rc == SOCKET_ERROR) {
         val e = WSAGetLastError()
