@@ -136,6 +136,19 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     private fun nowNs(): Long = clock.elapsedNow().inWholeNanoseconds
     protected fun reactorNowMs(): Long = nowNs() / 1_000_000L
 
+    // ---- SPEC §23.2: connection timeouts. The clock is read once per loop round (in fireTimers);
+    // streams stamp activity and deadlines with this cached value, so the hot path reads no clock.
+    internal var cachedNowMs: Long = 0L
+        private set
+    internal val wheel = TimerWheel()
+
+    /**
+     * Wake the operations parked on [fd] — reads, writes or both — with [cause], as cancellation does
+     * (completion drivers also cancel the op in the kernel where a late completion would be harmful).
+     * Reactor thread only.
+     */
+    internal abstract fun timeoutParked(fd: Int, reads: Boolean, writes: Boolean, cause: Throwable)
+
     /** Null unless NETON_IO_STATS=1. Subclasses count only when non-null. */
     protected val stats: ReactorStats? = if (getenv("NETON_IO_STATS")?.toKString() == "1") ReactorStats() else null
 
@@ -233,13 +246,17 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     /** Milliseconds until the next live timer (0 if due), or -1 when there is none. */
     protected fun nextTimerMillis(): Int {
         while (timers.isNotEmpty() && timers[0].cancelled) popTimer()
-        if (timers.isEmpty()) return -1
+        val wheelMs = if (wheel.size == 0) -1L else (wheel.nextDueMs - reactorNowMs()).coerceAtLeast(0L)
+        if (timers.isEmpty()) return if (wheelMs < 0) -1 else wheelMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         val ns = timers[0].deadlineNs - nowNs()
-        return if (ns <= 0) 0 else ((ns + 999_999L) / 1_000_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val heapMs = if (ns <= 0) 0L else ((ns + 999_999L) / 1_000_000L)
+        val ms = if (wheelMs < 0) heapMs else minOf(heapMs, wheelMs)
+        return ms.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
-    /** Run every timer whose deadline has passed. */
     protected fun fireTimers() {
+        cachedNowMs = reactorNowMs()
+        if (wheel.size > 0) wheel.tick(cachedNowMs)
         if (timers.isEmpty()) return
         val now = nowNs()
         while (timers.isNotEmpty() && (timers[0].cancelled || timers[0].deadlineNs <= now)) {
@@ -390,8 +407,53 @@ internal class ReactorStream(
     internal val fd: Int,
     private val reactor: Reactor,
     private val maxReadChunk: Int = 64 * 1024,
-) : neton.io.core.IoStream {
+) : WheelNode(), neton.io.core.IoStream {
     private var closed = false
+
+    // SPEC §23.2 timeouts (ms, 0 = off) and the deadlines they produce, in reactor-clock ms.
+    private var readTimeoutMs = 0L
+    private var writeTimeoutMs = 0L
+    private var idleTimeoutMs = 0L
+    private var readDeadline = 0L
+    private var writeDeadline = 0L
+    private var lastActivityMs = 0L
+
+    override fun setTimeouts(readTimeoutMillis: Long, writeTimeoutMillis: Long, idleTimeoutMillis: Long) {
+        reactor.checkOwnerPublic("setTimeouts")
+        readTimeoutMs = readTimeoutMillis.coerceAtLeast(0); writeTimeoutMs = writeTimeoutMillis.coerceAtLeast(0)
+        idleTimeoutMs = idleTimeoutMillis.coerceAtLeast(0)
+        if (idleTimeoutMs > 0) {
+            lastActivityMs = reactor.cachedNowMs
+            reactor.wheel.schedule(this, lastActivityMs + idleTimeoutMs)
+        }
+    }
+
+    override fun setReadTimeout(millis: Long) { readTimeoutMs = millis.coerceAtLeast(0) }
+
+    /** The wheel reached us: fire whatever expired, then report the next deadline (0 = none). */
+    override fun onWheelDue(nowMs: Long): Long {
+        if (closed) return 0
+        if (idleTimeoutMs > 0 && lastActivityMs + idleTimeoutMs <= nowMs) {
+            reactor.timeoutParked(fd, reads = true, writes = true, neton.io.core.TimeoutException("idle for $idleTimeoutMs ms"))
+            readDeadline = 0; writeDeadline = 0
+            closed = true
+            reactor.closeStream(fd)
+            return 0
+        }
+        val readDue = readDeadline in 1..nowMs
+        val writeDue = writeDeadline in 1..nowMs
+        if (readDue || writeDue) {
+            // Clear before waking: the resumed operation must not be timed out a second time.
+            if (readDue) readDeadline = 0
+            if (writeDue) writeDeadline = 0
+            reactor.timeoutParked(fd, readDue, writeDue, neton.io.core.TimeoutException(if (readDue) "read timed out" else "write timed out"))
+        }
+        var next = Long.MAX_VALUE
+        if (readDeadline > nowMs) next = minOf(next, readDeadline)
+        if (writeDeadline > nowMs) next = minOf(next, writeDeadline)
+        if (idleTimeoutMs > 0) next = minOf(next, lastActivityMs + idleTimeoutMs)
+        return if (next == Long.MAX_VALUE) 0 else next
+    }
 
     // SPEC §19.4: adaptive read size. Reserving the maximum on every read made every buffer a
     // connection reads into grow to 64-128 KB on its first read and keep it for life. Start small,
@@ -405,7 +467,9 @@ internal class ReactorStream(
     override suspend fun read(dst: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("read")
-        val n = reactor.read(fd, dst, readGuess)
+        if (readTimeoutMs > 0) { readDeadline = reactor.cachedNowMs + readTimeoutMs; reactor.wheel.schedule(this, readDeadline) }
+        val n = try { reactor.read(fd, dst, readGuess) } finally { readDeadline = 0 }
+        if (idleTimeoutMs > 0) lastActivityMs = reactor.cachedNowMs
         if (n >= readGuess) {
             if (readGuess < maxReadChunk) readGuess = (readGuess * 2).coerceAtMost(maxReadChunk)
             smallReads = 0
@@ -420,14 +484,20 @@ internal class ReactorStream(
     override suspend fun write(src: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("write")
-        return reactor.write(fd, src)
+        if (writeTimeoutMs > 0) { writeDeadline = reactor.cachedNowMs + writeTimeoutMs; reactor.wheel.schedule(this, writeDeadline) }
+        val n = try { reactor.write(fd, src) } finally { writeDeadline = 0 }
+        if (idleTimeoutMs > 0) lastActivityMs = reactor.cachedNowMs
+        return n
     }
 
     override suspend fun writev(buffers: Array<Buffer>, count: Int): Long {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("writev")
         require(count in 0..buffers.size) { "count $count out of 0..${buffers.size}" }
-        return reactor.writev(fd, buffers, count)
+        if (writeTimeoutMs > 0) { writeDeadline = reactor.cachedNowMs + writeTimeoutMs; reactor.wheel.schedule(this, writeDeadline) }
+        val n = try { reactor.writev(fd, buffers, count) } finally { writeDeadline = 0 }
+        if (idleTimeoutMs > 0) lastActivityMs = reactor.cachedNowMs
+        return n
     }
 
     override suspend fun shutdownOutput() {
@@ -444,6 +514,7 @@ internal class ReactorStream(
         // so the stream was permanently unusable and its fd never closed — a silent leak.
         reactor.checkOwnerPublic("close")
         closed = true
+        reactor.wheel.cancel(this)
         reactor.closeStream(fd)
     }
 }

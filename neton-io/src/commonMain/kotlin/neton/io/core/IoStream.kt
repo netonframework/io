@@ -11,6 +11,9 @@ open class IoException(message: String, val errno: Int = 0) : Exception(message)
 /** The stream was closed (by [IoStream.close]) while an operation was parked on it, or used after close. */
 class ClosedException(message: String = "stream closed") : IoException(message)
 
+/** A read, write, idle or frame deadline passed (SPEC §23.2). */
+class TimeoutException(message: String) : IoException(message)
+
 /**
  * The coroutine-native raw byte stream at the driver boundary.
  *
@@ -62,6 +65,39 @@ interface IoStream {
      * written so far has arrived. This side can still read. The default does nothing.
      */
     suspend fun shutdownOutput() {}
+
+    /**
+     * Timeouts (SPEC §23.2), in milliseconds; 0 disables. [readTimeoutMillis]: a read parked longer
+     * throws [TimeoutException] (the stream stays usable). [writeTimeoutMillis]: likewise for a write
+     * waiting on a full socket. [idleTimeoutMillis]: no successful read or write for that long closes
+     * the stream; parked operations get [TimeoutException]. The default does nothing.
+     */
+    fun setTimeouts(readTimeoutMillis: Long = 0, writeTimeoutMillis: Long = 0, idleTimeoutMillis: Long = 0) {}
+
+    /** Change only the read timeout (used per read by [Framed]'s frame read rate). */
+    fun setReadTimeout(millis: Long) {}
+}
+
+/**
+ * Close after a graceful half-close (SPEC §23.2): stop writing, let the peer finish (discarding what
+ * it still sends) until it closes or [timeoutMillis] passes, then close. Never throws.
+ */
+suspend fun IoStream.closeGracefully(timeoutMillis: Long) {
+    val start = kotlin.time.TimeSource.Monotonic.markNow()
+    try {
+        shutdownOutput()
+        val sink = Buffer(1024)
+        while (true) {
+            val left = timeoutMillis - start.elapsedNow().inWholeMilliseconds
+            if (left <= 0) break
+            setReadTimeout(left)
+            sink.clear()
+            if (read(sink) < 0) break
+        }
+    } catch (_: IoException) {
+    } finally {
+        close()
+    }
 }
 
 /**
@@ -80,4 +116,7 @@ class BaseFilter(private val inner: IoStream) : Filter {
     override fun close() = inner.close()
     override suspend fun writev(buffers: Array<Buffer>, count: Int): Long = inner.writev(buffers, count)
     override suspend fun shutdownOutput() = inner.shutdownOutput()
+    override fun setTimeouts(readTimeoutMillis: Long, writeTimeoutMillis: Long, idleTimeoutMillis: Long) =
+        inner.setTimeouts(readTimeoutMillis, writeTimeoutMillis, idleTimeoutMillis)
+    override fun setReadTimeout(millis: Long) = inner.setReadTimeout(millis)
 }

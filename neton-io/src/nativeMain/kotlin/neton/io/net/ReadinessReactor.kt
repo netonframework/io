@@ -121,6 +121,25 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         enqueueResume(w, job.getCancellationException())
     }
 
+    /** SPEC §23.2: wake the parked reader/writer on [fd] (and a reader deferred by §19.5) with [cause]. */
+    override fun timeoutParked(fd: Int, reads: Boolean, writes: Boolean, cause: Throwable) {
+        if (fd >= readWaiters.size) return
+        if (reads) {
+            readWaiters[fd]?.let { readWaiters[fd] = null; enqueueResume(it, cause) }
+            var i = 0
+            while (i < deferredCount) {
+                if (deferredFds[i] == fd) {
+                    val c = deferredConts[i]!!
+                    deferredCount--
+                    deferredConts[i] = deferredConts[deferredCount]; deferredFds[i] = deferredFds[deferredCount]
+                    deferredConts[deferredCount] = null
+                    enqueueResume(c, cause)
+                } else i++
+            }
+        }
+        if (writes) writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, cause) }
+    }
+
     private fun forgetCancellation(fd: Int) {
         readCancelHandles[fd]?.dispose(); writeCancelHandles[fd]?.dispose()
         readCancelHandles[fd] = null; writeCancelHandles[fd] = null

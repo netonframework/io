@@ -16,7 +16,6 @@ fun interface Service<in Req, out Res> {
  * this loop does not hop threads per frame.
  */
 suspend fun <In, Out> serve(framed: Framed<In, Out>, service: Service<In, Out>) {
-    framed.incoming().collect { req ->
-        framed.send(service.call(req))
-    }
+    // SPEC §23.2: answers every request already received, then flushes once (pipelining).
+    framed.serveLoop { req -> service.call(req) }
 }
