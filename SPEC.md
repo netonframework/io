@@ -443,6 +443,28 @@ SHA-256/384、HKDF、ECDSA P-256 / RSA 验签）。
   - (b) 薄调用平台 libcrypto（Linux 用 OpenSSL libcrypto，Apple 用 CommonCrypto/Security）：一次调用处理一整条记录（≤16 KB），没有运行时、没有线程交接，按上面的规则属于允许的薄 OS/系统库调用。
 - 建议 (b)，或 (b) 起步、之后按基准逐个替换成 Kotlin。**等用户决定。**
 
+**评估 cryptography-kotlin（2026-09-26，用户提议）** — `dev.whyoleg.cryptography`，Apache-2.0，最新 0.6.0（Maven Central 2026-04-02），
+用 Kotlin 2.3.20 构建（我们固定的 2.4.0 可以读取，已实际编译验证）；klib 覆盖 linuxX64/linuxArm64/macOS/iOS（另有 mingwX64）。
+- **覆盖**：TLS 1.3 所需原语齐全——AES-GCM、ChaCha20-Poly1305、X25519/ECDH（P-256/384）、ECDSA、RSA-PSS、Ed25519、HMAC、HKDF、SHA-2；
+  AEAD 支持显式 nonce（`encryptWithIvBlocking`，需 `@DelicateCryptographyApi`）；另有 ASN.1/DER、PEM 模块。
+- **不包含**：TLS 协议本身（记录层、握手、密钥调度）与 X.509 证书链校验——这些无论如何都要我们写。
+- **实现方式**：Native 上是 cinterop 薄调用 OpenSSL libcrypto（prebuilt 静态链接 OpenSSL 3.6.0，或 shared 链系统库）；Apple 另有 CommonCrypto / CryptoKit 提供者。没有额外运行时，符合 §18 规则。
+- **热路径成本（实测，`bench/aead-bench`，同一份 OpenSSL）**：每条记录的 AEAD 加密，153 钉单核两次运行一致：
+
+  | 记录大小 | 直接 libcrypto（每连接一个上下文） | cryptography-kotlin | 倍数 |
+  |---|---|---|---|
+  | 128 B | 297 ns | 4,638 ns | 15.6× |
+  | 1 KB | 523 ns | 5,449 ns | 10.5× |
+  | 16 KB | 4,454 ns | 15,764 ns | 3.5× |
+
+  原因在 API 形态而不在 OpenSSL：每次调用都新建 `EVP_CIPHER_CTX` 并完整初始化密钥（AES 密钥扩展 + GHASH 表），再分配密文、tag
+  与二者拼接三个数组。对 msgtrans 这类小包 RPC（每请求一条记录，服务端一次解密一次加密），约 9 µs/请求的密码学开销会让每核吞吐减半。
+- **结论与建议**：**握手路径用 cryptography-kotlin**（密钥协商、签名/验签、密钥编解码、HMAC/HKDF/哈希——每连接一次，微秒级开销无所谓，
+  且省下大量易错的密钥编码代码）；**记录层热路径自己写 libcrypto 薄调用**（每方向一个常驻 `EVP_CIPHER_CTX`，每条记录只换 nonce，直接在
+  neton-io 的 `Buffer` 上原地加解密，零额外分配）。两者必须链接同一份 libcrypto：我们的 cinterop 只做声明、链接 provider 带的那份（已验证可行）。
+  X.509 证书链校验自己写（可用它的 DER 模块解析）；iOS 客户端的信任评估可以直接用 Security.framework 的 `SecTrust`。
+
+
 ## 19. 工具链与运行时层的性能（2026-09-26）
 
 **用户要求**：尽可能用 Kotlin/Native 最新特性换性能；只支持 Kotlin/Native，不为 JVM 妥协（三个仓库本来就只有 Native 目标）。
@@ -457,6 +479,8 @@ SHA-256/384、HKDF、ECDSA P-256 / RSA 验签）。
 
 ### 19.1 工具链升级（单变量）
 neton-io、msgtrans、pulsekit 同时升到 Kotlin 2.4.20、coroutines 1.11.0（复合构建必须同一版本）。验收：三仓库全部测试（macOS + 153 三驱动）；153 单核成对轮次 2.4.20 对 2.4.0 同一代码，比值应在 [0.97, 1.03] 内或更好。
+
+**决定（2026-09-26，用户）**：Kotlin/Native 固定在 **2.4.0**，暂不升 2.4.10 / 2.4.20，以后有必要再议。以下为当时的分析。
 
 **阻塞（2026-09-26）**：vip-application（本地 PulseKit 接入服务）以复合构建引入 neton-io、msgtrans，同时引入 Neton 框架仓库（`Neton/neton`、`geolite4k`、`hyper4k`），全部固定在 2.4.0。只升这三个仓库会让同一构建里出现两个 Kotlin 版本（两份 Kotlin Gradle 插件，或 2.4.0 编译器读 2.4.20 的 klib），通常无法构建。要升就得连 Neton 框架仓库一起升，超出 PulseKit 范围——**等用户决定**。由于 2.4.10/2.4.20 没有 Native 运行时改动，暂缓不影响性能工作；19.2、19.3 在 2.4.0 上进行。
 

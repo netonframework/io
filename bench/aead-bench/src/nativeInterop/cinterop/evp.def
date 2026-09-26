@@ -1,0 +1,4 @@
+package = evp
+headers = openssl/evp.h
+headerFilter = openssl/**
+compilerOpts = -I/opt/homebrew/opt/openssl@3/include
