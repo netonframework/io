@@ -75,9 +75,17 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private var idleArrays = false          // some parked read may hold an idle pooled array
     // The last event for the fd carried EOF / hang-up: its FIN may already be in, with no edge to follow.
     private var peerClosed = BooleanArray(64)
-    // SPEC §24 A/B (NETON_IO_SHORT_READ=1): after a short recv an edge-triggered fd waits for its next
-    // edge instead of a recv that returns EAGAIN — unless the peer closed (then EOF must still be read).
-    private val shortReadRule: Boolean = platform.posix.getenv("NETON_IO_SHORT_READ")?.toKString() == "1"
+    // SPEC §24.5 short-read rule. After a short recv the next recv on an edge-triggered fd is
+    // speculative: it may find the peer's next request already there, or return EAGAIN. Per fd we
+    // remember how the last speculative recv went and skip speculating while it keeps missing
+    // (re-probing every 16th short read). Never after a hang-up event: EOF must still be read.
+    // NETON_IO_SHORT_READ: 0 never skip, 1 always skip, default auto.
+    private val shortReadMode: Int = when (platform.posix.getenv("NETON_IO_SHORT_READ")?.toKString()) {
+        "0" -> SHORT_OFF; "1" -> SHORT_ALWAYS; else -> SHORT_AUTO
+    }
+    private var specPending = BooleanArray(64)   // the next recv on the fd is speculative
+    private var specMisses = BooleanArray(64)    // its last speculative recv returned EAGAIN
+    private var shortReads = IntArray(64)
 
     private fun ensureFd(fd: Int) {
         if (fd < persistent.size) return
@@ -94,6 +102,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
         wPinnedArrays = wPinnedArrays.copyOf(n); wPins = wPins.copyOf(n); parkEpoch = parkEpoch.copyOf(n)
         peerClosed = peerClosed.copyOf(n)
+        specPending = specPending.copyOf(n); specMisses = specMisses.copyOf(n); shortReads = shortReads.copyOf(n)
     }
 
     private fun pinFor(fd: Int, array: ByteArray): Pinned<ByteArray> {
@@ -212,19 +221,27 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private fun tryRecv(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val n = recvPinned(fd, pinFor(fd, dst.backingArray()), dst.writerIndex(), cap)
+        if (specPending[fd]) { specPending[fd] = false; specMisses[fd] = n == WOULD_BLOCK }
         stats?.let { it.reads++; if (n > 0) it.readBytes += n else if (n == WOULD_BLOCK) it.readsWouldBlock++ }
         return when {
             // Deliberately no short-read rule (SPEC §17b, rejected): the ready flag stays set after a
             // successful recv, so the next read() picks up data that arrived meanwhile without a poll.
             n > 0 -> {
                 dst.commitWrite(n); servedRound[fd] = round; sizer.onRead(n)
-                if (shortReadRule && n < cap && persistent[fd] && !peerClosed[fd]) readyRead[fd] = false
+                if (n < cap && persistent[fd] && shortReadMode != SHORT_OFF) afterShortRead(fd)
                 n
             }
             n == EOF_RESULT -> -1
             n == WOULD_BLOCK -> { readyRead[fd] = false; RECV_WAIT }
             else -> { val e = lastSocketError(); throw IoException("read failed: ${errnoMessage(e)}", e) }
         }
+    }
+
+    /** A short recv on an edge-triggered fd: speculate on the next recv, or wait for the next edge (SPEC §24.5). */
+    private fun afterShortRead(fd: Int) {
+        if (peerClosed[fd]) return                          // a FIN may already be in: keep reading until EOF
+        val skip = shortReadMode == SHORT_ALWAYS || (specMisses[fd] && (++shortReads[fd] and 15) != 0)
+        if (skip) readyRead[fd] = false else specPending[fd] = true
     }
 
     private suspend fun parkRead(fd: Int, dst: Buffer, sizer: ReadSizer): Int = suspendCoroutineUninterceptedOrReturn { cont ->
@@ -357,8 +374,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
                 val f = poller.readyFlags(i)
                 if (f and READY_HUP != 0) peerClosed[fd] = true
                 if (f and READY_READ != 0) {
-                    // Persistent fds: record the edge first — it is not repeated.
-                    if (persistent[fd]) readyRead[fd] = true
+                    // Persistent fds: record the edge first — it is not repeated. After an edge the
+                    // next recv is not speculative (data arrived).
+                    if (persistent[fd]) { readyRead[fd] = true; specPending[fd] = false }
                     val w = readWaiters[fd]
                     if (w != null) { readWaiters[fd] = null; enqueueResume(w) }
                     if (readConts[fd] != null) completeRead(fd)
@@ -397,6 +415,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         forgetCancellation(fd)
         servedRound[fd] = 0
         persistent[fd] = false; readyRead[fd] = false; peerClosed[fd] = false
+        specPending[fd] = false; specMisses[fd] = false; shortReads[fd] = 0
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         wPins[fd]?.unpin(); wPins[fd] = null; wPinnedArrays[fd] = null
         poller.forget(fd)
@@ -406,6 +425,9 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private companion object {
         /** [tryRecv]: nothing to read yet. Distinct from -1, which is EOF here (WOULD_BLOCK is also -1). */
         const val RECV_WAIT = Int.MIN_VALUE
+        const val SHORT_OFF = 0
+        const val SHORT_ALWAYS = 1
+        const val SHORT_AUTO = 2
         /** Quiet time after which parked reads give their pooled arrays back. */
         const val IDLE_SWEEP_MS = 50
         /** Under load, reads parked for a whole interval of this many rounds give theirs back. */
