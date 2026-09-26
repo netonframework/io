@@ -46,6 +46,32 @@ internal expect fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, 
 @OptIn(ExperimentalForeignApi::class)
 internal expect fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int
 
+/**
+ * One vectored send of `bufs[from until from + count]` (SPEC §23.3): sendmsg / WSASend. Returns the
+ * bytes sent (the caller advances the buffers), or [WOULD_BLOCK] / [IO_ERROR].
+ */
+internal expect fun sendBuffers(fd: Int, bufs: Array<neton.io.bytes.Buffer>, from: Int, count: Int): Long
+
+/** shutdown(SHUT_WR) / shutdown(SD_SEND). */
+internal expect fun shutdownWrite(fd: Int)
+
+/** Upper bound on buffers per vectored send (IOV_MAX is 1024 on Linux/Apple; stay well below). */
+internal const val MAX_IOV = 64
+
+/** Advance `bufs[from..]` by [n] sent bytes, in order; returns the index of the first buffer with bytes left. */
+internal fun advanceBuffers(bufs: Array<neton.io.bytes.Buffer>, from: Int, end: Int, n: Long): Int {
+    var left = n
+    var i = from
+    while (i < end && left > 0) {
+        val b = bufs[i]
+        val take = minOf(left, b.readableBytes.toLong()).toInt()
+        b.consume(take); left -= take
+        if (b.readableBytes == 0) i++
+    }
+    while (i < end && bufs[i].readableBytes == 0) i++
+    return i
+}
+
 /** A non-blocking [read end, write end] pair used to wake the reactor from another thread. */
 internal expect fun createWakePipe(): IntArray
 

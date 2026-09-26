@@ -315,6 +315,19 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     /** Write all readable bytes from [src]; returns the number written. */
     abstract suspend fun write(fd: Int, src: Buffer): Int
 
+    /** Vectored write of `bufs[0 until count]` (SPEC §23.3); drivers override with one syscall / SQE per batch. */
+    open suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
+        var total = 0L
+        for (i in 0 until count) if (bufs[i].readableBytes > 0) total += write(fd, bufs[i])
+        return total
+    }
+
+    /** Half-close the write side (SPEC §23.3). A plain syscall in every driver: writes already returned are done. */
+    open fun shutdownOutput(fd: Int) {
+        checkOwner("shutdownOutput")
+        shutdownWrite(fd)
+    }
+
     /** Accept one connection, returning a non-blocking client fd. */
     abstract suspend fun accept(listenFd: Int): Int
 
@@ -408,6 +421,18 @@ internal class ReactorStream(
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("write")
         return reactor.write(fd, src)
+    }
+
+    override suspend fun writev(buffers: Array<Buffer>, count: Int): Long {
+        if (closed) throw neton.io.core.ClosedException()
+        reactor.checkOwnerPublic("writev")
+        require(count in 0..buffers.size) { "count $count out of 0..${buffers.size}" }
+        return reactor.writev(fd, buffers, count)
+    }
+
+    override suspend fun shutdownOutput() {
+        if (closed) throw neton.io.core.ClosedException()
+        reactor.shutdownOutput(fd)
     }
 
     override suspend fun flush() {}

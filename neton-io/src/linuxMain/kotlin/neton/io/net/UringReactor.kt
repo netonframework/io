@@ -1,5 +1,13 @@
 package neton.io.net
 
+import platform.posix.msghdr
+
+import platform.posix.iovec
+
+import kotlinx.cinterop.get
+
+import neton.io.uring.NETON_IORING_OP_SENDMSG
+
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
@@ -130,7 +138,9 @@ internal class UringReactor : Reactor() {
     // for a reused slot harmless. Control ops (wake poll, timeout, cancel) use CONTROL_BASE + n.
     // SPEC §19.3 (io_uring half): the awaiting coroutine is stored as its raw continuation; every path
     // that resumes it (CQE, close, cancellation) takes it out of the slot first.
-    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: Continuation<Int>? = null; var multishot = false; var cancelOnAbort = true }
+    private class Slot { var live = false; var gen = 0u; var fd = -1; var pin: PinRef? = null; var cont: Continuation<Int>? = null; var multishot = false; var cancelOnAbort = true
+        // SPEC §23.3: a vectored send owns extra pins and a native msghdr + iovec block until its CQE.
+        var extraPins: Array<Pinned<ByteArray>>? = null; var nativeBlock: CPointer<ByteVar>? = null }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -157,6 +167,9 @@ internal class UringReactor : Reactor() {
 
     private fun releaseSlot(idx: Int, slot: Slot) {
         slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false
+        // Reached only after the op's CQE (or before its SQE existed): the kernel no longer touches these.
+        slot.extraPins?.let { for (p in it) p.unpin() }; slot.extraPins = null
+        slot.nativeBlock?.let { free(it) }; slot.nativeBlock = null
         freeSlots[freeTop++] = idx
         liveOps--
     }
@@ -467,10 +480,14 @@ internal class UringReactor : Reactor() {
      * buffer stays pinned until the CQE, and the CQE just resumes a cancelled continuation
      * (ignored). Skipping the handler saves a JobNode + closure per op.
      */
-    private suspend fun submit(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pin: PinRef?, cancelOnAbort: Boolean = true): Int {
+    private suspend fun submit(
+        opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, pin: PinRef?, cancelOnAbort: Boolean = true,
+        extraPins: Array<Pinned<ByteArray>>? = null, nativeBlock: CPointer<ByteVar>? = null,
+    ): Int {
         val idx = takeSlot()
         val slot = slots[idx]!!
         slot.fd = fd; slot.pin = pin
+        slot.extraPins = extraPins; slot.nativeBlock = nativeBlock
         if (pin != null) pin.refs++
         val gen = slot.gen
         val ud = (idx.toULong() shl 32) or gen.toULong()
@@ -510,6 +527,37 @@ internal class UringReactor : Reactor() {
             val res = submit(NETON_IORING_OP_SEND, fd, pin.pinned.addressOf(src.readerIndex()).toLong(), len, NETON_MSG_NOSIGNAL, pin, cancelOnAbort = false)
             stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
             src.consume(res); total += res
+        }
+        return total
+    }
+
+    /**
+     * Vectored send (SPEC §23.3): one IORING_OP_SENDMSG per batch of up to [MAX_IOV] buffers. The
+     * msghdr + iovec live in one malloc'd block and the arrays are pinned until the op's CQE.
+     */
+    override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
+        var total = 0L
+        var i = 0
+        while (i < count && bufs[i].readableBytes == 0) i++
+        while (i < count) {
+            val n = minOf(MAX_IOV, count - i)
+            val pins = Array(n) { bufs[i + it].backingArray().pin() }
+            val block = malloc((sizeOf<msghdr>() + n * sizeOf<iovec>()).convert())!!.reinterpret<ByteVar>()
+            memset(block, 0, (sizeOf<msghdr>() + n * sizeOf<iovec>()).convert())
+            val msg = block.reinterpret<msghdr>()
+            val iov = (block + sizeOf<msghdr>())!!.reinterpret<iovec>()
+            for (k in 0 until n) {
+                val b = bufs[i + k]
+                iov[k].iov_base = pins[k].addressOf(b.readerIndex())
+                iov[k].iov_len = b.readableBytes.convert()
+            }
+            msg.pointed.msg_iov = iov
+            msg.pointed.msg_iovlen = n.convert()
+            val res = submit(NETON_IORING_OP_SENDMSG, fd, msg.toLong(), 1, NETON_MSG_NOSIGNAL, null,
+                cancelOnAbort = false, extraPins = pins, nativeBlock = block)
+            stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
+            total += res
+            i = advanceBuffers(bufs, i, count, res.toLong())
         }
         return total
     }

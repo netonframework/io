@@ -44,6 +44,24 @@ interface IoStream {
     suspend fun flush()
 
     fun close()
+
+    /**
+     * Write all readable bytes of `buffers[0 until count]`, in order, as one vectored write where
+     * the driver supports it (SPEC §23.3); returns the bytes written. Each buffer is advanced by what
+     * it contributed, so after an exception the caller can see what is still unsent. The default
+     * writes the buffers one by one.
+     */
+    suspend fun writev(buffers: Array<Buffer>, count: Int = buffers.size): Long {
+        var total = 0L
+        for (i in 0 until count) if (buffers[i].readableBytes > 0) total += write(buffers[i])
+        return total
+    }
+
+    /**
+     * Half-close (SPEC §23.3): no more writes from this side; the peer reads EOF once everything
+     * written so far has arrived. This side can still read. The default does nothing.
+     */
+    suspend fun shutdownOutput() {}
 }
 
 /**
@@ -60,4 +78,6 @@ class BaseFilter(private val inner: IoStream) : Filter {
     override suspend fun write(src: Buffer): Int = inner.write(src)
     override suspend fun flush() = inner.flush()
     override fun close() = inner.close()
+    override suspend fun writev(buffers: Array<Buffer>, count: Int): Long = inner.writev(buffers, count)
+    override suspend fun shutdownOutput() = inner.shutdownOutput()
 }

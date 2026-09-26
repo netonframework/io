@@ -181,6 +181,25 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         return total
     }
 
+    /** One sendmsg per batch of up to [MAX_IOV] buffers; parks on would-block like [write] (SPEC §23.3). */
+    override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
+        ensureFd(fd)
+        var total = 0L
+        var i = 0
+        while (i < count && bufs[i].readableBytes == 0) i++
+        while (i < count) {
+            val batch = minOf(MAX_IOV, count - i)
+            val n = sendBuffers(fd, bufs, i, batch)
+            stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK.toLong()) it.writesWouldBlock++ }
+            when {
+                n >= 0 -> { total += n; i = advanceBuffers(bufs, i, count, n) }
+                n == WOULD_BLOCK.toLong() -> waitWritable(fd)
+                else -> { val e = lastSocketError(); throw IoException("writev failed: ${errnoMessage(e)}", e) }
+            }
+        }
+        return total
+    }
+
     override suspend fun accept(listenFd: Int): Int {
         ensureFd(listenFd)
         while (true) {
