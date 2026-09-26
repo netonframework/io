@@ -44,3 +44,12 @@
 ## §21 TLS — 移出 neton-io 范围（上层负责）；评估资料见 SPEC §18.5、§21.1
 - [ ] linuxX64（153）：epoll / poll 34/34；io_uring 在 Gradle 下出现过 2 次 `io_uring_setup` 失败（AddressTest、UringMappingLeakTest），直接运行 8 次 + 全套 2 次均通过。
       假设：Gradle 守护进程占用约 3 GB 内存时的内存压力（153 共 3.6 GB）；已让失败信息带上 errno（下次出现即可确认）
+
+## §23 补齐功能差距（用户确认 1–7；顺序 23.5 → 23.3 → 23.2 → 23.4 → 23.6 → 23.7 → 23.1）
+- [ ] 23.5 SocketOptions（listen / listenGroup / connect），getsockopt 读回测试
+- [ ] 23.3 writev（sendmsg / IORING_OP_SENDMSG / WSASend）+ shutdownOutput，测试
+- [ ] 23.2 计时轮 + 读/写/空闲超时 + 连接超时 + 帧读取速率 + closeGracefully + Framed.feed/批量 flush + io_uring 读侧反压，测试 + 153 成对
+- [ ] 23.4 maxConnections / pause / resume / shutdown(graceful) + SO_REUSEPORT 接收模式，测试 + 153 成对（吞吐与 Jain）
+- [ ] 23.6 Unix 域套接字（POSIX + Windows），测试 + 153 与 TCP 回环对比
+- [ ] 23.7 BufferPool + 池化 Buffer + Bytes 零拷贝切片，测试 + 内存与成对测量
+- [ ] 23.1 IocpReactor + 可覆盖唤醒，推 CI（结果读取待令牌）

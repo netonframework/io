@@ -677,3 +677,63 @@ IOCP 是 Windows 上的完成型 I/O，与 io_uring 同属一类，沿用 `Uring
 
 **验收**：全部测试在 Windows 上通过（IOCP 与 WSAPoll 两个驱动）；Windows 上与同机 Rust（tokio / geario 的 IOCP）回显成对比较，使用公平客户端。
 **前提**：一台 Windows 测试机（或 CI 的 Windows 执行环境）。
+
+## 23. 补齐与 geario 的 I/O / 网络功能差距（2026-09-26 用户确认：完成 1–7）
+
+范围仍是"高性能 I/O 与网络"，不含 TLS。每项先实现、再测试（macOS 本机两驱动、Linux arm64 colima、Android 模拟器、iOS 模拟器、153 三驱动；Windows 走 CI），
+涉及热路径的项在 153 上与改动前成对测量（公平客户端），性能不得退步（成对比值 ≥ 0.98）。所有新 API 在 `IoStream` 上以默认实现提供，
+过滤层、测试流无需改动即可继续编译。
+
+### 23.1 Windows IOCP 驱动（§22 设计）
+`IocpReactor`（mingwMain），默认驱动；`NETON_IO_DRIVER=wsapoll` 回退。`Reactor` 的跨线程唤醒改为可覆盖（`wakeup()`），IOCP 用
+`PostQueuedCompletionStatus`，唤醒管道改为惰性创建。验收：CI 上 Windows 的 IOCP 与 WSAPoll 两个任务全部测试通过。
+**限制**：只能通过 CI 验证，结果需要仓库 API 访问（令牌问题待用户处理）或用户查看 Actions 页面。
+
+### 23.2 连接层：超时与反压
+- **计时轮**（`Reactor` 内，与驱动无关）：分层级的哈希计时轮，精度 10 ms；流只记录截止时间，活动时只改字段（O(1)，无堆操作），轮到时再核对，过期才触发。
+  时钟每轮循环读一次缓存，热路径不读时钟。
+- **流级超时**（`IoStream.setTimeouts(TimeoutConfig)`，默认全关）：`readTimeout`（单次读挂起超过即抛 `TimeoutException`）、`writeTimeout`、
+  `idleTimeout`（读写均无活动超过即关闭，相当于 keepalive）。触发时和取消一样唤醒挂起的操作（io_uring 同时发 `ASYNC_CANCEL`，缓冲区直到 CQE 才释放）。
+- **连接超时**：`connect(..., options.connectTimeoutMillis)`，每个候选地址单独计时。
+- **帧读取速率**（防慢速攻击，对应 ntex `frame_read_rate`）：`Framed` 在帧未收全时要求：从帧的首字节起 `timeout` 内至少有进展，每收到 `rate` 字节可延长，
+  但总计不超过 `maxTimeout`；违反即 `TimeoutException`。
+- **断开超时**：`IoStream.closeGracefully(timeoutMillis)` = 半关闭写端 → 读到 EOF 或超时 → 关闭。
+- **写反压与合并**：`Framed.feed(item)` 只编码不写；写缓冲超过高水位（默认 64 KB）自动 flush；`flush()` 挂起直到内核接收，天然反压。
+  `serve()` 改为"把已到的请求全部处理完、响应批量 flush 一次"，流水线请求不再一帧一次 syscall（顺序不变；单请求时延迟不变）。
+- **读侧反压**：io_uring multishot 已收未读的数据超过上限（默认 256 KB/连接）时暂停重新挂 multishot，读空后恢复。
+- 验收：各超时、帧速率、断开超时、反压的单元测试；153 上回显成对 ≥ 0.98（超时全关时热路径无额外成本）；流水线场景（每连接 16 个并发请求）批量 flush 的收益实测。
+
+### 23.3 一次写多块与半关闭
+- `IoStream.writev(buffers)`：POSIX 用 `sendmsg`（Linux 带 `MSG_NOSIGNAL`），io_uring 用 `IORING_OP_SENDMSG`，Windows 用多 `WSABUF` 的 `WSASend`；
+  部分写入时按实际字节推进各缓冲区。默认实现逐个 `write`。
+- `IoStream.shutdownOutput()`：`shutdown(SHUT_WR)` / `SD_SEND`，对端读到 EOF，本端仍可读。
+- 验收：多块写的边界测试（部分写、空块、大量小块）；半关闭后对端 EOF 而本端继续读；`Framed` 批量 flush 使用 writev 的实测。
+
+### 23.4 服务端
+- `TcpServerGroup` 增加：`maxConnections`（全组上限，到达后暂停 accept，连接结束后恢复）、`pause()` / `resume()` 接收、
+  `shutdown(gracefulTimeoutMillis)`（停止接收 → 等活动连接结束或超时 → 取消剩余连接）、`activeConnections`。
+  连接协程挂在组内专用的 `SupervisorJob` 下，便于统一取消。
+- **SO_REUSEPORT 接收模式**（Linux）：每个 reactor 各自一个监听 socket、各自 accept，内核分发，无跨线程移交。`acceptMode = Handoff | ReusePort`，
+  153 上成对测量吞吐与公平性，胜出者作为 Linux 默认。
+- 验收：上限、暂停/恢复、平滑停机的测试；ReusePort 的吞吐与 Jain 指数。
+
+### 23.5 套接字选项
+`SocketOptions(noDelay = true, keepAlive = null | KeepAlive(idleSec, intervalSec, count), sendBufferSize, receiveBufferSize, backlog = 1024,
+reuseAddress = true, reusePort = false, lingerSec = null, connectTimeoutMillis = 0)`，用于 `listen`、`listenGroup`、`connect`；监听端的选项同样施加到接受的连接上。
+平台差异在各自实现中处理（macOS 的 `TCP_KEEPALIVE` 对应 Linux 的 `TCP_KEEPIDLE`；Windows 10 起支持 `TCP_KEEPIDLE/KEEPINTVL/KEEPCNT`；Windows 不设 `SO_REUSEADDR`）。
+验收：每个选项设置后用 `getsockopt` 读回核对。
+
+### 23.6 Unix 域套接字
+`listenUnix(path, options)`、`connectUnix(path)`，以及 `listenGroup` 的 Unix 版本；Linux / Android / Apple 与 Windows（10 1803+ 的 AF_UNIX）。
+`sockaddr_un` 按平台布局构造（Apple 有 `sun_len`）；Linux 支持抽象命名空间（路径以 `@` 开头）。监听前若路径是无人监听的旧 socket 文件则删除。
+验收：本机回显、路径过长报错、旧 socket 文件处理；153 上与 TCP 回环的吞吐对比。
+
+### 23.7 缓冲池与零拷贝
+- **`BufferPool`**：每线程一个（无锁），按 2 KB–64 KB 的 2 的幂分级缓存数组，每级数量与总字节有上限。
+- **池化 `Buffer`**：数组在首次写入时才向池申请，读空时归还——空闲连接不占缓冲；增长时换更大一级、归还旧的。`Io` 的读写缓冲默认池化。
+- **`Bytes`**：不可变零拷贝切片（数组 + 偏移 + 长度），`Buffer.readSlice(n)` 不拷贝；被切片引用的数组标记为共享，之后 `Buffer` 需要整理或复用时改为换新数组（写时复制），
+  共享数组不再回池，由 GC 回收——切片永不会被改写。`writev` 接受 `Bytes`。
+- 验收：池化后 1000 个空闲连接的内存；切片在后续读写、整理后内容不变的测试；153 上回显成对 ≥ 0.98。
+
+### 执行顺序
+23.5 → 23.3 → 23.2 → 23.4 → 23.6 → 23.7 → 23.1（IOCP 代码随时推 CI，验证取决于能否读取 CI 结果）。
