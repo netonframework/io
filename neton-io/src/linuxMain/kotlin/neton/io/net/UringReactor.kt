@@ -905,11 +905,11 @@ internal class UringReactor : Reactor() {
 
     override fun runUntil(root: Job) {
         armWake()
-        while (!root.isCompleted) {
+        while (true) {
             absorbExternal()
             fireTimers()
             drainTasks()
-            if (root.isCompleted) break
+            if (readyToStop(root)) break
 
             var timerMs = nextTimerMillis()
             val sweepWait = idleArrays && !hasTasks() && (timerMs < 0 || timerMs > IDLE_SWEEP_MS)
@@ -975,6 +975,22 @@ internal class UringReactor : Reactor() {
      * would cancel them asynchronously, after close() returns. If the drain does not converge the
      * remaining buffers stay pinned (a leak, reported), never a use-after-free.
      */
+    // SPEC §28.3: the loop does not leave CLOSING-bound while the kernel still owns buffers.
+    override fun inFlightKernelOps(): Int = liveOps
+
+    /** Root job done: nobody waits any more, so cancel what is still in flight and reap it in the loop. */
+    override fun cancelInFlightOps() {
+        for (i in 0 until pendingSendCount) {
+            val slot = slots[pendingSends[i]] ?: continue
+            if (slot.live) { slot.cont = null; slot.pin?.let { it.refs--; it.release() }; releaseSlot(pendingSends[i], slot) }
+        }
+        pendingSendCount = 0
+        for (i in slots.indices) {
+            val slot = slots[i] ?: continue
+            if (slot.live) { slot.cont = null; requestCancel((i.toULong() shl 32) or slot.gen.toULong()) }
+        }
+    }
+
     override fun shutdown() {
         // Short sends waiting for resubmission have no op in flight: release them first.
         for (i in 0 until pendingSendCount) {

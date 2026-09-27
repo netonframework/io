@@ -143,6 +143,68 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     // ---- cross-thread dispatch: MPSC stack + self-pipe wakeup
     private class ExtNode(val block: Runnable, val next: ExtNode?)
     private val external = AtomicReference<ExtNode?>(null)
+
+    // ---- SPEC §28.3 lifecycle: RUNNING → DRAINING → CLOSING → STOPPED (only moves forward).
+    // DRAINING: the root job is finishing; every post and resume is still accepted (the children's
+    // endings depend on them). CLOSING: root done, no local work, no kernel op in flight; the external
+    // entry is swapped for [CLOSED_ENTRY] with the same CAS the posters use, then everything accepted
+    // before it runs. STOPPED: the loop has exited; every post is refused.
+    private val lifecycle = kotlin.concurrent.atomics.AtomicInt(RUNNING)
+    private var rootEndHandled = false
+
+    /** Current lifecycle state (tests / diagnostics). */
+    internal val lifecycleState: Int get() = lifecycle.load()
+
+    /** Kernel operations still in flight (completion drivers override; readiness drivers have none). */
+    protected open fun inFlightKernelOps(): Int = 0
+
+    /** Once the root job is done: ask the kernel to cancel what is still in flight (completion drivers). */
+    protected open fun cancelInFlightOps() {}
+
+    /** Tests: kernel ops that were in flight when the loop entered CLOSING (must be 0). */
+    internal var inFlightAtClosing: Int = -1
+        private set
+
+    /**
+     * The driver loop calls this after draining a round; true means exit now (SPEC §28.3). Leaves the
+     * loop running while the root job is still active, while local work is queued, or while the
+     * kernel still owns buffers; then closes the external entry and runs what it had accepted.
+     */
+    protected fun readyToStop(root: Job): Boolean {
+        if (!root.isCompleted) {
+            if (!root.isActive) lifecycle.compareAndSet(RUNNING, DRAINING)
+            return false
+        }
+        lifecycle.compareAndSet(RUNNING, DRAINING)
+        if (!rootEndHandled) { rootEndHandled = true; cancelInFlightOps() }
+        if (hasTasks() || inFlightKernelOps() > 0) return false
+        inFlightAtClosing = inFlightKernelOps()
+        lifecycle.store(CLOSING)
+        var node = external.exchange(CLOSED_ENTRY)
+        val batch = ArrayList<Runnable>()
+        while (node != null) { batch.add(node.block); node = node.next }
+        for (i in batch.indices.reversed()) tasks.addLast(batch[i])
+        while (hasTasks()) drainTasks()
+        lifecycle.store(STOPPED)
+        return true
+    }
+
+    /**
+     * Post [block] from another thread without throwing: false once the reactor no longer accepts
+     * work (CLOSING / STOPPED, SPEC §28.3); true means it will run exactly once on this reactor.
+     */
+    internal fun tryDispatchExternal(block: Runnable): Boolean {
+        while (true) {
+            val head = external.load()
+            if (head === CLOSED_ENTRY) return false
+            if (external.compareAndSet(head, ExtNode(block, head))) break
+        }
+        wakeup()
+        return true
+    }
+
+    /** On the owner thread: whether local work is still accepted (until the loop has exited). */
+    internal fun acceptsLocalWork(): Boolean = lifecycle.load() != STOPPED
     // The self-pipe is created on first use (SPEC §23.1): readiness and io_uring drivers touch
     // [wakeReadFd] while setting up; IOCP overrides [wakeup] and never creates one.
     private val wakePipeLazy = lazy { createWakePipe() }
@@ -245,15 +307,12 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     final override fun dispatch(context: CoroutineContext, block: Runnable) {
         if (isOwnerThread()) {
+            if (lifecycle.load() == STOPPED) throw ReactorStoppedException("dispatch after the reactor stopped")
             tasks.addLast(block)
             return
         }
-        // Another thread: push (lock-free) and wake the loop.
-        while (true) {
-            val head = external.load()
-            if (external.compareAndSet(head, ExtNode(block, head))) break
-        }
-        wakeup()
+        // Another thread: push (lock-free) and wake the loop; refused once the entry is closed.
+        if (!tryDispatchExternal(block)) throw ReactorStoppedException("dispatch to a reactor that is closing or stopped")
     }
 
     /**
@@ -264,11 +323,14 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
      */
     fun postToReactor(block: () -> Unit) {
         if (isOwnerThread()) block()
-        else dispatch(EmptyCoroutineContext, Runnable { block() })
+        // Its callers are cancellation / cleanup hops. A reactor that is closing has no parked
+        // operation of its scope left (SPEC §28.3), so a refused post has nothing to do.
+        else tryDispatchExternal(Runnable { block() })
     }
 
     /** Move externally posted tasks (if any) onto the local queue, oldest first. */
     protected fun absorbExternal() {
+        if (lifecycle.load() >= CLOSING) return          // the entry holds CLOSED_ENTRY now
         var node: ExtNode? = external.exchange(null) ?: return
         val batch = ArrayList<Runnable>()
         while (node != null) { batch.add(node.block); node = node.next }
@@ -428,6 +490,11 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     companion object {
         const val DEFAULT_TASK_BUDGET = 256
+        internal const val RUNNING = 0
+        internal const val DRAINING = 1
+        internal const val CLOSING = 2
+        internal const val STOPPED = 3
+        private val CLOSED_ENTRY = ExtNode(Runnable { }, null)
 
         /**
          * Run a reactor on the calling thread as a long-lived worker: [ready] receives the reactor
@@ -662,3 +729,9 @@ private var statsReactor: Reactor? = null
 fun dumpReactorStats() {
     statsReactor?.printStats()
 }
+
+/**
+ * Work was posted to a reactor that no longer accepts it (SPEC §28.3): it is closing or stopped. Only
+ * coroutines outside the reactor's scope can hit this, which is a lifecycle bug in the caller.
+ */
+class ReactorStoppedException(message: String) : IllegalStateException(message)

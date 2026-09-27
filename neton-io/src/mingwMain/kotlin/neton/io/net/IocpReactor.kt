@@ -483,11 +483,11 @@ internal class IocpReactor : Reactor() {
     private val errs = nativeHeap.allocArray<IntVar>(batch)
 
     override fun runUntil(root: Job) {
-        while (!root.isCompleted) {
+        while (true) {
             absorbExternal()
             fireTimers()
             drainTasks()
-            if (root.isCompleted) break
+            if (readyToStop(root)) break
             val timerMs = nextTimerMillis()
             val block = !(hasTasks() || deferredNext.isNotEmpty() || deferred.isNotEmpty() || timerMs == 0)
             val timeout: UInt = if (!block) 0u else if (timerMs < 0) INFINITE else timerMs.toUInt()
@@ -579,6 +579,16 @@ internal class IocpReactor : Reactor() {
      * while Windows may still touch it; if some never arrive their buffers stay pinned (a leak,
      * reported), never freed under the kernel.
      */
+    // SPEC §28.3: the loop does not leave CLOSING-bound while the kernel still owns buffers.
+    override fun inFlightKernelOps(): Int = liveOps
+
+    override fun cancelInFlightOps() {
+        for (i in slots.indices) {
+            val slot = slots[i] ?: continue
+            if (slot.live) { slot.cont = null; neton_cancel(slot.fd.toSocket(), slot.op) }
+        }
+    }
+
     override fun shutdown() {
         if (liveOps > 0) {
             for (i in slots.indices) {

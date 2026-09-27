@@ -379,11 +379,11 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         val wakeFd = wakeReadFd                     // read once: the property is a lazy (SPEC §23.1)
         ensureFd(wakeFd)
         poller.armRead(wakeFd)
-        while (!root.isCompleted) {
+        while (true) {
             absorbExternal()
             fireTimers()
             drainTasks()
-            if (root.isCompleted) break
+            if (readyToStop(root)) break
 
             var timeout = if (hasTasks() || deferredCount > 0) 0 else nextTimerMillis()
             // Parked reads hold pooled arrays: wake up after IDLE_SWEEP_MS of quiet to give them back.

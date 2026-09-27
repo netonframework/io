@@ -113,6 +113,16 @@ internal class ReactorGroup(private val count: Int) {
         if (i == 0) block() else member(i).reactor.dispatch(EmptyCoroutineContext, Runnable { block() })
     }
 
+    /**
+     * Like [runOn], but false instead of an exception when reactor [i] has already stopped (SPEC §28.3).
+     * A reactor only stops after every coroutine in its scope has ended, so a refusal means there is
+     * nothing of this group left on it.
+     */
+    fun tryRunOn(i: Int, block: () -> Unit): Boolean {
+        if (i == 0) { block(); return true }
+        return member(i).reactor.tryDispatchExternal(Runnable { block() })
+    }
+
     /** Run [block] in a coroutine on reactor [i] and await its result from the caller's reactor. */
     suspend fun <T> callOn(i: Int, block: suspend () -> T): T {
         if (i == 0) return block()
@@ -134,7 +144,8 @@ internal class ReactorGroup(private val count: Int) {
         if (stopped) return
         stopped = true
         stop.complete(Unit)
-        for (i in 1 until count) members[i]?.reactor?.dispatch(EmptyCoroutineContext, Runnable { })
+        // Only a nudge to wake the loop; a worker that is already closing refuses it and needs none (SPEC §28.3).
+        for (i in 1 until count) members[i]?.reactor?.tryDispatchExternal(Runnable { })
         // Queued behind the running reactor job: each thread ends when its reactor has.
         for (w in workers) w.requestTermination(processScheduledJobs = true)
     }
@@ -312,7 +323,9 @@ class TcpServerGroup internal constructor(
      */
     internal fun cancelConnections() {
         forceStopped.store(1)
-        for (i in 0 until reactors) group.runOn(i) { for (j in connJobs[i].toList()) j.cancel() }
+        // A worker reactor that already stopped (no connections left: it only stops after its
+        // coroutines end) refuses the post; there is nothing to cancel there (SPEC §28.3).
+        for (i in 0 until reactors) group.tryRunOn(i) { for (j in connJobs[i].toList()) j.cancel() }
     }
 
     /**

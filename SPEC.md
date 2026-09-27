@@ -1444,3 +1444,18 @@ TLS 1.3（QUIC 所需的 12 项能力见 quic §4）不在 neton-io：2026-09-27
 **§28.11 第 0 步完成（2026-09-27）**：模块改名 `:io`（目录仍为 `neton-io/`），坐标 `com.netonstream:io`，版本 `0.2.0-SNAPSHOT`；CI 与 README 改用 `:io:` 任务；
 msgtrans 依赖改为 `com.netonstream:io`、版本 `0.2.0-SNAPSHOT`；neton-io / msgtrans / pulsekit 三个工程在 macOS 上编译通过；POM 为 `com.netonstream:io:0.2.0-SNAPSHOT`。
 Gradle 任务路径从 `:neton-io:…` 变为 `:io:…`。旧坐标的重定位 POM 在发布 0.2.0 时生成。
+
+**§28.11 第 1 步完成（2026-09-27）**：`Reactor` 增加生命周期（`readyToStop`：根作业结束后继续循环，直到本地无任务、内核无在途操作；随后以 CAS 把外部入口
+换成哨兵、执行此前已接受的投递、进入 STOPPED）；驱动钩子 `inFlightKernelOps` / `cancelInFlightOps`（io_uring、IOCP 以 `liveOps` 实现）；三个驱动的循环改由
+`readyToStop` 决定退出；`dispatch` 在入口关闭后抛 `ReactorStoppedException`，另有不抛异常的 `tryDispatchExternal`；`ReactorResumer.resume` /
+`resumeWithException` 返回 `Boolean`（其他线程上改走 `tryDispatchExternal`）。
+实施中发现并处理：新语义下，停机过程中向已经退出的工作反应器投递会被拒绝（以前是静默丢失）。
+- `cancelConnections`（强制停机）改用 `tryRunOn`：被拒绝说明该反应器已无连接，无事可做。
+- `ReactorGroup.stop()` 的唤醒改用 `tryDispatchExternal`：已在关闭的反应器不需要唤醒；此前一次偶发失败即来自这里的竞争。
+- `postToReactor`（取消 / 清理时切回反应器）被拒绝时忽略：关闭中的反应器已无本作用域的挂起操作。
+- 交接连接的 `runOn` 保持抛异常：服务期间反应器不可能已停止，被拒绝即是缺陷。
+测试 `ReactorLifecycleTest`：(a) 排空期间跨线程结果、名字解析、取消通知都送达；(b) 进入 CLOSING 时在途内核操作为 0；(c) 300 个反应器生命周期内约 22 万次外部投递与关闭
+竞争，接受数 = 执行数（把入口哨兵临时去掉时测试挂起，被强制结束）；(d) 所属线程上 `resume` 排队、不在调用处执行；(e) 槽位约定下 1 万次取消与恢复竞争，每次恰好一次。
+msgtrans：`ReactorQueue` 对被拒绝的恢复关闭队列并报告；`MSGTRANS_REACTOR_RESUMER=0` 关闭快速路径（msgtrans §15.1）。
+验证：neton-io macOS 117/117（2 次），colima Linux arm64 io_uring / multishot / epoll 各 119/119（各 3 次）；msgtrans macOS 与 Linux io_uring / epoll 在
+`MSGTRANS_REACTOR_RESUMER` = 1 / 0 下均 44/44；mingwX64、Android、iOS 编译通过。
