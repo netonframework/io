@@ -821,3 +821,9 @@ neton-io 自身收发路径已零分配，但上层协议每条消息仍需分�
 - 默认改为单次读；`NETON_IO_URING_MULTISHOT=1` 保留 multishot（空闲连接不占读缓冲时更省内存）。
 - 验收：153 上单次（零分配）对 multishot 与 geario，128 B / 4 KB / 64 KB × 单核 / ×4 100 连接，单次在各点不劣于两者较好者（噪声内）；
   每请求分配 0；三驱动全部测试与 msgtrans 测试通过。
+- **公平性（v43–v44，raw `docs/benchmarks/2026-09-27-153-{fair64,v44-pf}-raw.txt`）**：64 KB / 1000 连接（服务端与客户端分核）下，单次 RECV
+  约 10 % 的连接 8 s 内只完成 1 个请求（p10 = 1，Jain 0.54–0.79）；快照显示这些连接的 socket 里已有完整请求未读。关闭 DEFER_TASKRUN 同样饿死，
+  去掉每轮任务预算或加 `IORING_RECVSEND_POLL_FIRST` 均可消除；POLL_FIRST 吞吐与不加持平（0.96–1.03）、64 KB 略优。
+  机制：不加 POLL_FIRST 时数据已到的 RECV 在提交时当场完成，忙碌连接反复走这条路径，先前挂起的 RECV 迟迟不完成（内核层面的确切原因未查明）。
+  **单次 RECV 默认带 POLL_FIRST**（geario 相同），`NETON_IO_URING_POLL_FIRST=0` 关闭。
+

@@ -1,0 +1,21 @@
+single qps=60100 p99=33277.8 min/p10/med/max=1/92/481/1104 jain=0.769
+single-pf qps=66947 p99=24915.7 min/p10/med/max=370/392/459/1058 jain=0.915
+single-b0 qps=57310 p99=23921.0 min/p10/med/max=266/323/489/964 jain=0.959
+ms qps=27465 p99=60133.3 min/p10/med/max=157/168/212/375 jain=0.959
+single qps=48516 p99=17261.8 min/p10/med/max=1/1/660/1166 jain=0.572
+single-pf qps=55752 p99=25184.1 min/p10/med/max=332/361/427/1264 jain=0.939
+single-b0 qps=51725 p99=26880.4 min/p10/med/max=203/256/430/1191 jain=0.920
+ms qps=28544 p99=58045.9 min/p10/med/max=169/179/224/355 jain=0.967
+single qps=63612 p99=23375.1 min/p10/med/max=1/1/594/1133 jain=0.789
+single-pf qps=57593 p99=24404.8 min/p10/med/max=381/402/451/934 jain=0.981
+single-b0 qps=53123 p99=26425.2 min/p10/med/max=273/301/396/1019 jain=0.931
+ms qps=26681 p99=60542.7 min/p10/med/max=156/166/212/330 jain=0.969
+single qps=53676 p99=14002.3 min/p10/med/max=1/1/715/1291 jain=0.540
+single-pf qps=66049 p99=35820.0 min/p10/med/max=211/266/466/1122 jain=0.885
+single-b0 qps=66827 p99=31923.8 min/p10/med/max=320/400/496/1146 jain=0.943
+ms qps=28541 p99=58246.6 min/p10/med/max=175/183/225/369 jain=0.973
+single qps=63456 p99=33162.6 min/p10/med/max=282/361/527/1039 jain=0.965
+single-pf qps=74480 p99=32920.4 min/p10/med/max=258/310/650/1002 jain=0.927
+single-b0 qps=71446 p99=34551.1 min/p10/med/max=294/360/603/979 jain=0.954
+ms qps=28207 p99=57956.6 min/p10/med/max=187/199/215/348 jain=0.984
+# done

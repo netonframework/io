@@ -1,0 +1,127 @@
+# F: fairness 64 KB / 1000 conns, server cores 0-1, client 2-3
+F single qps=54744 min/p10/med=1/1/542 jain=0.744
+F pf qps=71425 min/p10/med=410/424/502 jain=0.936
+F legacy qps=61924 min/p10/med=1/1/572 jain=0.704
+F geario qps=36081 min/p10/med=278/280/289 jain=0.998
+F single qps=51127 min/p10/med=1/1/603 jain=0.637
+F pf qps=56244 min/p10/med=179/207/472 jain=0.871
+F legacy qps=56061 min/p10/med=1/1/629 jain=0.637
+F geario qps=36382 min/p10/med=275/282/291 jain=0.999
+F single qps=63521 min/p10/med=1/1/597 jain=0.700
+F pf qps=70960 min/p10/med=289/391/585 jain=0.952
+F legacy qps=56985 min/p10/med=1/1/585 jain=0.692
+F geario qps=36452 min/p10/med=206/208/217 jain=0.858
+F single qps=56076 min/p10/med=1/1/626 jain=0.652
+F pf qps=66461 min/p10/med=260/366/437 jain=0.893
+F legacy qps=54813 min/p10/med=1/1/591 jain=0.668
+F geario qps=35714 min/p10/med=268/272/283 jain=0.997
+# M: matrix
+geario conns=12 pin=1 payload=128 qps=108324 p99=215.9 jain=1.000 min=53622
+single conns=12 pin=1 payload=128 qps=130069 p99=132.1 jain=1.000 min=64744
+pf conns=12 pin=1 payload=128 qps=129884 p99=127.6 jain=1.000 min=64850
+geario conns=100 pin=0 payload=128 qps=264345 p99=985.0 jain=0.985 min=12216
+single conns=100 pin=0 payload=128 qps=261946 p99=1034.4 jain=0.984 min=13353
+pf conns=100 pin=0 payload=128 qps=255510 p99=1331.0 jain=0.990 min=13229
+geario conns=1000 pin=0 payload=128 qps=199362 p99=8831.0 jain=0.986 min=1000
+single conns=1000 pin=0 payload=128 qps=216726 p99=7753.6 jain=0.970 min=881
+pf conns=1000 pin=0 payload=128 qps=219201 p99=7358.0 jain=0.951 min=946
+geario conns=12 pin=1 payload=4096 qps=96785 p99=223.3 jain=1.000 min=48255
+single conns=12 pin=1 payload=4096 qps=123437 p99=146.6 jain=1.000 min=61601
+pf conns=12 pin=1 payload=4096 qps=112022 p99=148.1 jain=1.000 min=55846
+geario conns=100 pin=0 payload=4096 qps=223711 p99=866.6 jain=0.990 min=11943
+single conns=100 pin=0 payload=4096 qps=237540 p99=1074.8 jain=0.971 min=10406
+pf conns=100 pin=0 payload=4096 qps=229768 p99=1068.1 jain=0.989 min=11251
+geario conns=1000 pin=0 payload=4096 qps=150944 p99=12487.4 jain=0.995 min=808
+single conns=1000 pin=0 payload=4096 qps=188336 p99=13465.3 jain=0.970 min=776
+pf conns=1000 pin=0 payload=4096 qps=189692 p99=9007.8 jain=0.977 min=819
+geario conns=12 pin=1 payload=65536 qps=21945 p99=669.4 jain=1.000 min=10908
+single conns=12 pin=1 payload=65536 qps=40625 p99=377.2 jain=1.000 min=20276
+pf conns=12 pin=1 payload=65536 qps=42201 p99=358.4 jain=1.000 min=21041
+geario conns=100 pin=0 payload=65536 qps=45331 p99=3695.2 jain=0.991 min=2296
+single conns=100 pin=0 payload=65536 qps=68669 p99=2464.3 jain=0.997 min=3852
+pf conns=100 pin=0 payload=65536 qps=68774 p99=2595.8 jain=0.989 min=3385
+geario conns=1000 pin=0 payload=65536 qps=34867 p99=40193.7 jain=0.968 min=171
+single conns=1000 pin=0 payload=65536 qps=53277 p99=28315.9 jain=0.834 min=86
+pf conns=1000 pin=0 payload=65536 qps=54639 p99=23586.4 jain=0.895 min=174
+pf conns=12 pin=1 payload=128 qps=153505 p99=105.5 jain=1.000 min=76570
+geario conns=12 pin=1 payload=128 qps=149512 p99=159.7 jain=1.000 min=73874
+single conns=12 pin=1 payload=128 qps=155065 p99=108.6 jain=1.000 min=77403
+pf conns=100 pin=0 payload=128 qps=326444 p99=666.4 jain=0.973 min=15815
+geario conns=100 pin=0 payload=128 qps=333851 p99=663.4 jain=0.996 min=17590
+single conns=100 pin=0 payload=128 qps=335086 p99=761.6 jain=0.968 min=17408
+pf conns=1000 pin=0 payload=128 qps=257020 p99=5657.6 jain=0.987 min=1210
+geario conns=1000 pin=0 payload=128 qps=222142 p99=8305.2 jain=0.997 min=1224
+single conns=1000 pin=0 payload=128 qps=260146 p99=7187.2 jain=0.948 min=1026
+pf conns=12 pin=1 payload=4096 qps=134084 p99=114.3 jain=1.000 min=66900
+geario conns=12 pin=1 payload=4096 qps=100733 p99=207.9 jain=1.000 min=50296
+single conns=12 pin=1 payload=4096 qps=120114 p99=132.0 jain=1.000 min=59926
+pf conns=100 pin=0 payload=4096 qps=233504 p99=764.6 jain=0.975 min=10264
+geario conns=100 pin=0 payload=4096 qps=197776 p99=1071.2 jain=0.994 min=10421
+single conns=100 pin=0 payload=4096 qps=229851 p99=1437.8 jain=0.975 min=10116
+pf conns=1000 pin=0 payload=4096 qps=189978 p99=9689.4 jain=0.959 min=743
+geario conns=1000 pin=0 payload=4096 qps=158561 p99=11179.3 jain=0.939 min=752
+single conns=1000 pin=0 payload=4096 qps=190910 p99=10025.7 jain=0.958 min=753
+pf conns=12 pin=1 payload=65536 qps=37018 p99=405.1 jain=1.000 min=18483
+geario conns=12 pin=1 payload=65536 qps=20912 p99=711.9 jain=1.000 min=10325
+single conns=12 pin=1 payload=65536 qps=40575 p99=370.3 jain=1.000 min=20247
+pf conns=100 pin=0 payload=65536 qps=64824 p99=2593.2 jain=0.996 min=3610
+geario conns=100 pin=0 payload=65536 qps=43714 p99=3716.7 jain=0.995 min=2475
+single conns=100 pin=0 payload=65536 qps=63684 p99=2640.3 jain=0.984 min=3196
+pf conns=1000 pin=0 payload=65536 qps=50032 p99=39100.0 jain=0.851 min=103
+geario conns=1000 pin=0 payload=65536 qps=37016 p99=39269.4 jain=0.982 min=188
+single conns=1000 pin=0 payload=65536 qps=52450 p99=29056.2 jain=0.864 min=99
+single conns=12 pin=1 payload=128 qps=151894 p99=110.8 jain=1.000 min=75746
+pf conns=12 pin=1 payload=128 qps=129164 p99=128.4 jain=1.000 min=64448
+geario conns=12 pin=1 payload=128 qps=126141 p99=185.7 jain=1.000 min=62387
+single conns=100 pin=0 payload=128 qps=253154 p99=1188.1 jain=0.960 min=12181
+pf conns=100 pin=0 payload=128 qps=231196 p99=1118.1 jain=0.989 min=11814
+geario conns=100 pin=0 payload=128 qps=302220 p99=637.0 jain=0.995 min=12112
+single conns=1000 pin=0 payload=128 qps=255006 p99=7589.8 jain=0.990 min=1226
+pf conns=1000 pin=0 payload=128 qps=251958 p99=8203.0 jain=0.965 min=1044
+geario conns=1000 pin=0 payload=128 qps=227798 p99=7214.5 jain=0.981 min=1231
+single conns=12 pin=1 payload=4096 qps=137537 p99=123.2 jain=1.000 min=68610
+pf conns=12 pin=1 payload=4096 qps=131081 p99=127.0 jain=1.000 min=65447
+geario conns=12 pin=1 payload=4096 qps=115142 p99=182.2 jain=1.000 min=57502
+single conns=100 pin=0 payload=4096 qps=289156 p99=921.7 jain=0.997 min=15841
+pf conns=100 pin=0 payload=4096 qps=287034 p99=751.2 jain=0.976 min=13143
+geario conns=100 pin=0 payload=4096 qps=253755 p99=729.7 jain=0.984 min=12584
+single conns=1000 pin=0 payload=4096 qps=208337 p99=8331.7 jain=0.975 min=881
+pf conns=1000 pin=0 payload=4096 qps=214259 p99=7617.6 jain=0.979 min=1033
+geario conns=1000 pin=0 payload=4096 qps=180879 p99=9630.7 jain=0.953 min=877
+single conns=12 pin=1 payload=65536 qps=41600 p99=341.5 jain=1.000 min=20767
+pf conns=12 pin=1 payload=65536 qps=41710 p99=379.4 jain=1.000 min=20824
+geario conns=12 pin=1 payload=65536 qps=23170 p99=678.8 jain=1.000 min=11522
+single conns=100 pin=0 payload=65536 qps=62758 p99=2911.8 jain=0.995 min=3408
+pf conns=100 pin=0 payload=65536 qps=59527 p99=2793.2 jain=0.995 min=3171
+geario conns=100 pin=0 payload=65536 qps=50888 p99=3340.7 jain=0.999 min=2883
+single conns=1000 pin=0 payload=65536 qps=47344 p99=27902.8 jain=0.798 min=25
+pf conns=1000 pin=0 payload=65536 qps=48704 p99=28257.1 jain=0.883 min=146
+geario conns=1000 pin=0 payload=65536 qps=40360 p99=34615.3 jain=0.990 min=216
+geario conns=12 pin=1 payload=128 qps=109966 p99=211.3 jain=1.000 min=54179
+single conns=12 pin=1 payload=128 qps=112215 p99=152.3 jain=1.000 min=55962
+pf conns=12 pin=1 payload=128 qps=122686 p99=136.8 jain=1.000 min=61220
+geario conns=100 pin=0 payload=128 qps=262584 p99=879.0 jain=0.972 min=12751
+single conns=100 pin=0 payload=128 qps=264076 p99=937.4 jain=0.982 min=13230
+pf conns=100 pin=0 payload=128 qps=253831 p99=1031.7 jain=0.996 min=13973
+geario conns=1000 pin=0 payload=128 qps=193186 p99=9962.2 jain=0.973 min=1013
+single conns=1000 pin=0 payload=128 qps=262974 p99=6781.1 jain=0.969 min=1002
+pf conns=1000 pin=0 payload=128 qps=260947 p99=7785.8 jain=0.972 min=1236
+geario conns=12 pin=1 payload=4096 qps=116653 p99=175.1 jain=1.000 min=58249
+single conns=12 pin=1 payload=4096 qps=137290 p99=122.0 jain=1.000 min=68099
+pf conns=12 pin=1 payload=4096 qps=133669 p99=122.0 jain=1.000 min=66606
+geario conns=100 pin=0 payload=4096 qps=254952 p99=785.4 jain=0.996 min=13516
+single conns=100 pin=0 payload=4096 qps=289232 p99=640.1 jain=0.989 min=14243
+pf conns=100 pin=0 payload=4096 qps=283120 p99=641.0 jain=0.997 min=15295
+geario conns=1000 pin=0 payload=4096 qps=185106 p99=11086.7 jain=0.786 min=748
+single conns=1000 pin=0 payload=4096 qps=209336 p99=8412.7 jain=0.967 min=832
+pf conns=1000 pin=0 payload=4096 qps=197791 p99=9313.0 jain=0.985 min=907
+geario conns=12 pin=1 payload=65536 qps=17636 p99=782.4 jain=1.000 min=8763
+single conns=12 pin=1 payload=65536 qps=37811 p99=385.5 jain=1.000 min=18867
+pf conns=12 pin=1 payload=65536 qps=38572 p99=370.2 jain=1.000 min=19258
+geario conns=100 pin=0 payload=65536 qps=46543 p99=3062.3 jain=0.996 min=2566
+single conns=100 pin=0 payload=65536 qps=62204 p99=2964.2 jain=0.993 min=3384
+pf conns=100 pin=0 payload=65536 qps=63107 p99=2460.1 jain=0.997 min=3545
+geario conns=1000 pin=0 payload=65536 qps=37315 p99=35541.1 jain=0.993 min=196
+single conns=1000 pin=0 payload=65536 qps=48595 p99=26911.5 jain=0.729 min=1
+pf conns=1000 pin=0 payload=65536 qps=54656 p99=24432.4 jain=0.913 min=171
+# done

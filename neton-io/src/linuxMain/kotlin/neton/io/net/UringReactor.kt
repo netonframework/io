@@ -207,8 +207,12 @@ internal class UringReactor : Reactor() {
     private var rqBytes = IntArray(64)
     private var msPaused = BooleanArray(64)
     private var msUd = LongArray(64)
-    // Experiment knob (SPEC §24.7 fairness): IORING_RECVSEND_POLL_FIRST on single RECVs.
-    private val recvIoprio: Int = if (getenv("NETON_IO_URING_POLL_FIRST")?.toKString() == "1") 1 else 0
+    // SPEC §24.7: single RECVs carry IORING_RECVSEND_POLL_FIRST. Without it a RECV submitted while data
+    // is waiting completes inline at submission, and busy connections kept that lane while others'
+    // armed RECVs did not complete for seconds (153, 1000 conns: ~10 % of connections served once in
+    // 8 s). With it every read waits for readiness first and completes in arrival order (as geario
+    // does). NETON_IO_URING_POLL_FIRST=0 turns it off.
+    private val recvIoprio: Int = if (getenv("NETON_IO_URING_POLL_FIRST")?.toKString() == "0") 0 else IORING_RECVSEND_POLL_FIRST
     private val maxQueuedPerConn: Int = getenv("NETON_IO_URING_MAX_QUEUED")?.toKString()?.toIntOrNull() ?: (256 * 1024)
     private var msEof = BooleanArray(64)
     private var msErr = IntArray(64)
@@ -984,6 +988,7 @@ internal class UringReactor : Reactor() {
         const val DRAIN_ROUNDS = 1000
         /** [msTake]: nothing queued, no EOF, no error — the reader must wait. */
         const val NOTHING_QUEUED = Int.MIN_VALUE
+        const val IORING_RECVSEND_POLL_FIRST = 1
         const val IDLE_SWEEP_MS = 50
         const val SWEEP_ROUNDS = 1024
         /** user_data at or above this belongs to a control op (wake poll / timeout / cancel), not a slot. */
