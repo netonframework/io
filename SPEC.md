@@ -1022,3 +1022,8 @@ EPIPE 的 `IoException`，不调用 send。回归测试：`UnixSocketTest.peerGo
 测试进程一旦为 SIGTERM 装了处理函数，`kill` / `timeout` 的 SIGTERM 就不再结束它（这正是语义）；卡住时只能 SIGKILL。
 绑核：在启动任何线程前记录允许的 CPU 集合（新线程继承创建者的掩码）；`AffinityTest` 在 Linux 上确认两个反应器线程各只能运行在一个 CPU 上
 （Apple 跳过）。测试：macOS 86/86，colima Linux arm64 io_uring / multishot / epoll 各 87/87；mingwX64、Android、iOS 编译通过。
+
+**§27.3 / §27.4 实现记录**：`InFlightService` / `limitInFlight`（`Service.kt`，kotlinx `Semaphore`）；`memoryStreamPair`（`core/MemoryStream.kt`，
+每个方向一个有界字节队列，自旋锁只保护一次最多 `capacity` 字节的拷贝，等待用 `CompletableDeferred`）。原来测试目录里的 `memoryPair`
+（无界 channel，无反压、无半关闭）改为调用它。测试：`InFlightServiceTest`（10 个并发调用峰值 3；取消等待者不漏许可）、`MemoryStreamTest`
+（Framed 回显、容量反压、半关闭、关闭、跨线程 20 万字节）；macOS 93/93。
