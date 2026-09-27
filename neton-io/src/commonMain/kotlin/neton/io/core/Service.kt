@@ -28,6 +28,9 @@ suspend fun <In, Out> serve(framed: Framed<In, Out>, service: Service<In, Out>) 
  * shared by every connection that uses this instance; a call beyond it suspends until one finishes,
  * and since [serve] handles a connection's requests in order, that connection stops reading
  * meanwhile: TCP backpressure reaches the client. Each call adds one coroutine frame.
+ *
+ * It bounds calls being executed only — not connections, requests queued in kernel buffers, or
+ * memory — so it is not overload protection on its own; combine it with `maxConnections` (SPEC §27.7).
  */
 class InFlightService<in Req, out Res> internal constructor(private val inner: Service<Req, Res>, val max: Int) : Service<Req, Res> {
     private val permits = Semaphore(max)
