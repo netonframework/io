@@ -920,11 +920,19 @@ epoll 挂起时不占数组（空闲清扫把它还给池）。
 验证：`IdleReadTest`（空闲后收数据 ×3、EOF、取消、关闭；io_uring 上计数确认走了降级路径），colima Linux arm64 全部测试
 io_uring / io_uring multishot / epoll 各 81/81，macOS 80/80。效果以 153 C2 每连接内存与 C1 吞吐（不得回退）衡量。
 
+第一版判定（挂起跨过一个清扫周期，约 50 ms）净收益为负（hc4，同一二进制 `IDLE_POLL` 0 / 1，4 轮，raw `…hc4-raw.txt`）：
+64 活跃 + 50k 空闲内存 158 → 83 MiB，但吞吐 0.92；1k 全活跃吞吐 0.90；50k 全活跃吞吐 0.93、内存 160 → 300 MiB。
+原因：高并发下忙连接两次请求之间本来就要等很久（50k 连接约 0.3 s），忙连接也被降级，每次读变成取消 + POLL + RECV 三个操作。
+现判定改为挂起时长：空闲纪元每 IDLE_READ_MS（1 s）最多前进一次（只在清扫时读时钟，不在每次读时），提交于两个纪元之前的 RECV
+才降级，即挂起 1–2 s。重新按同一矩阵测量；仍无净收益则删除本节代码。
+
 ### 26.6 建立与关闭连接
 **accept 队列**（hc2，`nstat`，raw `docs/benchmarks/2026-09-27-153-hc2-accept-raw.txt`）：建立连接慢的每一轮都对应
 `ListenOverflows`（每次溢出，客户端的 SYN 等 1 s 重传）；不溢出的轮次 neton 与 geario 一样快（10k：0.16–0.17 s 对 0.14 s；50k：0.53 s 对 0.55 s）。
 队列长度 = min(backlog, somaxconn)：neton 默认 1024，geario 2048（`ss -ltn`），153 与 Linux ≥ 5.4 的 somaxconn 为 4096。
-单变量实验：同一二进制 `NETON_IO_BACKLOG` = 1024 / 4096（hc4），再定默认值。
+单变量实验（hc4，同一二进制，4 轮）：backlog 4096 后溢出消失——epoll 50k 建立 2.57 → 0.54 s，io_uring 10k 1.70 → 0.15 s、
+50k 6.23 → 0.81 s（geario 0.80 s）；吞吐不变。默认 backlog 改为 4096（内核再按 somaxconn 截断）。
+关闭时异常的修复经 callgrind 确认（hc5）：每条连接的 `Throwable` / 栈回溯分配消失，`closeStream` 3.88 → 1.88 次分配。
 
 **关闭时的异常**（hc3，callgrind，2000 条连接对 0 条的分配位置差，raw `…hc3-conn-allocs-raw.txt`）：每条连接关闭时
 构造两个 `ClosedException`（`Throwable` 约 14 次分配、2 次栈回溯）——`closeStream` 把它们作为参数传给 `finishRead / finishWrite`，

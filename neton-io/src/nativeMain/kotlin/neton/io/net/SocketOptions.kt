@@ -21,8 +21,11 @@ class SocketOptions(
     val sendBufferSize: Int = 0,
     /** SO_RCVBUF in bytes; 0 leaves the OS default (and its autotuning). */
     val receiveBufferSize: Int = 0,
-    /** Listen backlog. */
-    val backlog: Int = 1024,
+    /**
+     * Listen backlog; the kernel caps it (Linux: net.core.somaxconn, 4096 since 5.4). SPEC §26.6: at
+     * 1024 a burst of connects overflowed the accept queue and each dropped SYN cost the client 1 s.
+     */
+    val backlog: Int = 4096,
     /** SO_REUSEADDR on listeners (POSIX). */
     val reuseAddress: Boolean = true,
     /** SO_REUSEPORT on listeners: several sockets may bind the same port (Linux load-balances them). */

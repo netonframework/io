@@ -13,11 +13,14 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * SPEC §26.5: a read parked longer than the idle sweep (50 ms) gives its pooled buffer back; on
+ * SPEC §26.5: a read parked for 1-2 s gives its pooled buffer back (epoll: after the 50 ms sweep); on
  * io_uring its RECV is cancelled and replaced by a POLL_ADD. Whatever the driver, the parked reader
  * must still get the data, EOF, its cancellation, or the close — and must do so more than once.
  */
 class IdleReadTest {
+    /** Longer than io_uring's idle-read rule (parked 1-2 s). */
+    private val IDLE = 2_200L
+
     private suspend fun pair(port: Int): Pair<IoStream, IoStream> {
         val l = listen("127.0.0.1", port)
         val client = kotlinx.coroutines.coroutineScope { val c = async { connect("127.0.0.1", port) }; val s = l.accept(); l.close(); s to c.await() }
@@ -32,7 +35,7 @@ class IdleReadTest {
         val buf = Buffer(pooled = true)
         for (round in 1..3) {
             val reader = async { buf.clear(); val n = server.read(buf); n to buf.readBytes(buf.readableBytes).decodeToString() }
-            delay(300)                                           // parked across several sweeps
+            delay(IDLE)                                          // parked long enough to be demoted
             send(client, "r$round")
             val (n, text) = withTimeout(2_000) { reader.await() }
             assertEquals(2, n); assertEquals("r$round", text)
@@ -44,7 +47,7 @@ class IdleReadTest {
     fun idleReadSeesEof() = runReactor {
         val (server, client) = pair(21931)
         val reader = async { server.read(Buffer(pooled = true)) }
-        delay(300)
+        delay(IDLE)
         client.close()
         assertEquals(-1, withTimeout(2_000) { reader.await() })
         server.close()
@@ -57,7 +60,7 @@ class IdleReadTest {
         val job = launch {
             try { server.read(Buffer(pooled = true)); fail("read returned") } catch (e: CancellationException) { cancelled = true; throw e }
         }
-        delay(300)
+        delay(IDLE)
         job.cancel()
         withTimeout(2_000) { job.join() }
         assertTrue(cancelled)
@@ -72,7 +75,7 @@ class IdleReadTest {
     fun idleReadEndsWhenItsStreamCloses() = runReactor {
         val (server, client) = pair(21933)
         val reader = async { runCatching { server.read(Buffer(pooled = true)) } }
-        delay(300)
+        delay(IDLE)
         server.close()
         val r = withTimeout(2_000) { reader.await() }
         assertTrue(r.isFailure || r.getOrNull() == -1, "a closed stream's parked read must end, got $r")
