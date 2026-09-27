@@ -827,3 +827,11 @@ neton-io 自身收发路径已零分配，但上层协议每条消息仍需分�
   机制：不加 POLL_FIRST 时数据已到的 RECV 在提交时当场完成，忙碌连接反复走这条路径，先前挂起的 RECV 迟迟不完成（内核层面的确切原因未查明）。
   **单次 RECV 默认带 POLL_FIRST**（geario 相同），`NETON_IO_URING_POLL_FIRST=0` 关闭。
 
+
+### 24.8 io_uring 注册文件（实验，默认关闭）
+`NETON_IO_URING_FIXED_FILES=1`：启动时登记稀疏文件表，流的 socket 放入与 fd 同号的槽，RECV/SEND/SENDMSG 用 `IOSQE_FIXED_FILE`。
+陷阱：文件表在更新后仍持有旧文件，直到更新前提交的请求全部完成，单纯 close() 不会发出 FIN（对端挂起的读永远等待，EdgeTriggeredTest 发现），
+因此已登记的 socket 关闭前先 `shutdown(SHUT_RDWR)`。
+结果（153，6 轮，raw `docs/benchmarks/2026-09-27-153-v46-fixedfiles-raw.txt`）：对默认 io_uring 0.989–1.025，全部在噪声内——无可测收益，保持默认关闭。
+同轮 128 B ×4 100 连接 io_uring 对 geario 0.935（0/6），历次 0.93–1.00：此处为稳定的小幅落后；同场景每请求 CPU 低于 geario（§24.4 p4 剖析），
+推测与客户端同机争用 CPU 的调度有关，尚未定位到服务端可改之处。
