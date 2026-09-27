@@ -1092,3 +1092,12 @@ mingwX64、Android、iOS 编译通过。
 去掉 `bodyStarted` 与完成回调（每连接少一次分配）。handler 结束后库也关闭流（此前取消时依赖 handler 自己关）。
 测试：(a) 父作用域预先取消：handler 不执行、fd 关闭、配额释放恰好一次、集合为空；(b) 创建后、执行前从另一个线程取消（所属反应器被一个
 任务占住，保证取消先于开始）：同上，且集合操作都在所属反应器上；(c) 取消与启动竞争 1000 次：回收次数等于连接数、集合为空、停机完成。
+
+**§27.9 实现与发现**：`startConnection`（ReactorGroup.kt）以 ATOMIC 启动；`launchConnection` 只是转调。竞争测试 (c) 首次运行 3/3 失败
+（300 个连接回收 286 个）——不是回收逻辑，而是**各驱动取消监听里原有的丢失唤醒**：`watchCancellation` 先查 `job.isActive`、再以
+`invokeImmediately = false` 注册回调；取消恰好落在两者之间时回调不会被调用，随后挂起的读 / 写永远无人唤醒。改为 `invokeImmediately = true`
+不行：`postToReactor` 在反应器线程上同步执行，唤醒会早于续体登记。修正：注册后再查一次 `isActive`，已取消则注销并抛出（操作尚未挂起）；
+注册后的取消只能来自别的线程，其唤醒排在这次挂起之后。ReadinessReactor、UringReactor、IocpReactor 与 msgtrans `ReactorQueue` 同样修正。
+之后 (c) 3/3 通过（约 290 个 handler 开始执行、约 10 个在开始前被取消，两条路径都走到）。(a)(b) 针对的旧回调结构没有在旧代码上单独复现
+（它们调用新提取的 `startConnection`）。全部测试：macOS 111/111，colima Linux arm64 三种配置各 113/113；msgtrans macOS 43/43、Linux
+io_uring / epoll 各 43/43；mingwX64、Android、iOS 编译通过。

@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import neton.io.core.ClosedException
@@ -239,31 +240,14 @@ class TcpServerGroup internal constructor(
     /** On reactor [i]'s thread: the stream and its coroutine are born there. */
     private fun launchConnection(i: Int, fd: Int, handler: suspend (IoStream) -> Unit) {
         val m = group.member(i)
-        // The coroutine owns fd and slot once its body runs; one cancelled before that (its reactor's
-        // scope already cancelled) never runs the body's finally, so the completion hands them back.
-        var bodyStarted = false
-        val job = m.scope.launch(start = CoroutineStart.LAZY) {
-            bodyStarted = true
-            val stream = ReactorStream(fd, m.reactor)
-            try {
-                handler(stream)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (t: Throwable) {
-                // One connection's failure (a peer reset, a throwing handler) ends that connection
-                // only. Escaping here cancelled the reactor's scope: every connection on it died, and
-                // with one reactor the whole server (macOS `nc -z` resets the connection).
-                reportConnectionFault(t)
-                stream.close()
-            } finally {
-                connJobs[i].remove(coroutineContext[Job])
-                releaseSlot()
-            }
-        }
-        job.invokeOnCompletion { if (!bodyStarted) { connJobs[i].remove(job); closeFd(fd); releaseSlot() } }
-        connJobs[i].add(job)
-        job.start()
+        startConnection(m.scope, m.reactor, fd, connJobs[i], ::releaseSlot, handler)
     }
+
+    /** Tests: reactor [i]'s scope and reactor. */
+    internal fun memberForTest(i: Int): Pair<CoroutineScope, Reactor> = group.member(i).let { it.scope to it.reactor }
+
+    /** Tests: run [block] on reactor [i]'s thread without waiting. */
+    internal fun runOnForTest(i: Int, block: () -> Unit) = group.runOn(i, block)
 
     private suspend fun reserveSlot() {
         if (maxConnections <= 0 || closing.load() != 0) { active.addAndFetch(1); return }
@@ -466,6 +450,43 @@ fun serveTcp(
         // connections finish: wait for it. Otherwise nobody needs a signal any more.
         if (signalJob != null) { if (signalled) signalJob.join() else signalJob.cancel() }
         group.awaitWorkers()
+    }
+}
+
+/**
+ * Start the coroutine serving one accepted connection [fd] on [reactor]; call on that reactor's thread
+ * (SPEC §27.9). The coroutine owns the fd and the slot from here: it is started ATOMIC, so its body
+ * always runs — even when [scope] is already cancelled or the job is cancelled, from any thread,
+ * before it starts — and everything it owns is registered and given back inside the body, on
+ * [reactor], exactly once: [jobs] (the reactor's own set) gets the job and loses it again, the
+ * stream is closed (idempotent, so a handler that closed it is fine), and [released] runs. A job
+ * cancelled before it started skips [handler].
+ */
+internal fun startConnection(
+    scope: CoroutineScope,
+    reactor: Reactor,
+    fd: Int,
+    jobs: MutableSet<Job>,
+    released: () -> Unit,
+    handler: suspend (IoStream) -> Unit,
+): Job = scope.launch(start = CoroutineStart.ATOMIC) {
+    val self = coroutineContext[Job]!!
+    jobs.add(self)
+    val stream = ReactorStream(fd, reactor)
+    try {
+        ensureActive()                       // cancelled before it started: the handler never runs
+        handler(stream)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        // One connection's failure (a peer reset, a throwing handler) ends that connection only.
+        // Escaping here cancelled the reactor's scope: every connection on it died, and with one
+        // reactor the whole server (macOS `nc -z` resets the connection).
+        reportConnectionFault(t)
+    } finally {
+        stream.close()
+        jobs.remove(self)
+        released()
     }
 }
 
