@@ -1101,3 +1101,14 @@ mingwX64、Android、iOS 编译通过。
 之后 (c) 3/3 通过（约 290 个 handler 开始执行、约 10 个在开始前被取消，两条路径都走到）。(a)(b) 针对的旧回调结构没有在旧代码上单独复现
 （它们调用新提取的 `startConnection`）。全部测试：macOS 111/111，colima Linux arm64 三种配置各 113/113；msgtrans macOS 43/43、Linux
 io_uring / epoll 各 43/43；mingwX64、Android、iOS 编译通过。
+
+### 27.10 强制停机漏掉排队中的连接（2026-09-27 GPT 第四轮审查，成立）
+§27.9 把 `jobs.add` 移进协程体后：连接协程排队未执行时集合里没有它；`cancelConnections` 只取消集合快照，之后该协程启动、未被取消、
+进入 handler，`shutdown` 一直等配额归零。同一类窗口更早还有一段：反应器 0 accept 后经 `runOn` 交给反应器 i 的任务尚在队列里。
+修正：每个监听组一个持续的强制停机状态——`cancelConnections` 先置位、再取消快照；连接协程登记后、进入 handler 前检查，已置位则不进
+handler、直接清理。在所属反应器上"协程体"与"取消快照任务"串行：协程体先跑则已在集合里、被快照取消；快照先跑则状态已在投递快照之前置位。
+平滑停机不置位（不误杀允许完成的连接）；状态只属于该监听组（`listenAlso` 的其他监听组不受影响）。
+测试（生产路径）：反应器 1 被一个任务占住，第二个连接交给它后排在队列里；真正调用 `shutdown(0)`，再放开反应器 1：交给反应器 1 的连接的
+handler 不执行、客户端读到 EOF、配额归零、`shutdown` 返回。
+**§27.10 验证**：该测试在修复前 3/3 挂起（`shutdown(0)` 永不返回，40 s 强制超时，退出码 137），修复后连跑 5 次通过。全部测试：macOS 112/112，
+colima Linux arm64 io_uring / multishot / epoll 各 114/114；mingwX64、Android、iOS 编译通过。

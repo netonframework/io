@@ -178,6 +178,9 @@ class TcpServerGroup internal constructor(
     private val connJobs = Array(reactors) { HashSet<Job>() }
     // Set by close(); accept loops on any reactor check it after every wait.
     private val closing = AtomicInt(0)
+    // SPEC §27.10: set by a forced stop before it cancels the connections it can see; a connection
+    // still queued then (handoff task or coroutine not yet run) checks it before its handler.
+    private val forceStopped = AtomicInt(0)
     private var next = 0
     private var released = false
 
@@ -240,11 +243,14 @@ class TcpServerGroup internal constructor(
     /** On reactor [i]'s thread: the stream and its coroutine are born there. */
     private fun launchConnection(i: Int, fd: Int, handler: suspend (IoStream) -> Unit) {
         val m = group.member(i)
-        startConnection(m.scope, m.reactor, fd, connJobs[i], ::releaseSlot, handler)
+        startConnection(m.scope, m.reactor, fd, connJobs[i], ::releaseSlot, { forceStopped.load() != 0 }, handler)
     }
 
     /** Tests: reactor [i]'s scope and reactor. */
     internal fun memberForTest(i: Int): Pair<CoroutineScope, Reactor> = group.member(i).let { it.scope to it.reactor }
+
+    /** Tests: connections handed to reactor [i] so far. */
+    internal fun handledForTest(i: Int): Int = group.handled[i].load()
 
     /** Tests: run [block] on reactor [i]'s thread without waiting. */
     internal fun runOnForTest(i: Int, block: () -> Unit) = group.runOn(i, block)
@@ -298,8 +304,14 @@ class TcpServerGroup internal constructor(
         releaseReactors()
     }
 
-    /** Cancel every connection being served now (a graceful [shutdown] then ends at once). Reactor 0 only. */
+    /**
+     * Cancel every connection of this group, including ones not yet running (a graceful [shutdown]
+     * then ends at once). The flag is set first: on each reactor a connection's body and this
+     * cancel task run one after the other, so the body either is in the set when the task runs or
+     * sees the flag (SPEC §27.10). Reactor 0 only.
+     */
     internal fun cancelConnections() {
+        forceStopped.store(1)
         for (i in 0 until reactors) group.runOn(i) { for (j in connJobs[i].toList()) j.cancel() }
     }
 
@@ -460,7 +472,7 @@ fun serveTcp(
  * before it starts — and everything it owns is registered and given back inside the body, on
  * [reactor], exactly once: [jobs] (the reactor's own set) gets the job and loses it again, the
  * stream is closed (idempotent, so a handler that closed it is fine), and [released] runs. A job
- * cancelled before it started skips [handler].
+ * cancelled before it started, or whose server [forceStopped] meanwhile, skips [handler].
  */
 internal fun startConnection(
     scope: CoroutineScope,
@@ -468,13 +480,17 @@ internal fun startConnection(
     fd: Int,
     jobs: MutableSet<Job>,
     released: () -> Unit,
+    forceStopped: () -> Boolean,
     handler: suspend (IoStream) -> Unit,
 ): Job = scope.launch(start = CoroutineStart.ATOMIC) {
     val self = coroutineContext[Job]!!
     jobs.add(self)
     val stream = ReactorStream(fd, reactor)
     try {
-        ensureActive()                       // cancelled before it started: the handler never runs
+        // Cancelled before it started, or its server was force-stopped while it was queued (and so
+        // not in the set the stop cancelled; SPEC §27.10): the handler never runs.
+        if (forceStopped()) throw kotlinx.coroutines.CancellationException("server stopped")
+        ensureActive()
         handler(stream)
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
