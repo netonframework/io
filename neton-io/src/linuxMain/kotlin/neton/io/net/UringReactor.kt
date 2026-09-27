@@ -142,7 +142,10 @@ internal class UringReactor : Reactor() {
         // SPEC §23.3: a vectored send owns extra pins and a native msghdr + iovec block until its CQE.
         var extraPins: Array<Pinned<ByteArray>>? = null; var nativeBlock: CPointer<ByteVar>? = null
         // SPEC §24: a whole-buffer send completed by the reactor (resubmitted after short sends).
-        var sendBuf: Buffer? = null; var sendTotal = 0 }
+        var sendBuf: Buffer? = null; var sendTotal = 0
+        // A whole-buffer send whose writer was cancelled or timed out: the SEND is cancelled in the
+        // kernel and the writer is resumed with this once its CQE has said how much went out.
+        var sendAbort: Throwable? = null }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -169,7 +172,7 @@ internal class UringReactor : Reactor() {
 
     private fun releaseSlot(idx: Int, slot: Slot) {
         slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false; slot.isWrite = false
-        slot.sendBuf = null
+        slot.sendBuf = null; slot.sendAbort = null
         if (slot.nativeBlock != null) releaseVectored(slot)     // writev only; keeps this path small enough to inline
         freeSlots[freeTop++] = idx
         liveOps--
@@ -417,10 +420,23 @@ internal class UringReactor : Reactor() {
             if (!slot.live || slot.fd != fd) continue
             val c = slot.cont ?: continue
             if (c.context[Job] !== job) continue
+            if (slot.sendBuf != null) { abortSend(i, slot, ex); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, ex)
             if (slot.cancelOnAbort) requestCancel((i.toULong() shl 32) or slot.gen.toULong())
         }
+    }
+
+    /**
+     * A whole-buffer send whose writer gave up (cancelled, timed out). Resuming the writer now would
+     * leave the SEND running on its buffer while a successor may already reuse it (msgtrans' INLINE
+     * writer hands the buffer on), so the SEND is cancelled in the kernel and the writer is resumed
+     * with [cause] from [onSendCqe], after the buffer has been advanced by what actually went out.
+     */
+    private fun abortSend(idx: Int, slot: Slot, cause: Throwable) {
+        if (slot.sendAbort != null) return
+        slot.sendAbort = cause
+        requestCancel((idx.toULong() shl 32) or slot.gen.toULong())
     }
 
     /**
@@ -435,6 +451,7 @@ internal class UringReactor : Reactor() {
             if (!slot.live || slot.fd != fd || slot.multishot) continue
             if (if (slot.isWrite) !writes else !reads) continue
             val c = slot.cont ?: continue
+            if (slot.sendBuf != null) { abortSend(i, slot, cause); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, cause)
             if (slot.cancelOnAbort) requestCancel((i.toULong() shl 32) or slot.gen.toULong())
@@ -662,10 +679,23 @@ internal class UringReactor : Reactor() {
     /** A send CQE: account it; resubmit the rest after reaping, or finish and resume the writer. */
     private fun onSendCqe(idx: Int, slot: Slot, res: Int) {
         stats?.let { it.writes++; if (res > 0) it.writeBytes += res }
-        val src = slot.sendBuf!!
-        if (res >= 0) { src.consumeSent(res); slot.sendTotal += res }
         val cont = slot.cont
-        if (res >= 0 && cont != null && src.readableBytes > 0) {
+        if (cont == null) {
+            // The stream was closed under the SEND: its buffer is abandoned, never touched again.
+            slot.pin?.let { it.refs--; it.release() }
+            releaseSlot(idx, slot)
+            return
+        }
+        val src = slot.sendBuf!!
+        if (res > 0) { src.consumeSent(res); slot.sendTotal += res }
+        val abort = slot.sendAbort
+        if (abort != null) {                       // cancelled / timed out: the buffer now shows what went out
+            slot.pin?.let { it.refs--; it.release() }
+            releaseSlot(idx, slot)
+            enqueueResumeInt(cont, 0, abort)
+            return
+        }
+        if (res >= 0 && src.readableBytes > 0) {
             if (pendingSendCount == pendingSends.size) pendingSends = pendingSends.copyOf(pendingSendCount * 2)
             pendingSends[pendingSendCount++] = idx
             return
@@ -688,6 +718,14 @@ internal class UringReactor : Reactor() {
             if (!slot.live) continue
             val src = slot.sendBuf!!
             val pin = slot.pin!!
+            val abort = slot.sendAbort
+            if (abort != null && slot.cont != null) {   // gave up between two SENDs: nothing in flight
+                val c = slot.cont!!
+                slot.cont = null
+                pin.refs--; pin.release(); releaseSlot(idx, slot)
+                enqueueResumeInt(c, 0, abort)
+                continue
+            }
             if (slot.cont == null || pin.array !== src.backingArray()) {
                 slot.cont?.let { slot.cont = null; enqueueResumeInt(it, 0, IoException("write buffer changed while sending", 0)) }
                 pin.refs--; pin.release(); releaseSlot(idx, slot); continue
@@ -743,7 +781,9 @@ internal class UringReactor : Reactor() {
             val cont = slot.cont
             if (cont == null && !slot.multishot) continue
             slot.cont = null
-            if (cont != null) enqueueResumeInt(cont, 0, ClosedException())
+            // A send already being aborted keeps its cause (e.g. the writer's cancellation): the
+            // writer must see the same outcome it asked for, not a closed stream.
+            if (cont != null) enqueueResumeInt(cont, 0, slot.sendAbort ?: ClosedException())
             requestCancel((i.toULong() shl 32) or slot.gen.toULong())
         }
         if (multishot && fd < msArmed.size) {
