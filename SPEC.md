@@ -1112,3 +1112,134 @@ handler、直接清理。在所属反应器上"协程体"与"取消快照任务"
 handler 不执行、客户端读到 EOF、配额归零、`shutdown` 返回。
 **§27.10 验证**：该测试在修复前 3/3 挂起（`shutdown(0)` 永不返回，40 s 强制超时，退出码 137），修复后连跑 5 次通过。全部测试：macOS 112/112，
 colima Linux arm64 io_uring / multishot / epoll 各 114/114；mingwX64、Android、iOS 编译通过。
+
+## 28. 底座定位、契约与路线图（2026-09-27，待整体评审；评审通过前不写代码）
+
+用户："neton-io 就仅仅是 io 和网络层的底座，类似于 geario 和 tokio，形成一些标准化的底座建设，别人可以基于 neton-io 实现 http 1.1
+websocket http/2 quic http/3 的库，最终可能这些库又可以被 neton 框架使用。" GPT 两轮意见已并入本节（契约先于实现；公平性与 Windows 先于
+新能力；一致性套件区分必选与可选；第二个消费者须覆盖真实的半包 / 粘包 / 背压 / 取消 / 关闭；数据报层只列需求）。
+
+### 28.1 定位与边界
+```
+Neton 框架 / PulseKit / 其他应用
+                ↓
+HTTP/1.1 · WebSocket · HTTP/2 · QUIC/HTTP/3 · msgtrans（各自独立的库）
+                ↓
+neton-io：异步 I/O、网络、调度、缓冲、背压、生命周期
+                ↓
+epoll / kqueue / io_uring / IOCP
+```
+- **neton-io 负责**：I/O 契约（读写、EOF、半关闭、取消、超时、错误、部分写入、缓冲所有权）；执行模型（连接归属、跨线程投递、多反应器、
+  公平性、阻塞工作如何移出反应器）；资源控制（缓冲复用、连接上限、有界排队、背压、可靠停机）；扩展接口（包装字节流、编解码器、组合服务，
+  不需要访问 fd 表或调度队列）；可观测性（队列、连接、缓冲、调度延迟）。
+- **不在 neton-io**：HTTP 各版本、WebSocket、TLS（可组合的独立模块，经 `Filter` 包装 `IoStream`）、QUIC 的重传 / 拥塞控制 / 流管理、
+  HTTP/3 语义、压缩。
+- **成熟度判据**：msgtrans 与一个独立的第二协议实现（§28.7）都只依赖公开接口工作，实现过程中不需要反复改 neton-io 内部；每一处需要改的地方
+  都作为底座缺口记录并修正。现状：msgtrans 只用公开 API（13 个符号：`IoStream`、`Framed`、`Io`、`Encoder` / `Decoder`、`Buffer`、`connect` /
+  `listen` / `listenGroup`、`TcpServerGroup` / `TcpListener`、`IoException` / `ClosedException`、`ReactorResumer`）。
+
+### 28.2 公开 API 分级
+| 级别 | 内容 | 承诺 |
+|---|---|---|
+| 稳定契约 | `IoStream` / `Filter`、`Buffer` / `Bytes` / `BufferPool`、`Codec` / `Framed` / `Io`、`Service` / `serve` / `limitInFlight`、`connect` / `listen` / `listenGroup` / `listenAlso` / `serveTcp` / `TcpServerGroup`、`SocketOptions`、Unix 域套接字、`awaitSignal` / `shutdownOnSignal`、`memoryStreamPair` | 语义由 §28.6 一致性套件与 KDoc 约束；破坏性变更须先改 SPEC |
+| 可选性能扩展 | `ReactorResumer` / `reactorResumer`（§28.3） | 契约明确；普通协议实现不需要它 |
+| 运维 / 诊断 | `GcTuning`、`GcStats`、`NETON_IO_*` 环境变量、`NETON_IO_STATS` | 可用但不承诺格式稳定；§28.8 给出正式的可观测性 API |
+| 基准程序 | `echoServer`、`echoClient` 等可执行文件 | 不属于库 API |
+
+### 28.3 `ReactorResumer` 契约（现在就定，不等第二个协议）
+现状（ReactorResumer.kt）：在所属反应器线程上调用 → 把续体与值放入 Any 恢复环，**排队、不立即执行**（在本轮或下一轮 `drainTasks` 中、
+排在 Unit / Int 环之后运行）；在其他线程上调用 → 退回 `intercepted().resume`（经外部队列 + 唤醒）。它不观察取消，也未定义反应器停止后的行为。
+契约（写入 KDoc，并加测试）：
+- **用途**：同一反应器上两个协程之间的交接（如 msgtrans 读循环 → 处理循环）省去一次调度对象。**可选**：不用它时用普通的 `resume` 结果相同，
+  只是多一次调度开销。"每请求省 300–400 条指令"是 §24.11 在 msgtrans rpc 上的实验记录，不作为普遍收益承诺。
+- **续体要求**：必须是 `suspendCoroutineUninterceptedOrReturn` 得到的原始续体，且该协程由这个反应器调度；否则行为未定义（实现在调试构建中断言）。
+- **线程**：可从任何线程调用；所属线程上排队，其他线程上经调度恢复。**从不在调用处同步执行被恢复的协程**。
+- **恰好一次**：`ReactorResumer` 不去重。调用方用"槽位"约定保证：挂起方把续体放进槽位；正常恢复路径与取消路径都必须先在反应器线程上把续体
+  **从槽位取出**，取到的一方才恢复。取消回调可能在任何线程运行，必须先回到反应器（`postToReactor` / `dispatch`）再动槽位；取消监听按 §27.9
+  "注册后再查一次"。
+- **反应器停止**：反应器只在其根作业的全部子协程结束后退出，此时不应存在属于它的挂起续体。停止后在所属线程上调用 → 抛 `IllegalStateException`
+  （实现：反应器增加已停止标记）；从其他线程调用 → 与 `dispatch` 相同，任务被丢弃（KDoc 写明，属于调用方的生命周期错误）。
+- 测试：其他线程恢复；所属线程上"排队不立即执行"（`resume` 之后的代码先于被恢复的协程运行）；取消与恢复竞争（槽位约定下只恢复一次，压力 1 万次）；
+  停止后调用抛异常。
+
+### 28.4 公平性的完整验证（补齐现有记录）
+**已有记录**：§19.5 就绪驱动每连接每轮只读一次，Jain 由 0.29–0.40 提升到 ≥ 0.989；§26.4 高并发 C1 / C2 的 Jain ≥ 0.97；`FairnessTest`
+（任务预算防止自我调度的协程饿死 I/O 与计时器）。
+**尚未验证的**：
+- **恢复队列严格优先**：Unit 环 → Int 环 → Any 环 → 普通任务；每轮预算 256 个（按个数，不按时间）。恢复环持续有东西时，普通任务（跨线程投递、
+  新协程启动、`withContext` 回到反应器）可能每轮都排不上；每个任务执行多久也不受限。
+- **`serveLoop` 一次处理完已缓冲的全部帧**：流水线很深、一次写入大量小帧的热连接会占住一整段时间。
+- **热冷混跑**下冷连接的尾延迟。
+
+场景（153；服务端 `taskset 0,1` 两反应器，客户端 `taskset 2,3`；每格 ≥ 4 轮顺序轮换；同机同负载对照 geario）：
+- **F1 热冷混跑**：64 条热连接（流水线深度 16）+ 1000 条冷连接（闭环、深度 1），128 B。指标：冷连接 p50 / p99 / p999 相对"冷连接单独跑"的基线、
+  热连接吞吐、两类各自的 Jain、每请求 CPU 时间、每请求分配数。工具：`echo-client-mass` 增加混合模式（两类连接分别统计）。
+- **F2 恢复队列持续繁忙**：进程内测试。反应器上若干协程经恢复环不停互相交接（占满预算），同时测：计时器（`delay(10)`）迟到量、其他线程
+  `dispatch` 进来的任务的等待时间、新连接从 accept 到进入 handler 的时间。
+- **F3 大批量缓冲帧**：1 条连接一次写入 1 万个小帧（`serveLoop` 路径）+ 100 条冷连接，冷连接 p99 相对基线。
+- **判定**：冷连接 p99 不超过基线的 2 倍且无连接完成数为 0；F2 中计时器迟到 p99 ≤ 20 ms（计时轮精度 10 ms + 一轮），跨线程任务等待 p99 ≤ 5 ms，
+  所有等待都有上限（没有饿死）。**不达标才改**，候选（每次一个变量，按下述验收指标测量后决定）：普通任务与恢复环轮转而非严格优先；`serveLoop`
+  每次最多处理 N 帧或 M 字节后让出；按时间的轮次预算。
+- **验收指标**（本节与之后所有性能项通用）：吞吐、每请求 CPU 时间、每请求分配数、p99、每连接公平性（Jain、完成数最少的连接）；同机同负载
+  逐项对照 geario；不能用饿死部分连接换来的总吞吐宣布胜出。
+
+### 28.5 Windows 实际运行
+IOCP 与 WSAPoll 驱动只有 mingwX64 编译链接验证。`ci/windows-validation` 分支已随 main 推送，GitHub Actions 上有 "Windows IOCP" 与
+"Windows WSAPoll" 两个任务，但这里读不到结果（API 404）。需要：用户查看 Actions 页面，或给本机 `gh` 一个可读 Actions 的令牌。
+验收：两个任务全部测试通过（nativeTest + commonTest；posixTest / linuxTest 在 Windows 上不参与，信号与绑核的 Windows 实现另需在 Windows 上
+手工或 CI 用例验证：Ctrl-C 事件与 `SetThreadAffinityMask`）。失败项逐条进 SPEC 修复。
+
+### 28.6 `IoStream` 一致性套件（独立的 testkit 产物）
+发布为独立产物 `neton-io-testkit`（上层协议库与 TLS 包装都能引用，在自己的流上运行）。形式：一个抽象测试基类，实现方提供"建立一对连通的流"的
+工厂并声明能力。
+**必选契约**（所有实现都必须通过）：
+- `read` 返回 > 0 或 -1（EOF），从不返回 0；有数据前挂起。追加到 `dst`，不覆盖其中已有内容。
+- `write` 写完 `src` 的全部可读字节并返回数量；出错时 `src` 已按实际被接受的字节推进（调用方能看出剩余多少）。
+- `write` 返回后 `src` 的数组可被调用方复用（驱动不再引用）。
+- 对端关闭后：本端读完已到的数据后读到 -1；本端写最终以 `IoException` 失败。
+- `close` 幂等；挂起中的读 / 写收到 `ClosedException`；关闭后再调用读 / 写抛 `ClosedException`。
+- 取消挂起的读 / 写：抛 `CancellationException`，流保持可用（后续读写正常），不丢失已到数据。
+- `writev` 按顺序写，等价于逐个 `write`。
+- 拆分边界：任意拆分写入的字节流，读端拼接结果一致（逐字节拆分的模糊测试）。
+**可选能力**（声明才测；未声明时调用必须明确失败，不能静默无效）：
+- `HalfClose`（`shutdownOutput`）；`Timeouts`（读 / 写 / 空闲超时）；`AnyThread`（可在任意线程使用，如内存流；否则只能在所属反应器上用）。
+- API 调整（先改 SPEC，评审通过后实现）：`IoStream` 增加 `val capabilities: Set<StreamCapability>`（默认空）；`shutdownOutput` 的默认实现由
+  "什么都不做"改为抛 `UnsupportedOperationException`；`setTimeouts` / `setReadTimeout` 的默认实现在参数非 0 时抛 `UnsupportedOperationException`
+  （参数 0 = 关闭，仍是无操作）；`Framed` 配置了帧读取速率而流不支持 `Timeouts` 时在构造时报错。`BaseFilter` 透传内层的能力。
+**运行对象**：TCP（io_uring / epoll / kqueue / poll / IOCP / WSAPoll）、Unix 域套接字、`memoryStreamPair`、`BaseFilter` 包装。
+
+### 28.7 第二个协议消费者：HTTP/1.1 子集（独立模块，只用公开 API）
+选 HTTP/1.1 而不是固定响应的基线服务：它必须真实处理半包 / 粘包（请求行与头部的增量解析）、背压（大请求体 / 大响应体流式传输）、取消
+（请求处理中客户端断开）、关闭（keep-alive、`Connection: close`、平滑停机中的在途请求），并且是 WebSocket（Upgrade）与 Neton 框架的前提。
+- **位置**：neton-io 仓库之外的独立模块（`neton-http1`），作为普通依赖使用 neton-io；不引用 `ReactorResumer`（证明协议实现不需要它）。
+- **范围**：服务端 + 客户端；请求行 / 头部增量解析（大小上限）；`Content-Length` 与 `chunked` 请求体和响应体（双向、流式）；keep-alive 与流水线
+  （按序响应）；空闲超时与慢速攻击防护（帧读取速率）；`Expect: 100-continue` 不做；无 TLS、无压缩、无 HTTP/2。
+- **测试**：请求在每个字节边界拆分到达（模糊）；多请求一次到达（流水线）；上传 100 MB 请求体时内存有界（背压）；处理中客户端断开（取消、资源回收）；
+  平滑停机期间在途请求完成、新连接被拒；与 `curl` 互通；可选：同机对照 `~/projects/Neton/geario-http`（§28.4 的验收指标）。
+- **产出**：实现过程中每一处"只用公开 API 做不到"的地方记入 neton-io SPEC（缺口 → 设计 → 修复），这是本步的主要目的；`ReactorResumer` 的去留也在
+  这里依据结果决定。
+
+### 28.8 可观测性 API
+把目前只能经 `NETON_IO_STATS`（退出时一行 stderr JSON）看到的计数变成公开 API：`TcpServerGroup` 与反应器的快照（活动连接、已接受 / 已关闭数、
+每反应器的轮次、每轮任务数、恢复队列长度峰值、阻塞等待次数、读写字节）；调度延迟（任务从投递到开始执行的时间，采样）；缓冲池占用。
+要求：关闭时零开销或接近零（计数器按反应器、无跨线程同步；采样可开关）；§28.4 的测量用它取数。
+
+### 28.9 数据报层：只列需求，暂不实现
+QUIC / HTTP/3 需要，不能套用 `IoStream`（需保留报文边界与对端地址）。有明确的 QUIC 消费方时再设计实现。需求：
+- `DatagramSocket`：绑定 / 连接（connected UDP）、`send(to)` / `receive(from)` 保留边界、截断报告（`MSG_TRUNC`）、缓冲所有权与 `IoStream` 一致、
+  发送侧 EAGAIN 背压、取消 / 关闭语义同 `IoStream`。
+- 批量：`recvmmsg` / `sendmmsg`；io_uring `RECVMSG` / `SENDMSG`（含 multishot）；Windows `WSARecvFrom` / `WSASendTo`（IOCP）；Apple。
+- QUIC 需要的可选能力：GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`（多地址本地绑定）、双栈、PMTU 相关选项。
+- 不在 neton-io：QUIC 协议本身、加密、拥塞控制。
+
+### 28.10 当前不做
+不扩大池化；不默认绑核；不实现 UDP；不在核心加入 HTTP / TLS。
+
+### 28.11 执行顺序（评审通过后一次性实施，每步完成即推送，SPEC 记录结果）
+1. §28.3 `ReactorResumer` 契约：KDoc、已停止标记、测试。
+2. §28.4 公平性 F1–F3（含 `echo-client-mass` 混合模式与 §28.8 所需的最小计数）+ §28.5 Windows 实跑（需用户提供 Actions 结果或令牌）。
+   F1–F3 若不达标，按 §28.4 的候选逐个改并测量。
+3. §28.6 `neton-io-testkit` 一致性套件 + `IoStream` 能力 API 调整；在所有流实现上运行。
+4. §28.7 `neton-http1`；缺口清单逐项回到 neton-io。
+5. §28.8 可观测性 API 完整版。
+6. §28.9 数据报层：有 QUIC 消费方时另起 SPEC。
