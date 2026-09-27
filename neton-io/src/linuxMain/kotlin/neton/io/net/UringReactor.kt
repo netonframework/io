@@ -207,6 +207,8 @@ internal class UringReactor : Reactor() {
     private var rqBytes = IntArray(64)
     private var msPaused = BooleanArray(64)
     private var msUd = LongArray(64)
+    // Experiment knob (SPEC §24.7 fairness): IORING_RECVSEND_POLL_FIRST on single RECVs.
+    private val recvIoprio: Int = if (getenv("NETON_IO_URING_POLL_FIRST")?.toKString() == "1") 1 else 0
     private val maxQueuedPerConn: Int = getenv("NETON_IO_URING_MAX_QUEUED")?.toKString()?.toIntOrNull() ?: (256 * 1024)
     private var msEof = BooleanArray(64)
     private var msErr = IntArray(64)
@@ -669,7 +671,7 @@ internal class UringReactor : Reactor() {
         val ud = (idx.toULong() shl 32) or slot.gen.toULong()
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { pin.refs--; releaseSlot(idx, slot); throw t }
-            prepSqe(NETON_IORING_OP_RECV, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, ud)
+            prepSqe(NETON_IORING_OP_RECV, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, ud, ioprio = recvIoprio)
             slot.cont = cont
             COROUTINE_SUSPENDED
         }
