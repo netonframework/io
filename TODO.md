@@ -1,5 +1,7 @@
 # neton-io / msgtrans 执行清单（对照 SPEC.md §18 与 msgtrans-kotlin/SPEC.md §10）
 
+> 已停止维护（2026-09-27）：这是 §18–§23 时期的清单。当前执行顺序见 SPEC.md §28.11，章节状态见 SPEC.md 开头的导读。
+
 规则：每项先有 SPEC 条目；一次一个变量；Linux 结果以 153 为准（三驱动），macOS 本机；基准用成对交替轮次。
 
 ## 阶段 1
