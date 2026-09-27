@@ -1,0 +1,75 @@
+# C1 all active
+iouring active=1000 idle=0 qps=325781 p50=2785.0 p99=4858.0 p999=6820.0 jain=0.970 zero=0 connect_s=0.03 rss0_kib=11132 rss_peak_kib=21756 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=1000 idle=0 qps=408485 p50=2392.0 p99=3805.0 p999=5598.0 jain=1.000 zero=0 connect_s=0.04 rss0_kib=10284 rss_peak_kib=21296 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=1000 idle=0 qps=354920 p50=2711.0 p99=4545.0 p999=6276.0 jain=1.000 zero=0 connect_s=0.03 rss0_kib=3672 rss_peak_kib=23220 
+iouring active=10000 idle=0 qps=271665 p50=35811.0 p99=50662.0 p999=64369.0 jain=1.000 zero=0 connect_s=1.18 rss0_kib=11120 rss_peak_kib=55540 gcs=3 sampled=3 pause_sum_us=440 pause_max_us=322 ttsp_sum_us=5730 ttsp_max_us=4395 heap_after_kib=42496
+epoll active=10000 idle=0 qps=272718 p50=35530.0 p99=47131.0 p999=63691.0 jain=1.000 zero=0 connect_s=1.18 rss0_kib=10288 rss_peak_kib=53432 gcs=3 sampled=3 pause_sum_us=516 pause_max_us=395 ttsp_sum_us=690 ttsp_max_us=609 heap_after_kib=33024
+geario active=10000 idle=0 qps=252611 p50=38447.0 p99=54242.0 p999=64172.0 jain=1.000 zero=0 connect_s=0.13 rss0_kib=3672 rss_peak_kib=186412 
+iouring active=50000 idle=0 qps=201434 p50=236365.0 p99=345263.0 p999=417060.0 jain=0.999 zero=0 connect_s=3.65 rss0_kib=11152 rss_peak_kib=192516 gcs=5 sampled=5 pause_sum_us=496 pause_max_us=307 ttsp_sum_us=7709 ttsp_max_us=6057 heap_after_kib=122624
+epoll active=50000 idle=0 qps=192813 p50=241995.0 p99=353461.0 p999=414445.0 jain=0.997 zero=0 connect_s=1.60 rss0_kib=10276 rss_peak_kib=183628 gcs=6 sampled=6 pause_sum_us=1335 pause_max_us=407 ttsp_sum_us=6264 ttsp_max_us=6063 heap_after_kib=119169
+geario active=50000 idle=0 qps=181865 p50=259009.0 p99=380445.0 p999=461202.0 jain=1.000 zero=0 connect_s=1.60 rss0_kib=3672 rss_peak_kib=506252 
+iouring active=1000 idle=0 qps=313909 p50=3184.0 p99=4854.0 p999=6668.0 jain=0.984 zero=0 connect_s=0.04 rss0_kib=11132 rss_peak_kib=21884 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=1000 idle=0 qps=326302 p50=2794.0 p99=4547.0 p999=8896.0 jain=0.984 zero=0 connect_s=0.03 rss0_kib=10296 rss_peak_kib=21948 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=1000 idle=0 qps=293185 p50=3444.0 p99=4886.0 p999=7591.0 jain=0.999 zero=0 connect_s=0.02 rss0_kib=3604 rss_peak_kib=23172 
+iouring active=10000 idle=0 qps=250371 p50=39316.0 p99=48926.0 p999=66141.0 jain=0.997 zero=0 connect_s=2.24 rss0_kib=11116 rss_peak_kib=55152 gcs=3 sampled=3 pause_sum_us=410 pause_max_us=301 ttsp_sum_us=1656 ttsp_max_us=837 heap_after_kib=40704
+epoll active=10000 idle=0 qps=236276 p50=40825.0 p99=60021.0 p999=71177.0 jain=1.000 zero=0 connect_s=0.16 rss0_kib=10284 rss_peak_kib=53044 gcs=3 sampled=3 pause_sum_us=490 pause_max_us=311 ttsp_sum_us=134 ttsp_max_us=60 heap_after_kib=33024
+geario active=10000 idle=0 qps=228324 p50=41596.0 p99=60813.0 p999=71699.0 jain=0.997 zero=0 connect_s=0.14 rss0_kib=3672 rss_peak_kib=186344 
+iouring active=50000 idle=0 qps=186382 p50=252593.0 p99=385263.0 p999=460773.0 jain=0.998 zero=0 connect_s=1.61 rss0_kib=11128 rss_peak_kib=186300 gcs=5 sampled=5 pause_sum_us=506 pause_max_us=342 ttsp_sum_us=3832 ttsp_max_us=2108 heap_after_kib=142720
+epoll active=50000 idle=0 qps=186521 p50=252242.0 p99=389310.0 p999=458643.0 jain=1.000 zero=0 connect_s=2.67 rss0_kib=10252 rss_peak_kib=185140 gcs=6 sampled=6 pause_sum_us=1127 pause_max_us=456 ttsp_sum_us=22568 ttsp_max_us=6055 heap_after_kib=125441
+geario active=50000 idle=0 qps=181721 p50=260139.0 p99=384697.0 p999=465368.0 jain=0.999 zero=0 connect_s=0.55 rss0_kib=3676 rss_peak_kib=499824 
+iouring active=1000 idle=0 qps=322251 p50=2868.0 p99=4749.0 p999=6339.0 jain=0.978 zero=0 connect_s=0.03 rss0_kib=11100 rss_peak_kib=21852 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=1000 idle=0 qps=326713 p50=2731.0 p99=4473.0 p999=6257.0 jain=0.972 zero=0 connect_s=0.03 rss0_kib=10280 rss_peak_kib=22700 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=1000 idle=0 qps=266038 p50=3640.0 p99=5992.0 p999=9693.0 jain=1.000 zero=0 connect_s=0.02 rss0_kib=3672 rss_peak_kib=23204 
+iouring active=10000 idle=0 qps=234443 p50=41148.0 p99=56945.0 p999=71179.0 jain=1.000 zero=0 connect_s=0.16 rss0_kib=11096 rss_peak_kib=56028 gcs=3 sampled=3 pause_sum_us=473 pause_max_us=323 ttsp_sum_us=7065 ttsp_max_us=6028 heap_after_kib=41600
+epoll active=10000 idle=0 qps=238098 p50=40846.0 p99=61031.0 p999=70109.0 jain=1.000 zero=0 connect_s=0.18 rss0_kib=10252 rss_peak_kib=53524 gcs=3 sampled=3 pause_sum_us=675 pause_max_us=560 ttsp_sum_us=86 ttsp_max_us=44 heap_after_kib=30976
+geario active=10000 idle=0 qps=216938 p50=44437.0 p99=60729.0 p999=71179.0 jain=1.000 zero=0 connect_s=0.18 rss0_kib=3668 rss_peak_kib=186296 
+iouring active=50000 idle=0 qps=188615 p50=251955.0 p99=376048.0 p999=472990.0 jain=0.998 zero=0 connect_s=2.63 rss0_kib=11112 rss_peak_kib=186924 gcs=5 sampled=5 pause_sum_us=575 pause_max_us=355 ttsp_sum_us=14450 ttsp_max_us=6177 heap_after_kib=144768
+epoll active=50000 idle=0 qps=199071 p50=234197.0 p99=354088.0 p999=423130.0 jain=0.999 zero=0 connect_s=2.65 rss0_kib=10312 rss_peak_kib=183536 gcs=6 sampled=6 pause_sum_us=1181 pause_max_us=461 ttsp_sum_us=6790 ttsp_max_us=6006 heap_after_kib=119937
+geario active=50000 idle=0 qps=183105 p50=258063.0 p99=381481.0 p999=462561.0 jain=1.000 zero=0 connect_s=1.60 rss0_kib=3668 rss_peak_kib=500808 
+iouring active=1000 idle=0 qps=289244 p50=3372.0 p99=5284.0 p999=10309.0 jain=1.000 zero=0 connect_s=0.03 rss0_kib=11128 rss_peak_kib=22392 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=1000 idle=0 qps=295698 p50=3294.0 p99=5246.0 p999=7256.0 jain=1.000 zero=0 connect_s=0.03 rss0_kib=10344 rss_peak_kib=22892 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=1000 idle=0 qps=274880 p50=3557.0 p99=5132.0 p999=7393.0 jain=1.000 zero=0 connect_s=0.02 rss0_kib=3672 rss_peak_kib=25780 
+iouring active=10000 idle=0 qps=240269 p50=41280.0 p99=56127.0 p999=71022.0 jain=0.996 zero=0 connect_s=3.31 rss0_kib=11116 rss_peak_kib=55664 gcs=3 sampled=3 pause_sum_us=481 pause_max_us=369 ttsp_sum_us=5920 ttsp_max_us=5283 heap_after_kib=39936
+epoll active=10000 idle=0 qps=242531 p50=40697.0 p99=59248.0 p999=78105.0 jain=0.995 zero=0 connect_s=0.16 rss0_kib=10244 rss_peak_kib=51980 gcs=4 sampled=4 pause_sum_us=660 pause_max_us=373 ttsp_sum_us=6942 ttsp_max_us=6061 heap_after_kib=48128
+geario active=10000 idle=0 qps=252562 p50=38647.0 p99=54538.0 p999=66248.0 jain=1.000 zero=0 connect_s=0.17 rss0_kib=3672 rss_peak_kib=186332 
+iouring active=50000 idle=0 qps=206068 p50=229080.0 p99=331503.0 p999=409470.0 jain=1.000 zero=0 connect_s=4.69 rss0_kib=11116 rss_peak_kib=191968 gcs=5 sampled=5 pause_sum_us=511 pause_max_us=318 ttsp_sum_us=10951 ttsp_max_us=6057 heap_after_kib=124288
+epoll active=50000 idle=0 qps=209123 p50=225628.0 p99=355036.0 p999=422143.0 jain=1.000 zero=0 connect_s=2.57 rss0_kib=10264 rss_peak_kib=183488 gcs=6 sampled=6 pause_sum_us=1348 pause_max_us=599 ttsp_sum_us=10612 ttsp_max_us=6039 heap_after_kib=113921
+geario active=50000 idle=0 qps=203933 p50=231648.0 p99=333049.0 p999=408488.0 jain=1.000 zero=0 connect_s=1.52 rss0_kib=3668 rss_peak_kib=530804 
+# C2 idle + 64 active
+iouring active=64 idle=0 qps=445174 p50=137.0 p99=219.0 p999=658.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=11124 rss_peak_kib=17780 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=64 idle=0 qps=449553 p50=136.0 p99=205.0 p999=589.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=10288 rss_peak_kib=16948 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=64 idle=0 qps=434233 p50=130.0 p99=265.0 p999=695.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=3672 rss_peak_kib=5892 
+iouring active=64 idle=10000 qps=426742 p50=141.0 p99=239.0 p999=630.0 jain=1.000 zero=0 connect_s=3.27 rss0_kib=11128 rss_peak_kib=54396 gcs=3 sampled=3 pause_sum_us=552 pause_max_us=419 ttsp_sum_us=159 ttsp_max_us=70 heap_after_kib=40448
+epoll active=64 idle=10000 qps=448642 p50=136.0 p99=223.0 p999=551.0 jain=1.000 zero=0 connect_s=1.24 rss0_kib=10272 rss_peak_kib=40104 gcs=2 sampled=2 pause_sum_us=509 pause_max_us=473 ttsp_sum_us=114 ttsp_max_us=60 heap_after_kib=26752
+geario active=64 idle=10000 qps=448819 p50=124.0 p99=256.0 p999=590.0 jain=0.996 zero=0 connect_s=1.17 rss0_kib=3672 rss_peak_kib=67684 
+iouring active=64 idle=50000 qps=425744 p50=140.0 p99=241.0 p999=761.0 jain=1.000 zero=0 connect_s=1.87 rss0_kib=11088 rss_peak_kib=184424 gcs=5 sampled=5 pause_sum_us=669 pause_max_us=381 ttsp_sum_us=12348 ttsp_max_us=6137 heap_after_kib=129408
+epoll active=64 idle=50000 qps=345884 p50=164.0 p99=328.0 p999=914.0 jain=0.990 zero=0 connect_s=4.02 rss0_kib=10344 rss_peak_kib=87184 gcs=5 sampled=5 pause_sum_us=1235 pause_max_us=488 ttsp_sum_us=16261 ttsp_max_us=6025 heap_after_kib=65409
+geario active=64 idle=50000 qps=338876 p50=170.0 p99=346.0 p999=816.0 jain=0.957 zero=0 connect_s=0.83 rss0_kib=3672 rss_peak_kib=312976 
+iouring active=64 idle=0 qps=349100 p50=168.0 p99=311.0 p999=694.0 jain=0.964 zero=0 connect_s=0.00 rss0_kib=11132 rss_peak_kib=18300 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=64 idle=0 qps=347382 p50=162.0 p99=311.0 p999=951.0 jain=0.962 zero=0 connect_s=0.00 rss0_kib=10292 rss_peak_kib=17208 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=64 idle=0 qps=332191 p50=171.0 p99=342.0 p999=768.0 jain=0.966 zero=0 connect_s=0.00 rss0_kib=3672 rss_peak_kib=5892 
+iouring active=64 idle=10000 qps=442836 p50=136.0 p99=223.0 p999=649.0 jain=1.000 zero=0 connect_s=2.18 rss0_kib=11100 rss_peak_kib=55136 gcs=3 sampled=3 pause_sum_us=576 pause_max_us=404 ttsp_sum_us=7928 ttsp_max_us=6059 heap_after_kib=41856
+epoll active=64 idle=10000 qps=437266 p50=140.0 p99=221.0 p999=578.0 jain=1.000 zero=0 connect_s=3.29 rss0_kib=10256 rss_peak_kib=35736 gcs=3 sampled=3 pause_sum_us=672 pause_max_us=610 ttsp_sum_us=10890 ttsp_max_us=5676 heap_after_kib=31744
+geario active=64 idle=10000 qps=431949 p50=136.0 p99=270.0 p999=637.0 jain=1.000 zero=0 connect_s=1.19 rss0_kib=3736 rss_peak_kib=67660 
+iouring active=64 idle=50000 qps=440434 p50=138.0 p99=222.0 p999=638.0 jain=1.000 zero=0 connect_s=5.02 rss0_kib=11128 rss_peak_kib=184040 gcs=6 sampled=6 pause_sum_us=613 pause_max_us=320 ttsp_sum_us=13399 ttsp_max_us=6111 heap_after_kib=170496
+epoll active=64 idle=50000 qps=422943 p50=138.0 p99=270.0 p999=764.0 jain=1.000 zero=0 connect_s=2.97 rss0_kib=10292 rss_peak_kib=114460 gcs=5 sampled=5 pause_sum_us=1199 pause_max_us=563 ttsp_sum_us=5106 ttsp_max_us=5015 heap_after_kib=68225
+geario active=64 idle=50000 qps=432076 p50=136.0 p99=279.0 p999=716.0 jain=0.997 zero=0 connect_s=0.87 rss0_kib=3672 rss_peak_kib=313108 
+iouring active=64 idle=0 qps=335081 p50=185.0 p99=312.0 p999=757.0 jain=0.972 zero=0 connect_s=0.00 rss0_kib=11132 rss_peak_kib=18172 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=64 idle=0 qps=432370 p50=141.0 p99=237.0 p999=590.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=10344 rss_peak_kib=16876 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=64 idle=0 qps=438746 p50=129.0 p99=263.0 p999=586.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=3664 rss_peak_kib=5876 
+iouring active=64 idle=10000 qps=437661 p50=138.0 p99=236.0 p999=576.0 jain=1.000 zero=0 connect_s=1.18 rss0_kib=11104 rss_peak_kib=54884 gcs=3 sampled=3 pause_sum_us=557 pause_max_us=465 ttsp_sum_us=2383 ttsp_max_us=2341 heap_after_kib=42496
+epoll active=64 idle=10000 qps=445804 p50=135.0 p99=220.0 p999=787.0 jain=1.000 zero=0 connect_s=2.24 rss0_kib=10280 rss_peak_kib=36272 gcs=3 sampled=3 pause_sum_us=546 pause_max_us=477 ttsp_sum_us=11192 ttsp_max_us=6087 heap_after_kib=32384
+geario active=64 idle=10000 qps=437019 p50=130.0 p99=266.0 p999=691.0 jain=1.000 zero=0 connect_s=0.18 rss0_kib=3672 rss_peak_kib=78588 
+iouring active=64 idle=50000 qps=346183 p50=163.0 p99=315.0 p999=750.0 jain=0.959 zero=0 connect_s=2.93 rss0_kib=11104 rss_peak_kib=189040 gcs=5 sampled=5 pause_sum_us=578 pause_max_us=423 ttsp_sum_us=2409 ttsp_max_us=2313 heap_after_kib=121984
+epoll active=64 idle=50000 qps=438927 p50=138.0 p99=230.0 p999=591.0 jain=1.000 zero=0 connect_s=2.91 rss0_kib=10292 rss_peak_kib=86812 gcs=5 sampled=5 pause_sum_us=1113 pause_max_us=490 ttsp_sum_us=8253 ttsp_max_us=6047 heap_after_kib=73857
+geario active=64 idle=50000 qps=336514 p50=176.0 p99=349.0 p999=772.0 jain=0.967 zero=0 connect_s=1.90 rss0_kib=3672 rss_peak_kib=313264 
+iouring active=64 idle=0 qps=341161 p50=179.0 p99=314.0 p999=919.0 jain=0.975 zero=0 connect_s=0.00 rss0_kib=11088 rss_peak_kib=18000 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+epoll active=64 idle=0 qps=439758 p50=138.0 p99=225.0 p999=674.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=10276 rss_peak_kib=17192 gcs=0 sampled=0 pause_sum_us=0 pause_max_us=0 ttsp_sum_us=0 ttsp_max_us=0 heap_after_kib=0
+geario active=64 idle=0 qps=441284 p50=136.0 p99=259.0 p999=611.0 jain=1.000 zero=0 connect_s=0.00 rss0_kib=3668 rss_peak_kib=5880 
+iouring active=64 idle=10000 qps=275366 p50=224.0 p99=346.0 p999=939.0 jain=1.000 zero=0 connect_s=2.22 rss0_kib=11132 rss_peak_kib=55680 gcs=3 sampled=3 pause_sum_us=497 pause_max_us=417 ttsp_sum_us=178 ttsp_max_us=96 heap_after_kib=42368
+epoll active=64 idle=10000 qps=344477 p50=168.0 p99=299.0 p999=789.0 jain=0.965 zero=0 connect_s=3.32 rss0_kib=10288 rss_peak_kib=35768 gcs=3 sampled=3 pause_sum_us=592 pause_max_us=539 ttsp_sum_us=11096 ttsp_max_us=6018 heap_after_kib=31744
+geario active=64 idle=10000 qps=440416 p50=129.0 p99=262.0 p999=567.0 jain=1.000 zero=0 connect_s=1.19 rss0_kib=3672 rss_peak_kib=67604 
+iouring active=64 idle=50000 qps=342335 p50=165.0 p99=299.0 p999=930.0 jain=0.962 zero=0 connect_s=2.95 rss0_kib=11092 rss_peak_kib=186180 gcs=5 sampled=5 pause_sum_us=1777 pause_max_us=1276 ttsp_sum_us=16516 ttsp_max_us=6125 heap_after_kib=120832
+epoll active=64 idle=50000 qps=445817 p50=136.0 p99=221.0 p999=622.0 jain=1.000 zero=0 connect_s=3.92 rss0_kib=10284 rss_peak_kib=86676 gcs=6 sampled=6 pause_sum_us=1319 pause_max_us=545 ttsp_sum_us=12807 ttsp_max_us=6037 heap_after_kib=105729
+geario active=64 idle=50000 qps=337127 p50=169.0 p99=355.0 p999=829.0 jain=0.961 zero=0 connect_s=0.84 rss0_kib=3676 rss_peak_kib=313064 
+# done
