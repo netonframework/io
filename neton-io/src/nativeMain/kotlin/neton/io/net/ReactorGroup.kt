@@ -22,6 +22,10 @@ import kotlin.coroutines.coroutineContext
 import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 
+/** Tests (SPEC §27.8): the worker reactor with this index fails to start; -1 = none. */
+@OptIn(ExperimentalAtomicApi::class)
+internal val failWorkerStartForTest = AtomicInt(-1)
+
 /** Online CPU count, at least 1. */
 expect fun cpuCount(): Int
 
@@ -73,23 +77,34 @@ internal class ReactorGroup(private val count: Int) {
             workers.add(w)
             val stopRef = stop
             val pinTo = if (pinThreads) i else -1
-            w.execute(TransferMode.SAFE, { Pair(Triple(ready, stopRef, done), pinTo) }) { (t, pin) ->
+            w.execute(TransferMode.SAFE, { Pair(Triple(ready, stopRef, done), Pair(pinTo, i)) }) { (t, p) ->
                 val (r, s, d) = t
-                if (pin >= 0) pinCurrentThread(pin)
+                val (pin, index) = p
                 try {
+                    if (pin >= 0) pinCurrentThread(pin)
+                    if (failWorkerStartForTest.load() == index) error("test: reactor $index failed to start")
                     Reactor.runServing(s) { reactor, scope -> r.complete(Member(reactor, scope)) }
+                } catch (e: Throwable) {
+                    // Before `ready` was published (driver setup failed, ...): the starter must learn
+                    // of it instead of waiting forever (SPEC §27.8). After it, nothing waits on `ready`.
+                    r.completeExceptionally(e)
                 } finally {
                     d.complete(Unit)
                 }
             }
         }
         // Workers complete `ready` from their own threads; wait here (blocking on the acceptor
-        // thread only during startup, before any connection exists).
+        // thread only during startup, before any connection exists). Every worker reports, success
+        // or failure; if one failed, the others are told to exit and the failure is thrown.
+        var failure: Throwable? = null
         for ((i, ready) in readies.withIndex()) {
             while (!ready.isCompleted) platform.posix.usleep(200u)
             @Suppress("OPT_IN_USAGE")
-            members[i + 1] = ready.getCompleted()
+            val e = ready.getCompletionExceptionOrNull()
+            @Suppress("OPT_IN_USAGE")
+            if (e == null) members[i + 1] = ready.getCompleted() else if (failure == null) failure = e
         }
+        if (failure != null) { stop(); throw failure }
     }
 
     /** Run [block] on reactor [i]'s thread: inline for reactor 0 (callers are on it), dispatched otherwise. */
@@ -205,9 +220,17 @@ class TcpServerGroup internal constructor(
                     if (closing.load() != 0) throw ClosedException("server closed")
                     server.acceptFd()
                 } catch (t: Throwable) { releaseSlot(); throw t }
-                pauseGate.load()?.await()          // paused: hold the accepted connection until resume
-                if (closing.load() != 0) { closeFd(fd); releaseSlot(); throw ClosedException("server closed") }
-                onFd(fd)
+                // From accept until the handoff this loop owns the fd and the slot: a cancellation or a
+                // close while paused must give both back (SPEC §27.8). onFd takes them over.
+                var handedOff = false
+                try {
+                    pauseGate.load()?.await()          // paused: hold the accepted connection until resume
+                    if (closing.load() != 0) throw ClosedException("server closed")
+                    onFd(fd)
+                    handedOff = true
+                } finally {
+                    if (!handedOff) { closeFd(fd); releaseSlot() }
+                }
             }
         } catch (_: ClosedException) {
         }
@@ -216,7 +239,11 @@ class TcpServerGroup internal constructor(
     /** On reactor [i]'s thread: the stream and its coroutine are born there. */
     private fun launchConnection(i: Int, fd: Int, handler: suspend (IoStream) -> Unit) {
         val m = group.member(i)
+        // The coroutine owns fd and slot once its body runs; one cancelled before that (its reactor's
+        // scope already cancelled) never runs the body's finally, so the completion hands them back.
+        var bodyStarted = false
         val job = m.scope.launch(start = CoroutineStart.LAZY) {
+            bodyStarted = true
             val stream = ReactorStream(fd, m.reactor)
             try {
                 handler(stream)
@@ -233,6 +260,7 @@ class TcpServerGroup internal constructor(
                 releaseSlot()
             }
         }
+        job.invokeOnCompletion { if (!bodyStarted) { connJobs[i].remove(job); closeFd(fd); releaseSlot() } }
         connJobs[i].add(job)
         job.start()
     }
@@ -361,7 +389,8 @@ suspend fun listenGroup(
     val group = ReactorGroup(reactors)
     // SPEC §27.2: capture the allowed CPUs before any thread is pinned (new threads inherit masks).
     if (pinThreads) captureAffinity()
-    group.start(currentReactor(), localScope, pinThreads)
+    // SPEC §27.8: a reactor that fails to start fails the whole group; the port is released.
+    try { group.start(currentReactor(), localScope, pinThreads) } catch (t: Throwable) { listeners[0]?.close(); throw t }
     if (pinThreads) pinCurrentThread(0)
     if (mode == AcceptMode.ReusePort) {
         try {
@@ -387,13 +416,15 @@ suspend fun TcpServerGroup.shutdownOnSignal(gracefulTimeoutMillis: Long = 30_000
     stopOnSignal(gracefulTimeoutMillis) {}
 
 internal suspend fun TcpServerGroup.stopOnSignal(gracefulTimeoutMillis: Long, onSignal: () -> Unit): Signal =
-    holdingSignals(Signal.Int, Signal.Term, Signal.Quit) {
-        val s = awaitSignal(Signal.Int, Signal.Term, Signal.Quit)
+    // One subscription for the whole stop: the second signal is queued even if it arrives before
+    // the force wait starts (SPEC §27.8).
+    withSignals(Signal.Int, Signal.Term, Signal.Quit) { sub ->
+        val s = sub.receive()
         onSignal()
         if (s == Signal.Int) {
             shutdown(0)
         } else coroutineScope {
-            val force = launch { awaitSignal(Signal.Int, Signal.Term, Signal.Quit); cancelConnections() }
+            val force = launch { sub.receive(); cancelConnections() }
             try { shutdown(gracefulTimeoutMillis) } finally { force.cancel() }
         }
         s

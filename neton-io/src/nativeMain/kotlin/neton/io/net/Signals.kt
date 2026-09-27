@@ -22,7 +22,8 @@ internal expect fun signalRestore(signal: Signal)
 /** Block the calling thread until a signal arrives; null for one this process does not map. */
 internal expect fun signalWaitBlocking(): Signal?
 
-private class SignalWaiter(val wanted: Set<Signal>, val result: CompletableDeferred<Signal>)
+/** A registration: [deliver] is called (on the watcher thread) for every wanted signal that arrives. */
+private class SignalWaiter(val wanted: Set<Signal>, val deliver: (Signal) -> Unit)
 
 /**
  * Waiters and, per signal, how many of them want it. Our handler is installed for a signal only
@@ -71,7 +72,7 @@ private object SignalHub {
         Worker.start(name = "neton-signals").executeAfter(0L) {
             while (true) {
                 val s = signalWaitBlocking() ?: continue
-                for (w in locked { waiters }) if (s in w.wanted) w.result.complete(s)
+                for (w in locked { waiters }) if (s in w.wanted) w.deliver(s)
             }
         }
     }
@@ -85,25 +86,38 @@ private object SignalHub {
  */
 suspend fun awaitSignal(vararg signals: Signal = arrayOf(Signal.Int, Signal.Term, Signal.Quit)): Signal {
     require(signals.isNotEmpty()) { "no signals to wait for" }
-    val w = SignalWaiter(signals.toSet(), CompletableDeferred())
+    val result = CompletableDeferred<Signal>()
+    val w = SignalWaiter(signals.toSet()) { result.complete(it) }
     SignalHub.register(w)
     try {
         SignalHub.startWatcher()
-        return w.result.await()
+        return result.await()
     } finally {
         SignalHub.unregister(w)
     }
 }
 
 /**
- * Keep [signals] handled for the whole of [block], whatever waiters come and go inside it, so there
- * is no gap in which one falls back to its previous action (SPEC §27.7: a second Ctrl-C during a
- * graceful stop must force it, not end the process by default action).
+ * A lasting subscription to [signals]: every one that arrives is queued until [receive]d, so a
+ * sequence of signals (a stop, then a forced stop) cannot lose one between two waits (SPEC §27.8).
+ * The signals are handled from creation until [close]; then their previous actions are restored.
  */
-internal suspend fun <T> holdingSignals(vararg signals: Signal, block: suspend () -> T): T {
-    val hold = SignalWaiter(signals.toSet(), CompletableDeferred())
-    SignalHub.register(hold)
-    try { return block() } finally { SignalHub.unregister(hold) }
+internal class SignalSubscription(signals: Set<Signal>) {
+    private val queue = kotlinx.coroutines.channels.Channel<Signal>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val w = SignalWaiter(signals) { queue.trySend(it) }
+    private var closed = false
+
+    init { SignalHub.register(w); SignalHub.startWatcher() }
+
+    suspend fun receive(): Signal = queue.receive()
+
+    fun close() { if (!closed) { closed = true; SignalHub.unregister(w); queue.close() } }
+}
+
+/** Run [block] with a [SignalSubscription] to [signals], closed afterwards whatever happens. */
+internal suspend fun <T> withSignals(vararg signals: Signal, block: suspend (SignalSubscription) -> T): T {
+    val sub = SignalSubscription(signals.toSet())
+    try { return block(sub) } finally { sub.close() }
 }
 
 /** Waiters currently registered (tests: a signal sent before the waiter exists is dropped). */

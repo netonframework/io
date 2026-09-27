@@ -68,6 +68,35 @@ class ServerControlTest {
         g.shutdown(1_000); serveJob.join(); g.awaitWorkers()
     }
 
+    /** SPEC §27.8: an accepted connection parked at the pause gate is closed and its slot freed on cancel. */
+    @Test
+    fun cancelWhilePausedReleasesTheAcceptedConnection() = runReactor {
+        val started = AtomicInt(0)
+        val g = listenGroup("127.0.0.1", 21914, reactors = 1)
+        g.pause()
+        val serveJob = launch { g.serve(holding(started)) }
+        val c = connect("127.0.0.1", 21914)
+        delay(300)                                            // accepted, now waiting at the pause gate
+        assertEquals(0, started.value)
+        serveJob.cancel(); serveJob.join()
+        assertEquals(0, g.activeConnections, "the accepted connection's slot must be released")
+        val n = withTimeout(2_000) { c.read(Buffer()) }
+        assertEquals(-1, n, "the accepted fd must be closed")
+        c.close()
+        g.awaitWorkers()
+    }
+
+    /** SPEC §27.8: a worker reactor failing to start fails listenGroup and releases the port. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun aReactorThatFailsToStartFailsTheGroup() = runReactor {
+        failWorkerStartForTest.store(2)
+        val e = try { runCatching { listenGroup("127.0.0.1", 21916, reactors = 3) }.exceptionOrNull() } finally { failWorkerStartForTest.store(-1) }
+        assertTrue(e is IllegalStateException && "failed to start" in (e.message ?: ""), "got $e")
+        val g = listenGroup("127.0.0.1", 21916, reactors = 2)       // the port was released
+        g.shutdown(0); g.awaitWorkers()
+    }
+
     @Test
     fun shutdownLetsConnectionsFinishThenCancelsTheRest() = runReactor {
         val started = AtomicInt(0); val cancelled = AtomicInt(0)

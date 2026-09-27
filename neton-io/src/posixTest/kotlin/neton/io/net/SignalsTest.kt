@@ -107,6 +107,21 @@ class SignalsTest {
         c.close()
     }
 
+    /** Two signals back to back: the second must not be lost between the first and the force wait. */
+    @Test
+    fun backToBackSignalsForceTheStop() = runReactor {
+        val before = disp(SIGTERM)
+        val done = startServer(21954, signals = true)
+        waitFor(3_000) { disp(SIGTERM) == 1 }
+        val c = connect("127.0.0.1", 21954)
+        delay(100)
+        safeRaise(SIGTERM)
+        safeRaise(SIGTERM)
+        waitFor(3_000) { done.value == 1 }                                // not the 10 s grace period
+        assertEquals(before, disp(SIGTERM))
+        c.close()
+    }
+
     @Test
     fun serveTcpStopsAtOnceOnSigint() = runReactor {
         val before = disp(SIGINT)
