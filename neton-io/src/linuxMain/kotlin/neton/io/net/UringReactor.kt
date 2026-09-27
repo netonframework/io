@@ -150,9 +150,7 @@ internal class UringReactor : Reactor() {
         // kernel and the writer is resumed with this once its CQE has said how much went out.
         var sendAbort: Throwable? = null
         // SPEC §24.7: a single RECV straight into the reader's buffer, completed by the reactor.
-        var readBuf: Buffer? = null; var readSizer: ReadSizer? = null; var readAbort: Throwable? = null
-        // SPEC §26.5: where a single read is (RS_*), and the idle epoch its RECV was submitted in.
-        var readState = RS_RECV; var parkEpoch = 0 }
+        var readBuf: Buffer? = null; var readSizer: ReadSizer? = null; var readAbort: Throwable? = null }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -236,12 +234,6 @@ internal class UringReactor : Reactor() {
     private var msReady = IntArray(64); private var msReadyCount = 0; private var isMsReady = BooleanArray(64)
     // Send slots whose short send is resubmitted after reaping (never from inside reap()).
     private var pendingSends = IntArray(64); private var pendingSendCount = 0
-    // SPEC §26.5: single reads between two ops (after a demoting cancel or a POLLIN), advanced after reaping.
-    private var pendingReads = IntArray(64); private var pendingReadCount = 0
-    private var idleEpoch = 2; private var idleEpochStartMs = 0L
-    // SPEC §26.5: an idle single RECV gives its buffer back and waits in a POLL_ADD instead.
-    // NETON_IO_URING_IDLE_POLL=0 turns it off (A/B).
-    private val idlePoll: Boolean = getenv("NETON_IO_URING_IDLE_POLL")?.toKString() != "0"
     private var starved = IntArray(64); private var starvedCount = 0   // fds waiting for a free pool buffer
 
     private fun ensureMsFd(fd: Int) {
@@ -370,7 +362,6 @@ internal class UringReactor : Reactor() {
             if (!b.holdsIdleArray) continue
             if (all || parkEpoch[fd] < sweepEpoch) b.releaseIfIdle(bufferPool) else idleArrays = true
         }
-        if (idlePoll && !multishot) demoteIdleReads()
         sweepEpoch++
         roundsSinceSweep = 0
     }
@@ -703,8 +694,6 @@ internal class UringReactor : Reactor() {
         val slot = slots[idx]!!
         slot.fd = fd; slot.pin = pin; pin.refs++
         slot.readBuf = dst; slot.readSizer = sizer; slot.cancelOnAbort = true
-        slot.readState = RS_RECV; slot.parkEpoch = idleEpoch
-        if (idlePoll) idleArrays = true
         val ud = (idx.toULong() shl 32) or slot.gen.toULong()
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { pin.refs--; releaseSlot(idx, slot); throw t }
@@ -714,96 +703,8 @@ internal class UringReactor : Reactor() {
         }
     }
 
-    /**
-     * SPEC §26.5: a single RECV parked for IDLE_READ_MS or more is cancelled; its CQE hands the buffer
-     * back and a POLL_ADD waits for data without one. The idle epoch advances at most once per
-     * IDLE_READ_MS (the clock is read here, per sweep, never per read), and a read is demoted when it
-     * was submitted two epochs ago or earlier: parked between one and two IDLE_READ_MS. A wall-clock
-     * rule, because under load a busy connection's wait between requests is long (50k connections:
-     * ~0.3 s), and demoting on sweep intervals (~50 ms) cost busy connections 7-10 % (SPEC §26.5 hc4).
-     */
-    private fun demoteIdleReads() {
-        val now = nowMs()
-        if (now - idleEpochStartMs < IDLE_READ_MS) { idleArrays = true; return }
-        idleEpoch++; idleEpochStartMs = now
-        for (i in slots.indices) {
-            val slot = slots[i] ?: continue
-            if (!slot.live || slot.readBuf == null || slot.readState != RS_RECV || slot.cont == null || slot.readAbort != null) continue
-            if (slot.parkEpoch <= idleEpoch - 2) {
-                slot.readState = RS_DEMOTING
-                requestCancel((i.toULong() shl 32) or slot.gen.toULong())
-            } else idleArrays = true
-        }
-    }
-
-    private fun queueRead(idx: Int, slot: Slot, state: Int) {
-        slot.readState = state
-        if (pendingReadCount == pendingReads.size) pendingReads = pendingReads.copyOf(pendingReadCount * 2)
-        pendingReads[pendingReadCount++] = idx
-    }
-
-    /**
-     * The CQE of a demoted read's RECV (cancelled: no bytes) or of its POLL_ADD. Buffer work happens
-     * here; the next SQE is submitted by [advanceReads] after reaping. A reader that gave up or was
-     * closed in between is finished the usual way.
-     */
-    private fun onIdleReadCqe(idx: Int, slot: Slot, res: Int) {
-        if (slot.readState == RS_DEMOTING) {
-            // The RECV did not start: the buffer is ours again. Unpin it (retire the fd's read pin so
-            // the pool can hand the array to anyone) and give the array back.
-            slot.pin?.let { it.refs--; it.release() }
-            slot.pin = null
-            if (slot.fd < pinRefs.size) pinRefs[slot.fd]?.let { it.retired = true; it.release(); pinRefs[slot.fd] = null }
-            slot.readBuf!!.releaseIfIdle(bufferPool)
-            stats?.let { it.idleDemotions++ }
-            queueRead(idx, slot, RS_QUEUED_POLL)
-        } else {                                                   // RS_POLL
-            if (res < 0 && -res != ECANCELED) { finishIdleRead(idx, slot, IoException("io_uring poll failed: ${errnoMessage(-res)}", -res)); return }
-            stats?.let { it.idleWakes++ }
-            queueRead(idx, slot, RS_QUEUED_RECV)
-        }
-    }
-
-    /** End a read that has no op in flight: resume its reader (if any) with [error] or its abort cause. */
-    private fun finishIdleRead(idx: Int, slot: Slot, error: Throwable?) {
-        val cont = slot.cont
-        val abort = slot.readAbort
-        releaseSlot(idx, slot)
-        if (cont != null) enqueueResumeInt(cont, 0, abort ?: error ?: ClosedException())
-    }
-
-    /** After reaping (SPEC §26.5): arm the POLL_ADD of a demoted read, or its RECV once data is there. */
-    private fun advanceReads() {
-        val count = pendingReadCount
-        pendingReadCount = 0
-        for (i in 0 until count) {
-            val idx = pendingReads[i]
-            val slot = slots[idx] ?: continue
-            if (!slot.live || slot.readBuf == null) continue
-            if (slot.cont == null || slot.readAbort != null) { finishIdleRead(idx, slot, null); continue }
-            val ud = (idx.toULong() shl 32) or slot.gen.toULong()
-            if (slot.readState == RS_QUEUED_POLL) {
-                slot.readState = RS_POLL
-                prepSqe(NETON_IORING_OP_POLL_ADD, slot.fd, 0L, 0, NETON_POLLIN, ud)
-                continue
-            }
-            // RS_QUEUED_RECV: data (or EOF) is waiting, so no POLL_FIRST; back on the common path.
-            val dst = slot.readBuf!!
-            val cap = try { dst.reserve(slot.readSizer!!.readChunk(), bufferPool) } catch (t: Throwable) { finishIdleRead(idx, slot, t); continue }
-            val pin = pinFor(slot.fd, dst.backingArray())
-            slot.pin = pin; pin.refs++
-            slot.readState = RS_RECV; slot.parkEpoch = idleEpoch
-            idleArrays = true
-            prepSqe(NETON_IORING_OP_RECV, slot.fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, ud)
-        }
-    }
-
     /** A RECV CQE: commit what arrived into the reader's buffer, then resume it (SPEC §24.7). */
     private fun onReadCqe(idx: Int, slot: Slot, res: Int) {
-        if (slot.readState != RS_RECV && (slot.readState == RS_POLL || res == -ECANCELED) && slot.readAbort == null && slot.cont != null) {
-            onIdleReadCqe(idx, slot, res); return
-        }
-        if (slot.readState == RS_POLL) { finishIdleRead(idx, slot, null); return }  // gave up or closed while polling
         val cont = slot.cont
         val dst = slot.readBuf!!
         val sizer = slot.readSizer!!
@@ -1027,7 +928,6 @@ internal class UringReactor : Reactor() {
             // SPEC §24: work that submits SQEs runs here, never from inside reap().
             if (msReadyCount > 0) completeReadyReads()
             if (pendingSendCount > 0) resubmitSends()
-            if (pendingReadCount > 0) advanceReads()
             if (sweepWait && timeoutFired) sweepParked(all = true)
             else if (++roundsSinceSweep >= SWEEP_ROUNDS && idleArrays) sweepParked(all = false)
             timeoutFired = false
@@ -1080,11 +980,6 @@ internal class UringReactor : Reactor() {
             if (slot.live) { slot.cont = null; slot.pin?.let { it.refs--; it.release() }; releaseSlot(pendingSends[i], slot) }
         }
         pendingSendCount = 0
-        for (i in 0 until pendingReadCount) {
-            val slot = slots[pendingReads[i]] ?: continue
-            if (slot.live) { slot.cont = null; releaseSlot(pendingReads[i], slot) }
-        }
-        pendingReadCount = 0
         if (liveOps > 0) {
             for (i in slots.indices) {
                 val slot = slots[i] ?: continue
@@ -1124,14 +1019,6 @@ internal class UringReactor : Reactor() {
         const val NOTHING_QUEUED = Int.MIN_VALUE
         const val IORING_RECVSEND_POLL_FIRST = 1
         const val IDLE_SWEEP_MS = 50
-        // SPEC §26.5 single-read states: RECV in flight; its cancel requested by the idle sweep;
-        // POLL_ADD in flight (no buffer); waiting in pendingReads to submit the POLL_ADD / the RECV.
-        const val IDLE_READ_MS = 1000L
-        const val RS_RECV = 0
-        const val RS_DEMOTING = 1
-        const val RS_POLL = 2
-        const val RS_QUEUED_POLL = 3
-        const val RS_QUEUED_RECV = 4
         const val SWEEP_ROUNDS = 1024
         /** user_data at or above this belongs to a control op (wake poll / timeout / cancel), not a slot. */
         const val CONTROL_BASE: ULong = 0xFFFF_FFFF_0000_0000uL

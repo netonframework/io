@@ -13,13 +13,12 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * SPEC §26.5: a read parked for 1-2 s gives its pooled buffer back (epoll: after the 50 ms sweep); on
- * io_uring its RECV is cancelled and replaced by a POLL_ADD. Whatever the driver, the parked reader
- * must still get the data, EOF, its cancellation, or the close — and must do so more than once.
+ * A read parked across the idle sweep (50 ms; readiness drivers give the pooled array back then)
+ * must still get the data, EOF, its cancellation, or the close — and more than once (SPEC §24, §26.5).
  */
 class IdleReadTest {
-    /** Longer than io_uring's idle-read rule (parked 1-2 s). */
-    private val IDLE = 2_200L
+    /** Parked across several idle sweeps. */
+    private val IDLE = 300L
 
     private suspend fun pair(port: Int): Pair<IoStream, IoStream> {
         val l = listen("127.0.0.1", port)
@@ -35,7 +34,7 @@ class IdleReadTest {
         val buf = Buffer(pooled = true)
         for (round in 1..3) {
             val reader = async { buf.clear(); val n = server.read(buf); n to buf.readBytes(buf.readableBytes).decodeToString() }
-            delay(IDLE)                                          // parked long enough to be demoted
+            delay(IDLE)                                          // parked across several sweeps
             send(client, "r$round")
             val (n, text) = withTimeout(2_000) { reader.await() }
             assertEquals(2, n); assertEquals("r$round", text)

@@ -40,15 +40,13 @@ internal class ReactorStats {
     var maxEventsInPoll = 0L
     var reads = 0L; var readBytes = 0L; var readsWouldBlock = 0L
     var writes = 0L; var writeBytes = 0L; var writesWouldBlock = 0L
-    var idleDemotions = 0L; var idleWakes = 0L  // SPEC §26.5 (io_uring): idle RECVs turned into POLL_ADDs, and woken by data
 
     fun json(driver: String, taskBudget: Int): String =
         "{\"driver\":\"$driver\",\"task_budget\":$taskBudget,\"rounds\":$rounds,\"tasks_run\":$tasksRun," +
         "\"max_tasks_in_round\":$maxTasksInRound,\"polls\":$polls,\"polls_zero_timeout\":$pollsZeroTimeout," +
         "\"polls_no_events\":$pollsNoEvents,\"events\":$events,\"max_events_in_poll\":$maxEventsInPoll," +
         "\"reads\":$reads,\"read_bytes\":$readBytes,\"reads_would_block\":$readsWouldBlock," +
-        "\"writes\":$writes,\"write_bytes\":$writeBytes,\"writes_would_block\":$writesWouldBlock," +
-        "\"idle_demotions\":$idleDemotions,\"idle_wakes\":$idleWakes}"
+        "\"writes\":$writes,\"write_bytes\":$writeBytes,\"writes_would_block\":$writesWouldBlock}"
 }
 
 /**

@@ -1,0 +1,10 @@
+iouring-ip0 qps=297503 p99=315.0 rss0_kib=11120 peak_kib=185440 at4s_kib=175540 end_kib=185440 gcs=6 sampled=6 pause_sum_us=712 pause_max_us=342 ttsp_sum_us=26224 ttsp_max_us=6181 heap_after_kib=180224
+iouring-ip1 qps=295505 p99=317.0 rss0_kib=11136 peak_kib=188116 at4s_kib=178772 end_kib=187760 gcs=6 sampled=6 pause_sum_us=713 pause_max_us=354 ttsp_sum_us=18186 ttsp_max_us=6051 heap_after_kib=182528
+epoll qps=426420 p99=249.0 rss0_kib=10160 peak_kib=123268 at4s_kib=80600 end_kib=123268 gcs=6 sampled=6 pause_sum_us=1312 pause_max_us=549 ttsp_sum_us=12981 ttsp_max_us=6056 heap_after_kib=119041
+iouring-ip0 qps=274662 p99=361.0 rss0_kib=11132 peak_kib=189536 at4s_kib=178656 end_kib=188268 gcs=6 sampled=6 pause_sum_us=519 pause_max_us=345 ttsp_sum_us=13475 ttsp_max_us=6145 heap_after_kib=183040
+iouring-ip1 qps=269007 p99=356.0 rss0_kib=11112 peak_kib=190540 at4s_kib=180812 end_kib=189144 gcs=6 sampled=6 pause_sum_us=543 pause_max_us=352 ttsp_sum_us=8643 ttsp_max_us=6037 heap_after_kib=183936
+epoll qps=277624 p99=347.0 rss0_kib=10196 peak_kib=123560 at4s_kib=81020 end_kib=123560 gcs=6 sampled=6 pause_sum_us=1118 pause_max_us=400 ttsp_sum_us=12155 ttsp_max_us=6018 heap_after_kib=119297
+iouring-ip0 qps=335541 p99=295.0 rss0_kib=11148 peak_kib=186108 at4s_kib=175824 end_kib=186108 gcs=6 sampled=6 pause_sum_us=606 pause_max_us=340 ttsp_sum_us=23771 ttsp_max_us=6125 heap_after_kib=180864
+iouring-ip1 qps=331370 p99=316.0 rss0_kib=11132 peak_kib=185836 at4s_kib=175552 end_kib=185836 gcs=6 sampled=6 pause_sum_us=542 pause_max_us=336 ttsp_sum_us=30372 ttsp_max_us=6138 heap_after_kib=180608
+epoll qps=440932 p99=231.0 rss0_kib=10132 peak_kib=122132 at4s_kib=78012 end_kib=122132 gcs=6 sampled=6 pause_sum_us=1311 pause_max_us=469 ttsp_sum_us=6153 ttsp_max_us=5997 heap_after_kib=82689
+# done

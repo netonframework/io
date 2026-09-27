@@ -1,0 +1,30 @@
+# B: io_uring idle reads (IDLE_POLL 1 = SPEC 26.5 on)
+iouring-ip0 active=64 idle=50000 qps=303509 p99=313.0 jain=1.000 connect_s=0.83 overflows=0 rss0_kib=10848 rss_peak_kib=176512
+iouring-ip1 active=64 idle=50000 qps=311100 p99=348.0 jain=0.962 connect_s=0.85 overflows=0 rss0_kib=10840 rss_peak_kib=177368
+epoll active=64 idle=50000 qps=433555 p99=226.0 jain=1.000 connect_s=0.88 overflows=0 rss0_kib=9892 rss_peak_kib=85880
+iouring-ip0 active=1000 idle=0 qps=385882 p99=4158.0 jain=1.000 connect_s=0.03 overflows=0 rss0_kib=10856 rss_peak_kib=17004
+iouring-ip1 active=1000 idle=0 qps=386257 p99=3838.0 jain=1.000 connect_s=0.03 overflows=0 rss0_kib=10868 rss_peak_kib=17396
+iouring-ip0 active=50000 idle=0 qps=189862 p99=334098.0 jain=0.998 connect_s=0.53 overflows=0 rss0_kib=10860 rss_peak_kib=175028
+iouring-ip1 active=50000 idle=0 qps=205060 p99=344648.0 jain=0.998 connect_s=0.53 overflows=0 rss0_kib=10868 rss_peak_kib=174264
+iouring-ip0 active=64 idle=50000 qps=349079 p99=298.0 jain=0.971 connect_s=0.87 overflows=0 rss0_kib=10828 rss_peak_kib=174416
+iouring-ip1 active=64 idle=50000 qps=333925 p99=305.0 jain=0.968 connect_s=0.86 overflows=0 rss0_kib=10872 rss_peak_kib=178536
+epoll active=64 idle=50000 qps=342066 p99=327.0 jain=0.977 connect_s=0.87 overflows=0 rss0_kib=9924 rss_peak_kib=90084
+iouring-ip0 active=1000 idle=0 qps=269068 p99=5140.0 jain=1.000 connect_s=0.03 overflows=0 rss0_kib=10864 rss_peak_kib=17268
+iouring-ip1 active=1000 idle=0 qps=267723 p99=5200.0 jain=1.000 connect_s=0.02 overflows=0 rss0_kib=10840 rss_peak_kib=16728
+iouring-ip0 active=50000 idle=0 qps=188386 p99=344620.0 jain=0.995 connect_s=2.55 overflows=5 rss0_kib=10824 rss_peak_kib=175504
+iouring-ip1 active=50000 idle=0 qps=184006 p99=383240.0 jain=1.000 connect_s=0.54 overflows=0 rss0_kib=10840 rss_peak_kib=175260
+iouring-ip0 active=64 idle=50000 qps=300469 p99=305.0 jain=1.000 connect_s=0.86 overflows=0 rss0_kib=10848 rss_peak_kib=171216
+iouring-ip1 active=64 idle=50000 qps=394145 p99=265.0 jain=0.998 connect_s=0.88 overflows=0 rss0_kib=10864 rss_peak_kib=173536
+epoll active=64 idle=50000 qps=346497 p99=336.0 jain=0.958 connect_s=0.87 overflows=0 rss0_kib=9972 rss_peak_kib=95944
+iouring-ip0 active=1000 idle=0 qps=321547 p99=4583.0 jain=0.979 connect_s=0.03 overflows=0 rss0_kib=10836 rss_peak_kib=16856
+iouring-ip1 active=1000 idle=0 qps=313167 p99=5498.0 jain=0.983 connect_s=0.03 overflows=0 rss0_kib=10836 rss_peak_kib=16724
+iouring-ip0 active=50000 idle=0 qps=187620 p99=369956.0 jain=0.998 connect_s=0.54 overflows=0 rss0_kib=10836 rss_peak_kib=175644
+iouring-ip1 active=50000 idle=0 qps=182958 p99=377457.0 jain=1.000 connect_s=0.54 overflows=0 rss0_kib=10836 rss_peak_kib=174232
+iouring-ip0 active=64 idle=50000 qps=325881 p99=324.0 jain=0.965 connect_s=0.91 overflows=0 rss0_kib=10856 rss_peak_kib=171612
+iouring-ip1 active=64 idle=50000 qps=428302 p99=222.0 jain=1.000 connect_s=0.92 overflows=0 rss0_kib=10920 rss_peak_kib=173676
+epoll active=64 idle=50000 qps=445929 p99=220.0 jain=1.000 connect_s=0.88 overflows=0 rss0_kib=9912 rss_peak_kib=89860
+iouring-ip0 active=1000 idle=0 qps=386694 p99=3742.0 jain=1.000 connect_s=0.02 overflows=0 rss0_kib=10920 rss_peak_kib=17068
+iouring-ip1 active=1000 idle=0 qps=385813 p99=3669.0 jain=1.000 connect_s=0.03 overflows=0 rss0_kib=10864 rss_peak_kib=16752
+iouring-ip0 active=50000 idle=0 qps=201465 p99=360487.0 jain=1.000 connect_s=1.54 overflows=2 rss0_kib=10864 rss_peak_kib=175288
+iouring-ip1 active=50000 idle=0 qps=190165 p99=358322.0 jain=0.995 connect_s=0.53 overflows=0 rss0_kib=10860 rss_peak_kib=175664
+# done
