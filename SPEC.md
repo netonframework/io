@@ -1176,7 +1176,7 @@ websocket http/2 quic http/3 的库，最终可能这些库又可以被 neton �
 | GC 建议 | §26.8（默认自动调节；`setMinHeap` 可选） |
 | 可观测性 | §28.8 |
 | 平台支持 | §20；Windows 以 §28.5 验收为准 |
-| 产物坐标与包名 | §28.13 |
+| 产物坐标、包名与框架集成边界 | §28.13 |
 其他章节是历史记录或已完成工作的说明（见开头导读），不构成契约。
 
 **兼容性**：`com.netonstream:neton-io:0.1.0` 已发布（2026-09-25），保持不动。§28.3、§28.6、§28.12 的破坏性变更（`ReactorResumer.resume`
@@ -1197,6 +1197,7 @@ epoll / kqueue / io_uring / IOCP
   如 §27.5 的名字解析）；资源控制（缓冲复用、连接上限、读取前准入、有界排队、背压、可靠停机）；扩展接口（包装字节流、编解码器、组合服务，
   不需要访问 fd 表或调度队列）；可观测性。
 - **不在 neton-io**：HTTP 各版本、WebSocket、TLS（独立模块，经 `Filter` 包装 `IoStream`）、QUIC 的重传 / 拥塞控制 / 流管理、HTTP/3 语义、压缩。
+- **目标**：在协议正确、取消安全、资源有界、调度公平的前提下，持续对标领先实现提升性能（§28.13）。
 - **成熟度判据**：msgtrans 与独立的第二协议实现（§28.7）都只依赖公开接口工作；实现中需要改 neton-io 的地方逐一作为底座缺口记录并修正。
   现状：msgtrans 只用 13 个公开符号（`IoStream`、`Framed`、`Io`、`Encoder` / `Decoder`、`Buffer`、`connect` / `listen` / `listenGroup`、
   `TcpServerGroup` / `TcpListener`、`IoException` / `ClosedException`、`ReactorResumer`）。
@@ -1320,7 +1321,7 @@ IOCP 与 WSAPoll 只有 mingwX64 编译链接验证。`ci/windows-validation` �
 全部运行，可选能力按声明运行。运行对象：TCP（io_uring / epoll / kqueue / poll / IOCP / WSAPoll）、Unix 域套接字、`memoryStreamPair`、`BaseFilter`。
 
 ### 28.7 第二个协议消费者：HTTP/1.1 子集（冻结）
-独立模块（neton-io 仓库之外；坐标 `com.netonstream:http`，包 `neton.http.h1`，见 §28.13），作为普通依赖使用 `com.netonstream:io`，不引用 `ReactorResumer`。目的是验证公开接口；实现中每一处"只用公开 API
+独立模块（neton-io 仓库之外；坐标 `com.netonstream:http`，通用类型在 `neton.http`、HTTP/1.1 专属实现在 `neton.http.h1`，见 §28.13），作为普通依赖使用 `com.netonstream:io`，不引用 `ReactorResumer`。目的是验证公开接口；实现中每一处"只用公开 API
 做不到"的地方记入 neton-io SPEC。依据 RFC 9112（消息语法与边界）、RFC 9110（语义）。
 - **范围**：服务端与客户端；只说 HTTP/1.1（服务端接受 HTTP/1.0 请求，按 1.0 规则默认不保持连接，响应以 1.1 书写）；无 TLS、无压缩、无 HTTP/2、
   无 Upgrade（`Upgrade` 头忽略，按普通请求处理）。
@@ -1380,7 +1381,7 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
 3. §28.8 最小计数（§28.4 所需）+ `echo-client-mass` 开环 / 混合模式 → §28.4 的 L1 / L2 / F2 / F3；不达标项按候选逐个改并测量。
 4. §28.12 读取前准入 → §28.4 的 L3。
 5. §28.5 Windows 实跑（依赖用户提供 Actions 结果或令牌；可与上面各步并行）。
-6. §28.7 `com.netonstream:http`（`neton.http.h1`）；缺口清单逐项回到 neton-io。
+6. §28.7 `com.netonstream:http`（`neton.http` + `neton.http.h1`）；缺口清单逐项回到 neton-io。
 7. §28.8 可观测性 API 完整版。
 8. §28.9 数据报层：有 QUIC 消费方时另起 SPEC。
 
@@ -1407,18 +1408,21 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
   服务端读缓冲不增长、客户端写入最终阻塞；(d) 等待超过 `acquireTimeoutMillis` 的连接被关闭并计数；(e) 取消等待中的连接不漏许可；(f) 输出上限：客户端
   不读响应时服务端每连接待发送字节不超过上限。§28.4 L3 以它为准入手段。msgtrans 的 `maxInFlightRequests` 保持现状，另评估是否改用 `Admission`。
 
-### 28.13 产物坐标、包名与仓库（2026-09-27 用户确定）
-| 职责 | Maven 坐标 | Kotlin 包 | 说明 |
-|---|---|---|---|
-| I/O 与网络底座 | `com.netonstream:io` | `neton.io.*`（不变） | 仓库仍名 `neton-io`；`com.netonstream:neton-io:0.1.0` 保持不动，自 0.2.0 起用新坐标，旧坐标发布一次 Maven 重定位（relocation）POM 指向新坐标 |
-| HTTP 协议库（§28.7 起步） | `com.netonstream:http` | `neton.http.h1`（HTTP/1.1）；以后 `neton.http.h2` | 不在 `neton.http`、`neton.http.client` 中定义类型 |
-| WebSocket 协议库 | `com.netonstream:websocket` | `neton.websocket` | 以后 |
-| QUIC 协议库 | `com.netonstream:quic` | `neton.quic` | 以后，依赖 §28.9 数据报层 |
-| HTTP/3 协议库 | `com.netonstream:http3` | `neton.http.h3` | 以后 |
-| msgtrans | `com.netonstream:msgtrans`（不变） | `msgtrans.*`（不变） | 依赖改为 `com.netonstream:io` |
-| Neton 框架 HTTP 集成 | `com.netonstream:neton-http`（不变） | `neton.http.*`（现有） | 框架装配、配置与适配 |
-- **包名共享、类型不重合**：`neton.*` 前缀由框架与独立库共用；要避免的是完整类型名重复以及同名函数 / 扩展带来的调用歧义。现状核对：框架的
-  `neton-http` 已在 `neton.http.client` 中定义 `HttpClient`、`HttpClientRequest`、`HttpClientResponse`、`HttpClientConfig` 等 18 个类型，在 `neton.http`
-  中定义 `HttpComponent`。规则：协议库的类型只放在按协议版本划分的子包（`neton.http.h1` / `h2` / `h3`）或协议库自有的子包中，不进入框架已使用的包，
-  也不复用框架的类型名；新增类型前先清点框架公开类型。
-- **依赖方向**：`neton-http`（框架）→ `http`（协议库）→ `io`；框架对协议库的适配代码放在框架模块中。
+### 28.13 产物坐标、包名、仓库与框架集成（2026-09-27 用户确定；同日修订）
+用户："现在先不用考虑 neton.http 的包冲突问题，io / http / quic / websocket 这个目前和 neton 框架是并行的，等 io / http / quic / websocket 性能无敌的时候
+再考虑如何调整 neton 框架去接入。" 本节只确认命名与集成边界，**不代表 §28 修订 3 的生命周期与准入设计已通过技术终审**。
+
+| 职责 | Maven 坐标 | Kotlin 包 |
+|---|---|---|
+| I/O 与网络底座 | `com.netonstream:io`（testkit：`com.netonstream:io-testkit`） | `neton.io.*`（不变） |
+| HTTP 协议库（§28.7 起步） | `com.netonstream:http` | `neton.http`（通用的请求、响应、客户端、服务端等类型）；协议专属实现在 `neton.http.h1`，以后 `neton.http.h2` / `neton.http.h3` |
+| WebSocket 协议库 | `com.netonstream:websocket` | `neton.websocket` |
+| QUIC 协议库 | `com.netonstream:quic` | `neton.quic`（依赖 §28.9 数据报层） |
+| msgtrans | `com.netonstream:msgtrans`（不变） | `msgtrans.*`（不变） |
+- **仓库**：仍名 `neton-io`，不随坐标缩短。
+- **发布**：`com.netonstream:neton-io:0.1.0` 保持不动；自 0.2.0 起用新坐标，旧坐标发布一次 Maven 重定位（relocation）POM 指向新坐标。
+- **包的划分按职责**：通用 HTTP API 放在 `neton.http`，使用者切换协议版本不必更换整套类型；只有协议专属的实现与扩展放进 `h1` / `h2` / `h3`。
+- **与现有 Neton 框架并行，集成延期**：`io` / `http` / `quic` / `websocket` 是独立建设的协议栈，按自身职责设计 API，**不为现有框架（`com.netonstream:neton-http`，
+  `neton.http.*`）避让包名或类型名**，也不要求与它同时链接。等这套协议栈经过验证、性能达到目标后，再由框架调整去接入（届时处理两者的包与类型关系）。
+- **目标表述**：在协议正确、取消安全、资源有界、调度公平的前提下，持续对标领先实现（geario 等）提升性能。"性能无敌"是方向，不是验收标准；每个阶段
+  都要有明确的对照场景与数据（§28.4 的规程与验收指标）。
