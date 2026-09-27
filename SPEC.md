@@ -1150,6 +1150,16 @@ handler 不执行、客户端读到 EOF、配额归零、`shutdown` 返回。
 **§27.10 验证**：该测试在修复前 3/3 挂起（`shutdown(0)` 永不返回，40 s 强制超时，退出码 137），修复后连跑 5 次通过。全部测试：macOS 112/112，
 colima Linux arm64 io_uring / multishot / epoll 各 114/114；mingwX64、Android、iOS 编译通过。
 
+### 27.11 `runReactor` 的块失败时挂起或使进程中止（2026-09-28，实施 §28.12 的反向验证时发现）
+`Reactor.run` 在根协程里 `try { block() } catch { failure = t }`，循环结束后再抛出 `failure`。两个后果：
+- 块自己失败（包括逃出的 `withTimeout`）时异常被吞掉，根作业按"正常完成"等待子协程；停在 accept 循环或读上的子协程无人取消，`runReactor` 永不返回。
+- 子协程失败使根作业失败，而根作业是无处理器的顶层 `launch`：异常交给未捕获异常处理器，**整个进程中止**（测试二进制里其余测试随之不再运行）。
+这是 §28 之前就存在的缺陷（在 §28.11 第 1 步之前的提交上复现）。表现：断言失败的测试不报失败而是挂起或中止。
+修正：根协程改为 `async`，语义与 `runBlocking` 一致——块或任一子协程失败即取消其余部分，循环结束后抛出**原始**异常（子协程的断言失败不再
+被 `CancellationException` 顶替）。测试 `ReactorLifecycleTest` (f)：块失败时停在 accept 与读上的两个子协程都被取消、抛出原异常；子协程失败时抛出
+该子协程的异常；逃出的 `withTimeout` 同样返回。修正前该测试挂起（20 s 强制超时）。
+**§27.11 验证**：单独在上一提交之上：macOS 118/118，colima Linux arm64 io_uring（multishot）/ io_uring 单次 RECV / epoll 各 120/120。
+
 ## 28. 底座定位、契约与路线图（2026-09-27，修订 3，待整体评审；评审通过前不写代码）
 
 用户："neton-io 就仅仅是 io 和网络层的底座，类似于 geario 和 tokio，形成一些标准化的底座建设，别人可以基于 neton-io 实现 http 1.1

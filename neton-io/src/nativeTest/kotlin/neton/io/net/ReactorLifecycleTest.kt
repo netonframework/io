@@ -141,4 +141,46 @@ class ReactorLifecycleTest {
         canceller.requestTermination().result
         assertEquals(n, resumes.value)
     }
+
+    /**
+     * (f) A root block that fails cancels the coroutines it started (like runBlocking), and runReactor
+     * rethrows the failure. Before, the failure was swallowed while a parked child (an accept loop, a
+     * read) kept the root waiting forever, so a failing test hung instead of failing.
+     */
+    @Test
+    fun failingRootCancelsParkedChildrenAndRethrows() {
+        val cancelledChildren = AtomicInt(0)
+        val e = kotlin.test.assertFailsWith<IllegalStateException> {
+            runReactor {
+                val l = listenTcpServer("127.0.0.1", 21992, SocketOptions.Default)
+                val c = connect("127.0.0.1", 21992)
+                val s = ReactorStream(l.acceptFd(), currentReactor())
+                launch { try { while (true) l.acceptFd() } catch (x: CancellationException) { cancelledChildren.incrementAndGet(); throw x } }
+                launch { try { s.read(Buffer()) } catch (x: CancellationException) { cancelledChildren.incrementAndGet(); throw x } finally { s.close(); c.close() } }
+                delay(20)
+                error("boom")
+            }
+        }
+        assertEquals("boom", e.message)
+        assertEquals(2, cancelledChildren.value)
+        // A child that fails fails the whole scope: runReactor rethrows the child's own exception
+        // (it used to reach the uncaught-exception handler and abort the process).
+        val childFailure = kotlin.test.assertFailsWith<IllegalArgumentException> {
+            runReactor {
+                val l = listenTcpServer("127.0.0.1", 21994, SocketOptions.Default)
+                launch { while (true) l.acceptFd() }
+                launch { delay(10); throw IllegalArgumentException("child") }
+                delay(10_000)
+            }
+        }
+        assertEquals("child", childFailure.message)
+        // A timeout escaping the root behaves the same way.
+        kotlin.test.assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+            runReactor {
+                val l = listenTcpServer("127.0.0.1", 21993, SocketOptions.Default)
+                launch { while (true) l.acceptFd() }
+                kotlinx.coroutines.withTimeout(50) { delay(1_000) }
+            }
+        }
+    }
 }

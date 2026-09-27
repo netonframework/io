@@ -3,6 +3,7 @@ package neton.io.net
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Delay
 import kotlinx.coroutines.DisposableHandle
@@ -516,22 +517,19 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
         fun run(block: suspend CoroutineScope.() -> Unit) {
             val reactor = createReactor()
-            var failure: Throwable? = null
-            val scope = CoroutineScope(reactor)
-            val job = scope.launch(start = CoroutineStart.DEFAULT) {
-                try {
-                    block()
-                } catch (t: Throwable) {
-                    failure = t
-                }
-            }
+            // Like runBlocking: the block and everything it starts form one scope. A failure anywhere
+            // in it (the block, or a child) cancels the rest and is rethrown here once the loop ends.
+            // As `async` the failure stays in the Deferred instead of reaching the uncaught-exception
+            // handler (which aborted the process); a failed block no longer leaves parked children
+            // waiting forever.
+            val root = CoroutineScope(reactor).async(start = CoroutineStart.DEFAULT) { block() }
             statsReactor = reactor
             reactor.bindOwner()
-            reactor.runUntil(job)
+            reactor.runUntil(root)
             reactor.shutdown()
             reactor.printStats()
             statsReactor = null
-            failure?.let { throw it }
+            root.getCompletionExceptionOrNull()?.let { throw it }
         }
     }
 }
