@@ -1,0 +1,45 @@
+# host=service load=2.00 md5 1da10739ebfc544aec778f6873d1d149  echoServer-v42.kexe
+neton-io linuxX64 iouring tests=73 failures=0
+neton-io linuxX64 epoll tests=73 failures=0
+neton-io linuxX64 polling tests=73 failures=0
+msgtrans linuxX64 default=inline tests=41 failures=0
+msgtrans linuxX64 default=channel tests=41 failures=0
+v42-epoll conns=12 pin=1 qps=105941 p99=153.6 jain=1.000 sc=2.16 yields=0.000
+v42-iouring conns=12 pin=1 qps=125299 p99=193.3 jain=1.000 sc=0.10 yields=0.000
+geario conns=12 pin=1 qps=96574 p99=242.3 jain=1.000 sc=0.28 yields=0.000
+v42-epoll conns=12 pin=1 qps=96334 p99=159.3 jain=1.000 sc=2.16 yields=0.000
+v42-iouring conns=12 pin=1 qps=101735 p99=233.5 jain=1.000 sc=0.09 yields=0.000
+geario conns=12 pin=1 qps=108961 p99=216.6 jain=1.000 sc=0.29 yields=0.000
+v42-epoll conns=12 pin=1 qps=111620 p99=148.2 jain=1.000 sc=2.16 yields=0.000
+v42-iouring conns=12 pin=1 qps=125765 p99=191.7 jain=1.000 sc=0.09 yields=0.000
+geario conns=12 pin=1 qps=144793 p99=167.3 jain=1.000 sc=0.29 yields=0.000
+v42-epoll conns=12 pin=1 qps=148151 p99=115.8 jain=1.000 sc=2.16 yields=0.000
+v42-iouring conns=12 pin=1 qps=118678 p99=235.0 jain=1.000 sc=0.09 yields=0.000
+geario conns=12 pin=1 qps=96139 p99=243.2 jain=1.000 sc=0.28 yields=0.000
+v42-epoll conns=12 pin=1 qps=96176 p99=158.3 jain=1.000 sc=2.16 yields=0.000
+v42-iouring conns=12 pin=1 qps=113357 p99=213.8 jain=1.000 sc=0.09 yields=0.000
+geario conns=12 pin=1 qps=113974 p99=208.8 jain=1.000 sc=0.29 yields=0.000
+v42-epoll conns=12 pin=1 qps=117308 p99=157.6 jain=1.000 sc=2.17 yields=0.000
+v42-iouring conns=12 pin=1 qps=111865 p99=215.5 jain=1.000 sc=0.09 yields=0.000
+geario conns=12 pin=1 qps=114565 p99=207.3 jain=1.000 sc=0.29 yields=0.000
+v42-epoll conns=100 pin=0 qps=219040 p99=1140.5 jain=0.982 sc=2.06 yields=0.000
+v42-iouring conns=100 pin=0 qps=240896 p99=927.4 jain=0.988 sc=0.04 yields=0.000
+geario conns=100 pin=0 qps=305430 p99=414.3 jain=0.999 sc=0.12 yields=0.000
+v42-epoll conns=100 pin=0 qps=215562 p99=1276.9 jain=0.974 sc=2.06 yields=0.000
+v42-iouring conns=100 pin=0 qps=238498 p99=1058.3 jain=0.996 sc=0.04 yields=0.000
+geario conns=100 pin=0 qps=257979 p99=801.9 jain=0.993 sc=0.13 yields=0.000
+v42-epoll conns=100 pin=0 qps=257858 p99=766.1 jain=0.984 sc=2.05 yields=0.000
+v42-iouring conns=100 pin=0 qps=314315 p99=700.9 jain=0.990 sc=0.04 yields=0.000
+geario conns=100 pin=0 qps=300581 p99=798.0 jain=0.996 sc=0.13 yields=0.000
+v42-epoll conns=100 pin=0 qps=289114 p99=922.4 jain=0.988 sc=2.05 yields=0.000
+v42-iouring conns=100 pin=0 qps=309664 p99=774.3 jain=0.998 sc=0.04 yields=0.000
+geario conns=100 pin=0 qps=306921 p99=780.7 jain=0.981 sc=0.13 yields=0.000
+# done
+v38-epoll secs=5 requests=206959 Ir=486196975
+v38-epoll secs=15 requests=607503 Ir=1418674175
+v42-epoll secs=5 requests=215174 Ir=507690836
+v42-epoll secs=15 requests=607616 Ir=1420556362
+v38-iouring secs=5 requests=245032 Ir=716722301
+v38-iouring secs=15 requests=777713 Ir=2291355655
+v42-iouring secs=5 requests=230667 Ir=676284340
+v42-iouring secs=15 requests=746955 Ir=2196008003

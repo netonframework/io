@@ -41,3 +41,17 @@ epoll (the fallback, e.g. under Docker's default seccomp) is at 0.96–0.99; its
 request (recv, the EAGAIN recv that confirms the socket is drained, send). The short-read rule removes the
 EAGAIN recv and wins on one core but loses on four (a fast client's next request is often already there);
 next: make it adaptive per connection.
+
+## Later changes (v39–v42)
+
+- epoll short-read rule (SPEC §24.5): decided per reactor, speculation skipped above a 90 % miss rate.
+  v41: medians match the better fixed mode at every point (pinned 126.6k vs always 125.7k / off 112.0k;
+  ×4 100 conns ≈ off; ×4 1000 conns 234k vs off 221k), Jain ≥ 0.976.
+- `Framed.serveLoop` / `send` / `receiveEach` allocate nothing of their own (inline bodies); used by msgtrans,
+  whose rpc path went from 8 to 3 allocations per request (msgtrans SPEC §12).
+- io_uring: a cancelled or timed-out send is cancelled in the kernel and accounted before its writer resumes
+  (found by msgtrans' contract tests; `WriteCancelTest`).
+- v42 acceptance (`2026-09-27-153-v42-raw.txt`): tests pass on all three Linux drivers (73) and msgtrans in
+  both write modes (41). That run's throughput was lower than v38–v41 (io_uring pinned 0.986, ×4 0.967); the
+  deterministic check says it is the host, not the code — cachegrind Ir/request v38 vs v42: epoll 2328 / 2326,
+  io_uring 2956 / 2944, and GC yields per request stay 0.
