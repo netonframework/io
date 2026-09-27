@@ -414,6 +414,8 @@ internal class UringReactor : Reactor() {
             // of CPU on short-lived jobs such as withContext / withTimeout (SPEC §24.12).
             if (cause != null) postToReactor { onJobCancelled(fd, job) }
         }
+        // SPEC §27.9: a cancel between the isActive check and the registration calls no handler.
+        if (!job.isActive) { handle.dispose(); throw job.getCancellationException() }
         if (watchJobA[fd] == null) { watchJobA[fd] = job; watchHandleA[fd] = handle }
         else if (watchJobB[fd] == null) { watchJobB[fd] = job; watchHandleB[fd] = handle }
         else { watchHandleA[fd]?.dispose(); watchJobA[fd] = watchJobB[fd]; watchHandleA[fd] = watchHandleB[fd]; watchJobB[fd] = job; watchHandleB[fd] = handle }

@@ -202,6 +202,8 @@ internal class IocpReactor : Reactor() {
             // of CPU on short-lived jobs such as withContext / withTimeout (SPEC §24.12).
             if (cause != null) postToReactor { onJobCancelled(fd, job) }
         }
+        // SPEC §27.9: a cancel between the isActive check and the registration calls no handler.
+        if (!job.isActive) { handle.dispose(); throw job.getCancellationException() }
         if (watchJobA[i] == null) { watchJobA[i] = job; watchHandleA[i] = handle }
         else if (watchJobB[i] == null) { watchJobB[i] = job; watchHandleB[i] = handle }
         else { watchHandleA[i]?.dispose(); watchJobA[i] = watchJobB[i]; watchHandleA[i] = watchHandleB[i]; watchJobB[i] = job; watchHandleB[i] = handle }

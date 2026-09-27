@@ -180,6 +180,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             // of CPU on short-lived jobs such as withContext / withTimeout (SPEC §24.12).
             if (cause != null) postToReactor { onParkCancelled(fd, write, job) }
         }
+        // SPEC §27.9: a cancel landing between the isActive check above and this registration does not
+        // call the handler (invokeImmediately = false); see it here, before parking. One after the
+        // registration comes from another thread, so its wake-up is queued behind this park.
+        if (!job.isActive) { handles[fd]?.dispose(); handles[fd] = null; jobs[fd] = null; throw job.getCancellationException() }
     }
 
     private fun onParkCancelled(fd: Int, write: Boolean, job: Job) {
