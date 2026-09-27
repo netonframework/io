@@ -1033,3 +1033,8 @@ EPIPE 的 `IoException`，不调用 send。回归测试：`UnixSocketTest.peerGo
 去掉单线程的 `neton-resolver` Worker。测试：`SharedReactorsTest`（两个端口各自回显、第二个端口用到两个反应器、先停一个另一个照常、
 都停后工作线程退出、之后 `listenAlso` 报错；32 个并发解析全部成功）。macOS 95/95，colima Linux arm64 io_uring / multishot / epoll 各 96/96；
 mingwX64、Android、iOS 编译通过。
+
+**§27.2 测量**（hc9，v52，同一二进制 `NETON_IO_AFFINITY` 0 / 1，服务端 `taskset 0,1` 两个反应器，4 轮顺序轮换，raw `docs/benchmarks/2026-09-27-153-hc9-affinity-raw.txt`）：
+绑核 / 不绑核 epoll 128 B 64 / 1k / 10k 连接 1.10 / 0.96 / 1.00，4 KB 1k 0.94；io_uring 0.99 / 1.04 / 1.03，4 KB 1k 0.97。同一格轮间波动 20–40 %，
+比值方向不一致（epoll 64 连接的 1.10 来自一轮 459k 对 353k）——**没有可测量的收益，`pinThreads` 保持默认关闭**，作为选项保留（进程独占机器、
+不受 `taskset` 限制时可自行测量）。
