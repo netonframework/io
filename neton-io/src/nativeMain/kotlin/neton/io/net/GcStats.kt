@@ -7,7 +7,8 @@ import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 
 /**
- * Bench-side GC statistics for echoServer (SPEC §26.3), enabled by `NETON_IO_GC_STATS=1`.
+ * GC statistics for servers and benchmarks (SPEC §26.3), enabled by `NETON_IO_GC_STATS=1`.
+ * Nothing runs unless the application calls [startFromEnvironment].
  *
  * A sampler thread reads `GC.lastGCInfo` every 2 ms and prints one line per second:
  * collections (epoch difference, exact); for the collections sampled (only the last one between two
@@ -15,7 +16,8 @@ import kotlin.native.concurrent.Worker
  * (pause requested to pause started: mutators running on until they reach a safepoint), sum and
  * maximum; and the heap after the last collection.
  */
-internal object GcStats {
+object GcStats {
+    /** Start the sampler thread if `NETON_IO_GC_STATS=1`. Call once, at startup. */
     fun startFromEnvironment() {
         if (platform.posix.getenv("NETON_IO_GC_STATS")?.toKString() != "1") return
         Worker.start(name = "gc-stats").execute(TransferMode.SAFE, {}) { sample() }
