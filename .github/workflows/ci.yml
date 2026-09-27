@@ -60,7 +60,7 @@ jobs:
           key: konan-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
       - name: Test
         shell: bash
-        run: ./gradlew :neton-io:${{ matrix.task }} --no-daemon --stacktrace --continue
+        run: ./gradlew :io:${{ matrix.task }} --no-daemon --stacktrace --continue
       - name: Summary
         if: always()
         shell: bash
@@ -99,9 +99,9 @@ jobs:
       - name: Compile every target, link Windows and Android test binaries
         run: >
           ./gradlew --no-daemon --stacktrace
-          :neton-io:compileKotlinLinuxX64 :neton-io:compileKotlinLinuxArm64
-          :neton-io:compileKotlinMacosArm64 :neton-io:compileKotlinMacosX64
-          :neton-io:compileKotlinIosArm64 :neton-io:compileKotlinIosSimulatorArm64 :neton-io:compileKotlinIosX64
-          :neton-io:compileKotlinAndroidNativeArm64 :neton-io:compileKotlinAndroidNativeArm32
-          :neton-io:compileKotlinAndroidNativeX64 :neton-io:compileKotlinAndroidNativeX86
-          :neton-io:linkDebugTestMingwX64 :neton-io:linkDebugTestAndroidNativeArm64
+          :io:compileKotlinLinuxX64 :io:compileKotlinLinuxArm64
+          :io:compileKotlinMacosArm64 :io:compileKotlinMacosX64
+          :io:compileKotlinIosArm64 :io:compileKotlinIosSimulatorArm64 :io:compileKotlinIosX64
+          :io:compileKotlinAndroidNativeArm64 :io:compileKotlinAndroidNativeArm32
+          :io:compileKotlinAndroidNativeX64 :io:compileKotlinAndroidNativeX86
+          :io:linkDebugTestMingwX64 :io:linkDebugTestAndroidNativeArm64

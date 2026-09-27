@@ -3,7 +3,7 @@ plugins {
 }
 allprojects {
     group = "com.netonstream"
-    version = "0.1.0"
+    version = "0.2.0-SNAPSHOT"
 }
 
 // ---------- Maven Central publishing ----------
@@ -14,7 +14,7 @@ allprojects {
 // must compile with the same Kotlin version as the publisher.
 val unpublished = setOf<String>()
 val pomDescriptions = mapOf(
-    "neton-io" to "neton-io - coroutine-native async I/O for Kotlin/Native: byte buffers, codec contracts, the IoStream/Filter/Framed model and a TCP reactor (kqueue on Apple, epoll/poll and io_uring on Linux) that doubles as the coroutine dispatcher; the I/O foundation of the Neton stack"
+    "io" to "com.netonstream:io (neton-io) - coroutine-native async I/O for Kotlin/Native: byte buffers, codec contracts, the IoStream/Filter/Framed model and a TCP reactor (kqueue on Apple, epoll/poll and io_uring on Linux) that doubles as the coroutine dispatcher; the I/O foundation of the Neton stack"
 )
 
 subprojects {

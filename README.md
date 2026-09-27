@@ -14,7 +14,7 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 
 ## Artifact
 
-One artifact, `com.netonstream:neton-io`, the way tokio is one crate. Packages keep the layering:
+One artifact, `com.netonstream:io` (up to 0.1.0: `com.netonstream:neton-io`), the way tokio is one crate. Packages keep the layering:
 
 - `neton.io.bytes` — growable byte buffer (moves to native/pinned memory later)
 - `neton.io.codec` — `Decoder`/`Encoder` and `LineCodec`
@@ -22,7 +22,7 @@ One artifact, `com.netonstream:neton-io`, the way tokio is one crate. Packages k
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:neton-io:0.1.0") }
+dependencies { implementation("com.netonstream:io:0.2.0") }   // 0.1.0: com.netonstream:neton-io
 ```
 
 Targets: macOS, Linux (x64/arm64) and iOS. The artifact is a klib, so a consumer compiles with the
@@ -54,9 +54,9 @@ driver:
 
 ```bash
 # on a Linux host with JDK 17 (the macOS box cannot run the Linux reactors)
-NETON_IO_DRIVER=iouring ./gradlew :neton-io:linuxX64Test                          # io_uring
-NETON_IO_DRIVER=epoll   ./gradlew :neton-io:linuxX64Test                          # epoll
-NETON_IO_DRIVER=iouring NETON_IO_URING_DEPTH=8 ./gradlew :neton-io:linuxX64Test   # full-SQ path
+NETON_IO_DRIVER=iouring ./gradlew :io:linuxX64Test                          # io_uring
+NETON_IO_DRIVER=epoll   ./gradlew :io:linuxX64Test                          # epoll
+NETON_IO_DRIVER=iouring NETON_IO_URING_DEPTH=8 ./gradlew :io:linuxX64Test   # full-SQ path
 ```
 
 ## Status

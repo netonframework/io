@@ -1440,3 +1440,7 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
 | 读取前准入 | http（服务端可选） | §28.12 |
 | 升级后交出"读缓冲剩余 + 原流" | http、websocket | 协议库内以 `IoStream` 包装实现，无需改 neton-io |
 TLS 1.3（QUIC 所需的 12 项能力见 quic §4）不在 neton-io：2026-09-27 用户确定由另外封装的 `openssl-kotlin`（基于 OpenSSL 4.0.2）提供；在它可用之前，只做与 TLS 无关的工作。
+
+**§28.11 第 0 步完成（2026-09-27）**：模块改名 `:io`（目录仍为 `neton-io/`），坐标 `com.netonstream:io`，版本 `0.2.0-SNAPSHOT`；CI 与 README 改用 `:io:` 任务；
+msgtrans 依赖改为 `com.netonstream:io`、版本 `0.2.0-SNAPSHOT`；neton-io / msgtrans / pulsekit 三个工程在 macOS 上编译通过；POM 为 `com.netonstream:io:0.2.0-SNAPSHOT`。
+Gradle 任务路径从 `:neton-io:…` 变为 `:io:…`。旧坐标的重定位 POM 在发布 0.2.0 时生成。
