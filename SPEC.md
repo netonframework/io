@@ -810,3 +810,14 @@ neton-io 自身收发路径已零分配，但上层协议每条消息仍需分�
 让回收更少发生。这是进程级设置，库不默认修改，由服务端应用在启动时决定。
 实测（153，单反应器）：msgtrans rpc 在 64 / 256 MB 目标下吞吐 +5.5 % / +5.7 %，framed 256 MB +4.6 %，每请求 GC 自旋减半
 （`msgtrans-kotlin/bench/results/2026-09-27-153-mt4-raw.txt`）。
+
+### 24.7 io_uring 读：直接收进用户缓冲（单次 RECV）取代 multishot 默认
+- 依据（153，v42，raw `docs/benchmarks/2026-09-27-153-matrix{2,3}-raw.txt`）：吞吐矩阵中 io_uring 只在 64 KB 输给 geario（0.80–0.89，全部轮次）；
+  multishot 用 16 KB 内核缓冲池，每条 64 KB 消息拆成 ≥ 4 个 CQE、每块一次拷贝与一次归还。对照（对 geario）：
+  单次 RECV 进用户缓冲 64 KB 单核 1.656、×4 1.480，4 KB 持平（≈ 1.1），128 B ×4 1.017、单核 0.966；常驻内存 ×4 由 46 MB 降到 20 MB（无缓冲池）。
+  geario 的 io_uring 同样是单次 Recv 进自身缓冲。单次路径当时仍是状态机（每次读分配一个续体），128 B 单核的差距即来自此。
+- 设计：单次读零分配——SQE 指向用户缓冲（已 pin），槽里登记缓冲与读大小策略，CQE 到达时由反应器提交数据（commitWrite + onRead）再恢复调用方；
+  读被取消/超时则 ASYNC_CANCEL，CQE 中已收到的字节照常提交进缓冲（不丢数据），再以原因恢复；流被关闭则放弃缓冲、不再触碰。
+- 默认改为单次读；`NETON_IO_URING_MULTISHOT=1` 保留 multishot（空闲连接不占读缓冲时更省内存）。
+- 验收：153 上单次（零分配）对 multishot 与 geario，128 B / 4 KB / 64 KB × 单核 / ×4 100 连接，单次在各点不劣于两者较好者（噪声内）；
+  每请求分配 0；三驱动全部测试与 msgtrans 测试通过。
