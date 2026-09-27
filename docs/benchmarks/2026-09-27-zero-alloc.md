@@ -77,3 +77,21 @@ connection 244–399 (Jain 0.94–0.96), epoll 282–333 (0.87–0.92), geario 2
 
 Open: 128 B at one pinned core and at ×4/100 is a tie (0.986–1.000); in the v43 run without POLL_FIRST it was
 1.18 / 0.99. geario keeps better fairness at 64 KB / 1000 (0.999 vs 0.94–0.96).
+
+## macOS (kqueue), this Mac (10 cores, shared, load 5–10)
+
+neton `echoServer` with 10 reactors vs geario with its default 10 workers; `echo-client-fair` on the same host;
+4 rounds alternated (`2026-09-27-mac-matrix-raw.txt`).
+
+| payload | 12 conns | 100 conns | 1000 conns |
+|---|---|---|---|
+| 128 B | 1.017 (4/4) | 0.999 | 1.004 |
+| 4 KB | 1.016 (4/4) | 1.001 | 1.002 |
+| 64 KB | **1.748 (4/4)** | **1.579 (4/4)** | **1.758 (4/4)**; p99 27 ms vs 356 ms |
+
+At 128 B and 4 KB both servers sit at the same ≈ 136–143k req/s whatever the connection count: the client caps
+the run, so throughput cannot rank them there. Server CPU per request does (100 conns, 3 rounds each): **kqueue
+13.5–13.8 µs vs geario 15.0–15.3 µs at 128 B, 13.8–14.1 vs 15.8–16.2 µs at 4 KB — 10–13 % less.**
+
+Found on the way: macOS `nc -z` resets its connection; the read error escaped the connection coroutine and took
+down the reactor (fixed; `ConnectionFaultTest`).
