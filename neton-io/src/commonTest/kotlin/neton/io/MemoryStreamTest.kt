@@ -14,7 +14,9 @@ import neton.io.core.ClosedException
 import neton.io.core.Framed
 import neton.io.core.Io
 import neton.io.core.IoException
+import neton.io.core.IoStream
 import neton.io.core.memoryStreamPair
+import neton.io.core.memoryStreamPairWithHook
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -88,5 +90,58 @@ class MemoryStreamTest {
         repeat(n / 1000) { a.write(Buffer().also { it.writeBytes(chunk) }) }
         assertEquals(n, withTimeout(10_000) { reader.await() })
         ctx.close()
+    }
+
+    @Test
+    fun writeAfterShutdownOutputFails() = runBlocking {
+        val (a, b) = memoryStreamPair()
+        a.write(buf("done"))
+        a.shutdownOutput()
+        val e = runCatching { a.write(buf("late")) }.exceptionOrNull()
+        assertTrue(e is IoException && e !is ClosedException, "a write after shutdownOutput must fail, got $e")
+        val r = Buffer()
+        assertEquals(4, b.read(r)); assertEquals("done", r.readAll().decodeToString())
+        assertEquals(-1, b.read(r))                               // nothing after EOF
+    }
+
+    @Test
+    fun shutdownOutputFailsAParkedWrite() = runBlocking {
+        val (a, b) = memoryStreamPair(capacity = 4)
+        val w = async { runCatching { a.write(buf("12345678")) } }  // 4 bytes go in, then it parks
+        delay(30)
+        a.shutdownOutput()
+        assertTrue(withTimeout(2_000) { w.await() }.exceptionOrNull() is IoException)
+        val r = Buffer()
+        assertEquals(4, b.read(r)); assertEquals("1234", r.readAll().decodeToString())
+        assertEquals(-1, b.read(r))
+    }
+
+    /** A close landing between the open check and the waiter registration (via the test hook). */
+    private fun closingPair(closeWhich: (Pair<IoStream, IoStream>) -> IoStream): Pair<IoStream, IoStream> {
+        var armed = true
+        var pair: Pair<IoStream, IoStream>? = null
+        pair = memoryStreamPairWithHook(capacity = 4) { if (armed) { armed = false; closeWhich(pair!!).close() } }
+        return pair
+    }
+
+    @Test
+    fun readClosedInTheCheckWindowFailsInsteadOfHanging() = runBlocking {
+        val (a, _) = closingPair { it.first }
+        val e = withTimeout(2_000) { runCatching { a.read(Buffer()) }.exceptionOrNull() }
+        assertTrue(e is ClosedException, "got $e")
+    }
+
+    @Test
+    fun writeClosedInTheCheckWindowFailsInsteadOfHanging() = runBlocking {
+        val (a, _) = closingPair { it.first }
+        // Fits the capacity: one pass, so only the check under the lock can catch the close.
+        val e = withTimeout(2_000) { runCatching { a.write(buf("12")) }.exceptionOrNull() }
+        assertTrue(e is ClosedException, "got $e")
+    }
+
+    @Test
+    fun peerClosedInTheCheckWindowGivesEof() = runBlocking {
+        val (a, _) = closingPair { it.second }
+        assertEquals(-1, withTimeout(2_000) { a.read(Buffer()) })
     }
 }

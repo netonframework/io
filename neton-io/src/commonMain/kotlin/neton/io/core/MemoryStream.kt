@@ -13,25 +13,34 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * without sockets, as geario's `IoTest` does.
  *
  * - Each direction holds at most [capacity] bytes: a write beyond that suspends until the peer reads.
- * - [IoStream.shutdownOutput] on one end: the peer reads what was sent, then EOF.
+ * - [IoStream.shutdownOutput] on one end: the peer reads what was sent, then EOF; later writes on
+ *   this end (and one parked when it happens) fail with [IoException]; this end can still read.
  * - [IoStream.close] on one end: the peer reads what was sent, then EOF, and its writes fail with
- *   [IoException]; operations parked on the closed end fail with [ClosedException].
+ *   [IoException]; operations on the closed end, parked or later, fail with [ClosedException].
  * - Unlike a socket stream, either end may be used from any thread (a short lock guards each direction).
  */
-fun memoryStreamPair(capacity: Int = 64 * 1024): Pair<IoStream, IoStream> {
+fun memoryStreamPair(capacity: Int = 64 * 1024): Pair<IoStream, IoStream> = memoryStreamPairWithHook(capacity, null)
+
+/**
+ * Tests: [beforeLock] runs in `read` / `write` after the stream's open check and before the pipe
+ * lock is taken, so a test can close the stream exactly there (the window a concurrent close hits).
+ */
+internal fun memoryStreamPairWithHook(capacity: Int, beforeLock: (() -> Unit)?): Pair<IoStream, IoStream> {
     require(capacity > 0) { "capacity must be positive" }
     val ab = MemoryPipe(capacity)
     val ba = MemoryPipe(capacity)
-    return MemoryStream(inbound = ba, outbound = ab) to MemoryStream(inbound = ab, outbound = ba)
+    return MemoryStream(inbound = ba, outbound = ab, beforeLock) to MemoryStream(inbound = ab, outbound = ba, beforeLock)
 }
 
 /** One direction: a bounded byte queue with one parked reader and one parked writer at most. */
 private class MemoryPipe(val capacity: Int) {
     private val lock = AtomicInt(0)
     val data = Buffer()
-    /** The writing end shut down or closed: EOF once [data] is drained. */
+    /** The writing end shut down its output: EOF once [data] is drained; further writes fail. */
     var writerDone = false
-    /** The reading end closed: writes fail. */
+    /** The writing end closed (implies [writerDone]); its own writes fail with [ClosedException]. */
+    var writerClosed = false
+    /** The reading end closed: its reads fail with [ClosedException], the peer's writes fail. */
     var readerGone = false
     var readWaiter: CompletableDeferred<Unit>? = null
     var writeWaiter: CompletableDeferred<Unit>? = null
@@ -48,7 +57,16 @@ private class MemoryPipe(val capacity: Int) {
     }
 }
 
-private class MemoryStream(private val inbound: MemoryPipe, private val outbound: MemoryPipe) : IoStream {
+/**
+ * Every state change (close, shutdown, data) and every waiter registration happens under the pipe's
+ * lock, and each end's own closed state is checked there too: a close that runs after the fast
+ * open check but before a waiter is registered is seen under the lock, never missed.
+ */
+private class MemoryStream(
+    private val inbound: MemoryPipe,
+    private val outbound: MemoryPipe,
+    private val beforeLock: (() -> Unit)?,
+) : IoStream {
     private val closed = AtomicInt(0)
 
     private fun checkOpen() { if (closed.load() != 0) throw ClosedException() }
@@ -56,11 +74,13 @@ private class MemoryStream(private val inbound: MemoryPipe, private val outbound
     override suspend fun read(dst: Buffer): Int {
         while (true) {
             checkOpen()
+            beforeLock?.invoke()
             var wait: CompletableDeferred<Unit>? = null
             var wakeWriter: CompletableDeferred<Unit>? = null
             val n = inbound.locked {
                 val p = inbound
                 when {
+                    p.readerGone -> CLOSED
                     p.data.readableBytes > 0 -> {
                         val n = p.data.readableBytes
                         dst.writeBytes(p.data.backingArray(), p.data.readerIndex(), n)
@@ -74,6 +94,7 @@ private class MemoryStream(private val inbound: MemoryPipe, private val outbound
                 }
             }
             wakeWriter?.complete(Unit)
+            if (n == CLOSED) throw ClosedException()
             if (n != 0) return n
             wait!!.await()
         }
@@ -83,11 +104,16 @@ private class MemoryStream(private val inbound: MemoryPipe, private val outbound
         val total = src.readableBytes
         while (src.readableBytes > 0) {
             checkOpen()
+            beforeLock?.invoke()
             var wait: CompletableDeferred<Unit>? = null
             var wakeReader: CompletableDeferred<Unit>? = null
-            val gone = outbound.locked {
+            val failure = outbound.locked {
                 val p = outbound
-                if (p.readerGone) return@locked true
+                when {
+                    p.writerClosed -> return@locked ClosedException()
+                    p.writerDone -> return@locked IoException("write failed: output shut down")
+                    p.readerGone -> return@locked IoException("write failed: peer closed (EPIPE)", 32)
+                }
                 val space = p.capacity - p.data.readableBytes
                 if (space > 0) {
                     val n = minOf(space, src.readableBytes)
@@ -97,10 +123,10 @@ private class MemoryStream(private val inbound: MemoryPipe, private val outbound
                 } else {
                     wait = CompletableDeferred<Unit>().also { p.writeWaiter = it }
                 }
-                false
+                null
             }
             wakeReader?.complete(Unit)
-            if (gone) throw IoException("write failed: peer closed (EPIPE)", 32)
+            if (failure != null) throw failure
             wait?.await()
         }
         return total
@@ -115,9 +141,12 @@ private class MemoryStream(private val inbound: MemoryPipe, private val outbound
 
     override fun close() {
         if (!closed.compareAndSet(0, 1)) return
-        outbound.locked { outbound.writerDone = true }
+        outbound.locked { outbound.writerDone = true; outbound.writerClosed = true }
         inbound.locked { inbound.readerGone = true; inbound.data.clear() }
         // Parked peers see EOF / a failed write; this end's own parked operations see ClosedException.
         outbound.wakeAll(); inbound.wakeAll()
     }
 }
+
+/** [MemoryStream.read]'s marker for "this end was closed" (a real count is > 0, EOF is -1, wait is 0). */
+private const val CLOSED = Int.MIN_VALUE
