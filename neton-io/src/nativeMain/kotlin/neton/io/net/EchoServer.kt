@@ -29,6 +29,11 @@ import neton.io.core.IoStream
  * NETON_IO_POOL=0 turns buffer pooling off (SPEC §23.7), for paired comparisons.
  * NETON_IO_RUN_SECONDS=n stops the server after n seconds (orderly, so NETON_IO_STATS is printed);
  * otherwise it runs until killed.
+ * NETON_IO_MAX_CONNECTIONS caps open connections (several reactors). NETON_IO_ADMISSION=permits serves
+ * the `lines` mode with admission before reading (SPEC §28.12), shared by all reactors, waiting at most
+ * NETON_IO_ADMISSION_WAIT_MS (default 250) for a permit, with a frame read rate of 10 s per frame.
+ * NETON_IO_ECHO_DELAY_MS=n makes the `lines` service suspend n ms per request (a stand-in for a backend
+ * call), so concurrency limits such as admission actually bind (SPEC §28.4 L3).
  */
 fun echoServerMain(args: Array<String>) {
     val host = args.getOrNull(0) ?: "0.0.0.0"
@@ -78,11 +83,25 @@ fun echoServerMain(args: Array<String>) {
         val options = if (backlog != null) SocketOptions(backlog = backlog) else SocketOptions.Default
         // Bench knob (SPEC §27.2): NETON_IO_AFFINITY=1 pins each reactor to a CPU.
         val pin = platform.posix.getenv("NETON_IO_AFFINITY")?.toKString() == "1"
-        serveTcp(host, port, reactors, until, mode, options, shutdownOnSignals = true, pinThreads = pin) { conn -> echoConnection(conn) }
+        val maxConns = platform.posix.getenv("NETON_IO_MAX_CONNECTIONS")?.toKString()?.toIntOrNull() ?: 0
+        serveTcp(host, port, reactors, until, mode, options, shutdownOnSignals = true, pinThreads = pin, maxConnections = maxConns) { conn -> echoConnection(conn) }
+        admission?.let {
+            println("admission permits=${it.permits} timeouts=${it.timeouts} waits=${it.waits} " +
+                "wait_p99_us<=${it.waitQuantileMicros(0.99)} wait_max_us<=${it.waitQuantileMicros(1.0)}")
+        }
     }
 }
 
 private val pooling: Boolean = platform.posix.getenv("NETON_IO_POOL")?.toKString() != "0"
+
+/** SPEC §28.12: admission for the `lines` mode, shared by every reactor. */
+private val admission: neton.io.core.Admission? =
+    platform.posix.getenv("NETON_IO_ADMISSION")?.toKString()?.toIntOrNull()?.takeIf { it > 0 }?.let { permits ->
+        val wait = platform.posix.getenv("NETON_IO_ADMISSION_WAIT_MS")?.toKString()?.toLongOrNull() ?: 250L
+        neton.io.core.Admission(permits, wait)
+    }
+
+private val echoDelayMs: Long = platform.posix.getenv("NETON_IO_ECHO_DELAY_MS")?.toKString()?.toLongOrNull() ?: 0L
 
 private val echoMode: String =
     platform.posix.getenv("NETON_IO_ECHO_MODE")?.toKString() ?: "raw"
@@ -110,9 +129,14 @@ private suspend fun echoConnection(conn: IoStream) {
 }
 
 private suspend fun echoLines(conn: IoStream, batched: Boolean) {
-    val framed = neton.io.core.Framed(neton.io.core.Io(conn), neton.io.codec.LineCodec, neton.io.codec.LineCodec)
+    val adm = admission
+    val rate = if (adm != null) neton.io.core.FrameReadRate(10_000, 10_000, 1) else null
+    val framed = neton.io.core.Framed(neton.io.core.Io(conn), neton.io.codec.LineCodec, neton.io.codec.LineCodec, readRate = rate)
     try {
-        if (batched) neton.io.core.serve(framed, neton.io.core.Service<String, String> { it })
+        val service = if (echoDelayMs > 0) neton.io.core.Service<String, String> { delay(echoDelayMs); it }
+            else neton.io.core.Service<String, String> { it }
+        if (adm != null) neton.io.core.serve(framed, service, adm)
+        else if (batched) neton.io.core.serve(framed, service)
         else framed.incoming().collect { framed.send(it) }
     } catch (_: neton.io.core.IoException) {
     } finally {

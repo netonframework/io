@@ -132,6 +132,47 @@ class Framed<In, Out>(
         }
     }
 
+    /**
+     * [serveLoop] with admission before reading (SPEC §28.12): a permit is taken once a byte of the
+     * next request is buffered and released as soon as its response is handed to the write path. While
+     * waiting for a permit the connection does not read. Buffered responses are flushed before waiting
+     * for input or for a permit, so they never wait behind other connections' requests.
+     * Requires a frame read rate: it bounds how long a permit holder waits for the rest of a request.
+     */
+    suspend fun serveLoop(admission: Admission, handler: suspend (In) -> Out) {
+        require(readRate != null) { "admission needs a frame read rate (Framed(readRate = ...))" }
+        val buf = io.readBuf
+        val rate = FrameRateTracker(readRate)
+        var held = false
+        try {
+            while (true) {
+                if (buf.readableBytes == 0) {
+                    // Waiting for input: no permit held.
+                    writeOut()
+                    buf.discardReadBytes()
+                    if (!readMore(buf, rate)) break
+                }
+                if (!held) {
+                    if (!admission.tryAcquireForLoop()) { writeOut(); admission.acquire() }
+                    held = true
+                }
+                val item = decoder.decode(buf)
+                if (item == null) {
+                    // The rest of this request, under the frame read rate, still holding the permit.
+                    buf.discardReadBytes()
+                    if (!readMore(buf, rate)) break
+                    continue
+                }
+                rate.frameDone()
+                feedOut(handler(item))
+                admission.release(); held = false
+            }
+            writeOut()
+        } finally {
+            if (held) admission.release()
+        }
+    }
+
     /** One read, with the frame read rate applied to it; false at EOF. Inline: no frame of its own. */
     @PublishedApi internal suspend inline fun readMore(buf: neton.io.bytes.Buffer, rate: FrameRateTracker): Boolean {
         if (readRate != null) io.stream.setReadTimeout(rate.timeoutForNextRead(partial = buf.readableBytes > 0))

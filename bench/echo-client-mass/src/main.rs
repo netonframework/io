@@ -65,14 +65,23 @@ struct Conn {
     count: u64,
     last_done: Instant,
     max_gap: Duration,
+    src: Ipv4Addr,
 }
 
-struct ClassStats { hist: Vec<u64>, lag: Vec<u64>, errors: u64, max_us: u64 }
+/// Seconds covered by the per-second completion timeline.
+const TIMELINE_SECS: usize = 3600;
+
+struct ClassStats { hist: Vec<u64>, lag: Vec<u64>, errors: u64, max_us: u64, rejected: u64, reconnects: u64, timeline: Vec<u64> }
 impl ClassStats {
-    fn new() -> Self { ClassStats { hist: vec![0; BUCKETS], lag: vec![0; BUCKETS], errors: 0, max_us: 0 } }
+    fn new() -> Self {
+        ClassStats { hist: vec![0; BUCKETS], lag: vec![0; BUCKETS], errors: 0, max_us: 0, rejected: 0, reconnects: 0, timeline: vec![0; TIMELINE_SECS] }
+    }
     fn merge(&mut self, o: ClassStats) {
         for (a, b) in self.hist.iter_mut().zip(o.hist) { *a += b; }
         for (a, b) in self.lag.iter_mut().zip(o.lag) { *a += b; }
+        for (a, b) in self.timeline.iter_mut().zip(o.timeline) { *a += b; }
+        self.rejected += o.rejected;
+        self.reconnects += o.reconnects;
         self.errors += o.errors;
         self.max_us = self.max_us.max(o.max_us);
     }
@@ -111,6 +120,9 @@ struct Opts {
     idle: usize,
     classes: Vec<Class>,
     legacy: bool,
+    reconnect: bool,
+    timeline: bool,
+    send_deadline: Option<Duration>,
 }
 
 fn parse() -> Opts {
@@ -128,9 +140,12 @@ fn parse() -> Opts {
             sources: arg(6, 8).clamp(1, 254),
             warmup: 0.0,
             legacy: true,
+            reconnect: false,
+            timeline: false,
+            send_deadline: None,
         };
     }
-    let mut o = Opts { target, secs: 30.0, warmup: 3.0, threads: 2, payload: 64, sources: 8, idle: 0, classes: vec![], legacy: false };
+    let mut o = Opts { target, secs: 30.0, warmup: 3.0, threads: 2, payload: 64, sources: 8, idle: 0, classes: vec![], legacy: false, reconnect: false, timeline: false, send_deadline: None };
     let mut i = 1;
     while i < a.len() {
         let v = a.get(i + 1).cloned().unwrap_or_else(|| panic!("{} needs a value", a[i]));
@@ -141,6 +156,14 @@ fn parse() -> Opts {
             "--payload" => o.payload = v.parse::<usize>().expect("--payload").max(1),
             "--sources" => o.sources = v.parse::<usize>().expect("--sources").clamp(1, 254),
             "--idle" => o.idle = v.parse().expect("--idle"),
+            // 1: a connection the server closes is reopened 10 ms later (overload runs, SPEC §28.4 L3).
+            "--reconnect" => o.reconnect = v == "1",
+            // 1: print completions per second of the measured window.
+            "--timeline" => o.timeline = v == "1",
+            // N > 0: an open-loop request still unsent N ms after its scheduled time is dropped and counted
+            // as rejected, as a client with a send timeout would (overload runs: TCP backpressure otherwise
+            // grows the generator's own queue without bound).
+            "--send-deadline-ms" => { let ms: u64 = v.parse().expect("--send-deadline-ms"); o.send_deadline = (ms > 0).then(|| Duration::from_millis(ms)); }
             "--class" => {
                 let p: Vec<&str> = v.split(':').collect();
                 assert!(p.len() == 4, "--class NAME:CONNS:DEPTH:RATE");
@@ -185,7 +208,7 @@ fn main() {
     let mut handles = Vec::new();
     for (t, mine) in plan.into_iter().enumerate() {
         let (stop, ready, go, classes, start_at) = (stop.clone(), ready.clone(), go.clone(), classes.clone(), start_at.clone());
-        let (warmup, secs) = (o.warmup, o.secs);
+        let (warmup, secs, reconnect, deadline) = (o.warmup, o.secs, o.reconnect, o.send_deadline);
         handles.push(std::thread::spawn(move || {
             let mut poll = Poll::new().expect("poll");
             let mut conns: Vec<Conn> = mine
@@ -196,7 +219,7 @@ fn main() {
                     let now = Instant::now();
                     Conn {
                         sock: TcpStream::from_std(open(target, src)), class: ci, dead: false, owed: 0, wpos: 0,
-                        sched: VecDeque::new(), partial: 0, next_send: now, count: 0, last_done: now, max_gap: Duration::ZERO,
+                        sched: VecDeque::new(), partial: 0, next_send: now, count: 0, last_done: now, max_gap: Duration::ZERO, src,
                     }
                 })
                 .collect();
@@ -222,6 +245,8 @@ fn main() {
             let mut todo: Vec<usize> = Vec::new();
             // Connections that stopped at their per-turn budget with work left: served again next turn.
             let mut again: Vec<usize> = Vec::new();
+            // Closed connections waiting to be reopened (--reconnect), in due order (constant delay).
+            let mut reconnects: VecDeque<(Instant, usize)> = VecDeque::new();
             for (i, c) in conns.iter_mut().enumerate() {
                 let cl = &classes[c.class];
                 c.last_done = measure_from;
@@ -243,9 +268,17 @@ fn main() {
                     if due > now { break; }
                     timers.pop();
                     let c = &mut conns[i];
-                    if c.dead { continue; }
                     let cl = &classes[c.class];
                     let interval = Duration::from_secs_f64(cl.depth as f64 / cl.rate);
+                    if c.dead {
+                        // Disconnected: the batches it should have sent are rejected, not silently skipped.
+                        while c.next_send <= now {
+                            if c.next_send >= measure_from && c.next_send < measure_to { stats[c.class].rejected += cl.depth as u64; }
+                            c.next_send += interval;
+                        }
+                        timers.push(Reverse((c.next_send, i)));
+                        continue;
+                    }
                     while c.next_send <= now {
                         for _ in 0..cl.depth { c.sched.push_back(c.next_send); }
                         c.owed += cl.depth * payload;
@@ -258,10 +291,31 @@ fn main() {
                     timers.push(Reverse((c.next_send, i)));
                     todo.push(i);
                 }
+                while let Some(&(due, i)) = reconnects.front() {
+                    if due > now { break; }
+                    reconnects.pop_front();
+                    let c = &mut conns[i];
+                    let Some(sock) = open_nonblocking(target, c.src) else { reconnects.push_back((now + RECONNECT_DELAY, i)); continue };
+                    c.sock = TcpStream::from_std(sock);
+                    poll.registry().register(&mut c.sock, Token(i), Interest::READABLE | Interest::WRITABLE).unwrap();
+                    c.dead = false;
+                    stats[c.class].reconnects += 1;
+                    let cl = &classes[c.class];
+                    if cl.rate == 0.0 {
+                        for _ in 0..cl.depth { c.sched.push_back(now); }
+                        c.owed = cl.depth * payload;
+                    }
+                    todo.push(i);
+                }
+                if let Some(d) = deadline {
+                    for &i in &todo { drop_late(&mut conns[i], &classes, payload, d, &mut stats, measure_from, measure_to); }
+                }
                 for &i in &todo {
+                    let was_dead = conns[i].dead;
                     if step(&mut conns[i], i, &classes, &out, payload, &mut buf, &mut stats, &poll, measure_from, measure_to) {
                         again.push(i);
                     }
+                    if reconnect && !was_dead && conns[i].dead { reconnects.push_back((Instant::now() + RECONNECT_DELAY, i)); }
                 }
                 todo.clear();
                 let wait = if !again.is_empty() { Duration::ZERO } else { match timers.peek() {
@@ -333,6 +387,11 @@ fn main() {
     println!("jain        {:.3}", jain(&counts));
     println!("gen_cpu     {gen_cpu:.2}");
     if o.legacy { return; }
+    if o.timeline {
+        let secs = (o.secs.ceil() as usize).min(TIMELINE_SECS);
+        let per: Vec<String> = (0..secs).map(|k| stats.iter().map(|s| s.timeline[k]).sum::<u64>().to_string()).collect();
+        println!("timeline_qps {}", per.join(","));
+    }
     for (ci, cl) in classes.iter().enumerate() {
         let s = &stats[ci];
         let mut c: Vec<u64> = per_conn.iter().filter(|p| p.0 == ci).map(|p| p.1).collect();
@@ -343,11 +402,11 @@ fn main() {
         let med = c[c.len() / 2];
         println!(
             "class {} conns={} depth={} rate={} mode={} samples={} qps={:.0} p50_us={} p99_us={} p999_us={} max_us={} \
-             lag_p99_us={} lag_max_us={} jain={:.3} conn_min={} conn_med={} min_over_med={:.3} max_gap_ms={} errors={} outstanding={}",
+             lag_p99_us={} lag_max_us={} jain={:.3} conn_min={} conn_med={} min_over_med={:.3} max_gap_ms={} errors={} outstanding={} rejected={} reconnects={}",
             cl.name, cl.conns, cl.depth, cl.rate, if cl.rate > 0.0 { "open" } else { "closed" },
             n, n as f64 / o.secs, pct(&s.hist, 0.50), pct(&s.hist, 0.99), pct(&s.hist, 0.999), s.max_us,
             if lag_n > 0 { pct(&s.lag, 0.99) } else { 0 }, if lag_n > 0 { pct(&s.lag, 1.0) } else { 0 },
-            jain(&c), c[0], med, if med == 0 { 0.0 } else { c[0] as f64 / med as f64 }, gap.as_millis(), s.errors, outstanding[ci],
+            jain(&c), c[0], med, if med == 0 { 0.0 } else { c[0] as f64 / med as f64 }, gap.as_millis(), s.errors, outstanding[ci], s.rejected, s.reconnects,
         );
     }
 }
@@ -389,25 +448,27 @@ fn step(
                 Ok(w) => { c.owed -= w; c.wpos += w; progressed = true; ops += 1; if ops >= STEP_OPS { return true; } }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(_) => { fail(c, token, stats, poll); return false; }
+                Err(_) => { fail(c, token, stats, poll, from, to); return false; }
             }
         }
         loop {
             match c.sock.read(buf) {
-                Ok(0) => { fail(c, token, stats, poll); return false; }
+                Ok(0) => { fail(c, token, stats, poll, from, to); return false; }
                 Ok(n) => {
                     progressed = true;
                     c.partial += n;
                     let now = Instant::now();
                     while c.partial >= payload {
                         c.partial -= payload;
-                        let Some(sent) = c.sched.pop_front() else { fail(c, token, stats, poll); return false; };
+                        let Some(sent) = c.sched.pop_front() else { fail(c, token, stats, poll, from, to); return false; };
                         if now >= from && now < to {
                             let us = now.duration_since(sent).as_micros() as u64;
                             let s = &mut stats[c.class];
                             s.hist[bucket(us)] += 1;
                             s.max_us = s.max_us.max(us);
                             c.count += 1;
+                            let sec = now.duration_since(from).as_secs() as usize;
+                            if sec < TIMELINE_SECS { s.timeline[sec] += 1; }
                             let gap = now.duration_since(c.last_done);
                             if gap > c.max_gap { c.max_gap = gap; }
                             c.last_done = now;
@@ -422,7 +483,7 @@ fn step(
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(_) => { fail(c, token, stats, poll); return false; }
+                Err(_) => { fail(c, token, stats, poll, from, to); return false; }
             }
         }
         if !progressed || c.owed == 0 { return false; }
@@ -431,8 +492,48 @@ fn step(
 
 const STEP_OPS: usize = 8;
 
-fn fail(c: &mut Conn, _token: usize, stats: &mut [ClassStats], poll: &Poll) {
+fn fail(c: &mut Conn, _token: usize, stats: &mut [ClassStats], poll: &Poll, from: Instant, to: Instant) {
     c.dead = true;
-    stats[c.class].errors += 1;
+    let s = &mut stats[c.class];
+    s.errors += 1;
+    // Requests sent or owed on this connection will never be answered: rejected.
+    s.rejected += c.sched.iter().filter(|&&t| t >= from && t < to).count() as u64;
+    c.sched.clear();
+    c.owed = 0;
+    c.wpos = 0;
+    c.partial = 0;
     let _ = poll.registry().deregister(&mut c.sock);
+}
+
+const RECONNECT_DELAY: Duration = Duration::from_millis(10);
+
+/// Drop open-loop requests not yet written whose scheduled time is more than [deadline] ago
+/// (oldest first; they sit right after the ones already on the wire).
+fn drop_late(c: &mut Conn, classes: &[Class], payload: usize, deadline: Duration, stats: &mut [ClassStats], from: Instant, to: Instant) {
+    if c.dead || classes[c.class].rate == 0.0 { return; }
+    let unsent = c.owed / payload;               // whole requests not started; a partial one stays
+    if unsent == 0 { return; }
+    let first = c.sched.len() - unsent;
+    let now = Instant::now();
+    let mut k = 0;
+    while k < unsent && now.duration_since(c.sched[first + k]) > deadline { k += 1; }
+    if k == 0 { return; }
+    let s = &mut stats[c.class];
+    s.rejected += c.sched.range(first..first + k).filter(|&&t| t >= from && t < to).count() as u64;
+    c.sched.drain(first..first + k);
+    c.owed -= k * payload;
+}
+
+/// A connection started without waiting for the handshake (reconnects happen inside the event loop).
+fn open_nonblocking(target: SocketAddr, source: Ipv4Addr) -> Option<std::net::TcpStream> {
+    let s = Socket::new(Domain::IPV4, Type::STREAM, None).ok()?;
+    s.bind(&SockAddr::from(SocketAddrV4::new(source, 0))).ok()?;
+    s.set_nonblocking(true).ok()?;
+    s.set_tcp_nodelay(true).ok()?;
+    match s.connect(&SockAddr::from(target)) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EINPROGRESS) || e.kind() == ErrorKind::WouldBlock => {}
+        Err(_) => return None,
+    }
+    Some(s.into())
 }

@@ -1,0 +1,41 @@
+# driver epoll: C
+C run 1: 36700
+C run 2: 36729
+C run 3: 36727
+# driver epoll: C=36727 offered=73454 hot_rate=835.2
+## epoll round 1 rss0_kib=10180 rssmax_kib=40012 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=599984 qps=19999 p50_us=3694 p99_us=8003 p999_us=11445 max_us=15564 lag_p99_us=1053 lag_max_us=8119 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=61 errors=0 outstanding=64 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=835.2 mode=open samples=674724 qps=22491 p50_us=10240000 p99_us=18970000 p999_us=19135000 max_us=19203746 lag_p99_us=1053 lag_max_us=7834 jain=1.000 conn_min=10492 conn_med=10542 min_over_med=0.995 max_gap_ms=13 errors=0 outstanding=1022879 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=1766365 wait_p99_us<=32768 wait_max_us<=65536
+recovery timeline_qps 34316,36860,36479,36370,35926,36392,37343,37788,36705,36484 gen_cpu=0.17
+## epoll round 2 rss0_kib=10152 rssmax_kib=40240 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=599997 qps=20000 p50_us=3923 p99_us=8988 p999_us=12475 max_us=19162 lag_p99_us=1052 lag_max_us=9379 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=64 errors=0 outstanding=63 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=835.2 mode=open samples=623735 qps=20791 p50_us=11297000 p99_us=20075000 p999_us=20307000 max_us=20367263 lag_p99_us=1052 lag_max_us=9151 jain=1.000 conn_min=9636 conn_med=9674 min_over_med=0.996 max_gap_ms=13 errors=0 outstanding=1081456 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=1707137 wait_p99_us<=32768 wait_max_us<=65536
+recovery timeline_qps 35419,36565,36093,35974,36045,35926,37348,36918,37099,36577 gen_cpu=0.18
+## epoll round 3 rss0_kib=10184 rssmax_kib=40016 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599995 qps=20000 p50_us=3640 p99_us=8219 p999_us=11607 max_us=15685 lag_p99_us=1051 lag_max_us=3548 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=62 errors=0 outstanding=89 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=835.2 mode=open samples=684712 qps=22824 p50_us=10403000 p99_us=18827000 p999_us=19043000 max_us=19112618 lag_p99_us=1051 lag_max_us=3681 jain=1.000 conn_min=10621 conn_med=10669 min_over_med=0.996 max_gap_ms=12 errors=0 outstanding=1016243 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=1767277 wait_p99_us<=32768 wait_max_us<=65536
+recovery timeline_qps 35308,37378,34140,35528,35175,36348,35666,36189,36044,37027 gen_cpu=0.17
+# driver iouring: C
+C run 1: 44761
+C run 2: 44460
+C run 3: 44536
+# driver iouring: C=44536 offered=89072 hot_rate=1079.2
+## iouring round 1 rss0_kib=11112 rssmax_kib=42220 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600023 qps=20001 p50_us=2893 p99_us=7420 p999_us=11325 max_us=16600 lag_p99_us=1021 lag_max_us=8694 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=62 errors=0 outstanding=31 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=1079.2 mode=open samples=866296 qps=28877 p50_us=10132000 p99_us=19991000 p999_us=20258000 max_us=20336143 lag_p99_us=1021 lag_max_us=8662 jain=0.983 conn_min=12446 conn_med=12518 min_over_med=0.994 max_gap_ms=13 errors=0 outstanding=1329240 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=1849913 wait_p99_us<=32768 wait_max_us<=32768
+recovery timeline_qps 44458,44785,45595,44317,45146,45057,45567,44569,45187,45583 gen_cpu=0.18
+## iouring round 2 rss0_kib=11132 rssmax_kib=41088 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599985 qps=20000 p50_us=3052 p99_us=7136 p999_us=11294 max_us=16668 lag_p99_us=1038 lag_max_us=5091 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=63 errors=0 outstanding=48 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=1079.2 mode=open samples=841618 qps=28054 p50_us=10940000 p99_us=19444000 p999_us=19642000 max_us=19729653 lag_p99_us=1040 lag_max_us=4905 jain=1.000 conn_min=13074 conn_med=13150 min_over_med=0.994 max_gap_ms=15 errors=0 outstanding=1356860 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=1731235 wait_p99_us<=32768 wait_max_us<=32768
+recovery timeline_qps 45028,44985,45124,45748,45443,45130,45274,45102,44981,45310 gen_cpu=0.18
+## iouring round 3 rss0_kib=11128 rssmax_kib=41596 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599987 qps=20000 p50_us=3072 p99_us=7309 p999_us=11467 max_us=16007 lag_p99_us=1038 lag_max_us=5922 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=64 errors=0 outstanding=54 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=1079.2 mode=open samples=833751 qps=27792 p50_us=10650000 p99_us=19524000 p999_us=19799000 max_us=19885858 lag_p99_us=1037 lag_max_us=5199 jain=1.000 conn_min=12866 conn_med=12951 min_over_med=0.993 max_gap_ms=14 errors=0 outstanding=1361686 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=1731102 wait_p99_us<=32768 wait_max_us<=65536
+recovery timeline_qps 44302,44881,44323,44462,45370,45002,44688,44914,45005,44375 gen_cpu=0.21
+L3B-DONE

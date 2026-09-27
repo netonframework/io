@@ -1,0 +1,34 @@
+# round 1
+## ne-lines C=491000 offered=982000 rss0_kib=10176 rssmax_kib=59212 gen_cpu=0.40
+class cold conns=1000 depth=1 rate=20 mode=open samples=599431 qps=19981 p50_us=745 p99_us=47969 p999_us=69997 max_us=85978 lag_p99_us=1022 lag_max_us=11436 jain=1.000 conn_min=599 conn_med=599 min_over_med=1.000 max_gap_ms=129 errors=0 outstanding=573 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=15031.2 mode=open samples=28837840 qps=961261 p50_us=712 p99_us=36317 p999_us=55239 max_us=85713 lag_p99_us=1022 lag_max_us=11374 jain=1.000 conn_min=450432 conn_med=450592 min_over_med=1.000 max_gap_ms=83 errors=0 outstanding=22288 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=0 wait_p99_us<=0 wait_max_us<=0
+recovery timeline_qps 408083,422277,439436,416874,422008,421705,419095,413829,413369,421754 gen_cpu=0.78
+## nu-lines C=430000 offered=860000 rss0_kib=11128 rssmax_kib=41472 gen_cpu=0.31
+class cold conns=1000 depth=1 rate=20 mode=open samples=600303 qps=20010 p50_us=700 p99_us=29930 p999_us=41289 max_us=50936 lag_p99_us=1037 lag_max_us=6384 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=100 errors=0 outstanding=10 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=13125 mode=open samples=25217152 qps=840572 p50_us=757 p99_us=38428 p999_us=51454 max_us=67578 lag_p99_us=1040 lag_max_us=6348 jain=1.000 conn_min=393776 conn_med=394032 min_over_med=0.999 max_gap_ms=59 errors=0 outstanding=480 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=0 wait_p99_us<=0 wait_max_us<=0
+recovery timeline_qps 458299,472110,493495,491229,484866,496962,488440,495506,488403,463715 gen_cpu=0.69
+# round 2
+## ne-lines C=491000 offered=982000 rss0_kib=10108 rssmax_kib=63112 gen_cpu=0.38
+class cold conns=1000 depth=1 rate=20 mode=open samples=600365 qps=20012 p50_us=810 p99_us=52842 p999_us=82671 max_us=97237 lag_p99_us=1020 lag_max_us=15108 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=139 errors=0 outstanding=2 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=15031.2 mode=open samples=28874832 qps=962494 p50_us=788 p99_us=40890 p999_us=61126 max_us=94987 lag_p99_us=1024 lag_max_us=15146 jain=1.000 conn_min=451008 conn_med=451184 min_over_med=1.000 max_gap_ms=86 errors=0 outstanding=128 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=0 wait_p99_us<=0 wait_max_us<=0
+recovery timeline_qps 429682,428629,430195,417125,424555,418371,417789,389528,385664,372542 gen_cpu=0.80
+## nu-lines C=430000 offered=860000 rss0_kib=11104 rssmax_kib=51816 gen_cpu=0.32
+class cold conns=1000 depth=1 rate=20 mode=open samples=599996 qps=20000 p50_us=611 p99_us=28473 p999_us=43875 max_us=50976 lag_p99_us=1038 lag_max_us=10577 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=100 errors=0 outstanding=5 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=13125 mode=open samples=25199872 qps=839996 p50_us=680 p99_us=37182 p999_us=54186 max_us=68837 lag_p99_us=1040 lag_max_us=10624 jain=1.000 conn_min=393744 conn_med=393744 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=224 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=0 wait_p99_us<=0 wait_max_us<=0
+recovery timeline_qps 425732,440378,437969,431166,441192,437786,447278,442291,436327,431978 gen_cpu=0.75
+# round 3
+## ne-lines C=491000 offered=982000 rss0_kib=10184 rssmax_kib=55508 gen_cpu=0.39
+class cold conns=1000 depth=1 rate=20 mode=open samples=599991 qps=20000 p50_us=741 p99_us=49311 p999_us=79485 max_us=92036 lag_p99_us=1011 lag_max_us=5512 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=127 errors=0 outstanding=8 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=15031.2 mode=open samples=28859296 qps=961977 p50_us=756 p99_us=39148 p999_us=60927 max_us=90359 lag_p99_us=1012 lag_max_us=5517 jain=1.000 conn_min=450912 conn_med=450928 min_over_med=1.000 max_gap_ms=90 errors=0 outstanding=512 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=0 wait_p99_us<=0 wait_max_us<=0
+recovery timeline_qps 476415,486783,482278,478496,472219,505931,491415,514165,526313,516772 gen_cpu=0.75
+## nu-lines C=430000 offered=860000 rss0_kib=11092 rssmax_kib=41948 gen_cpu=0.33
+class cold conns=1000 depth=1 rate=20 mode=open samples=599985 qps=20000 p50_us=696 p99_us=27117 p999_us=38796 max_us=45995 lag_p99_us=1038 lag_max_us=6730 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=95 errors=0 outstanding=10 rejected=0 reconnects=0
+class hot conns=64 depth=16 rate=13125 mode=open samples=25199312 qps=839977 p50_us=751 p99_us=35089 p999_us=48186 max_us=56593 lag_p99_us=1040 lag_max_us=6760 jain=1.000 conn_min=393728 conn_med=393744 min_over_med=1.000 max_gap_ms=49 errors=0 outstanding=480 rejected=0 reconnects=0
+admission permits=64 timeouts=0 waits=0 wait_p99_us<=0 wait_max_us<=0
+recovery timeline_qps 470055,499966,506404,507929,513311,511225,504701,502016,493083,482451 gen_cpu=0.69
+L3-DONE

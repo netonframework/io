@@ -24,6 +24,14 @@ suspend fun <In, Out> serve(framed: Framed<In, Out>, service: Service<In, Out>) 
 }
 
 /**
+ * [serve] with admission before reading (SPEC §28.12): see [Admission]. [framed] must have a frame
+ * read rate.
+ */
+suspend fun <In, Out> serve(framed: Framed<In, Out>, service: Service<In, Out>, admission: Admission) {
+    framed.serveLoop(admission) { req -> service.call(req) }
+}
+
+/**
  * A [Service] allowing at most [max] calls at a time (SPEC §27.3, geario's `InFlight`). The limit is
  * shared by every connection that uses this instance; a call beyond it suspends until one finishes,
  * and since [serve] handles a connection's requests in order, that connection stops reading

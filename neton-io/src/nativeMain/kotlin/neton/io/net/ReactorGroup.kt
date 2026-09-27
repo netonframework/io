@@ -445,7 +445,8 @@ internal suspend fun TcpServerGroup.stopOnSignal(gracefulTimeoutMillis: Long, on
  * application's entry point — on a termination signal (see [shutdownOnSignal] and
  * [shutdownTimeoutMillis]). Signals are left alone by default: a library must not change how its
  * host process reacts to them (SPEC §27.7). Each accepted connection runs [handler] on the reactor
- * it is pinned to. Returns after the worker reactors exit.
+ * it is pinned to. Returns after the worker reactors exit. [maxConnections] > 0 caps open connections
+ * (see [listenGroup]; SPEC §28.12: it is what bounds the waiters of an [neton.io.core.Admission]).
  */
 fun serveTcp(
     host: String,
@@ -457,11 +458,12 @@ fun serveTcp(
     shutdownOnSignals: Boolean = false,
     shutdownTimeoutMillis: Long = 30_000,
     pinThreads: Boolean = false,
+    maxConnections: Int = 0,
     handler: suspend (IoStream) -> Unit,
 ) {
     require(reactors >= 1)
     runReactor {
-        val group = listenGroup(host, port, reactors, options, acceptMode = acceptMode, pinThreads = pinThreads)
+        val group = listenGroup(host, port, reactors, options, maxConnections, acceptMode, pinThreads)
         val serveJob = launch { group.serve(handler) }
         // All of these coroutines run on this reactor, so the flags need no synchronisation.
         var signalled = false

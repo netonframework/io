@@ -13,5 +13,7 @@ Binaries: `echoServer.kexe` / `echoServer-cur.kexe` (this step), `echoServer-bas
 | d1.sh | L1 diagnosis: default / no GC / single-threaded mark / GC stats | d1.out |
 | d2.sh | L1 remedy: GC minimum heap 0 / 64 / 256 MiB | d2.out |
 | cg3.sh | cachegrind Ir per request, base vs new vs strict | cg3.out |
+| l3.sh | L3, first design (echo does not suspend; did not overload, admission never engaged) | l3.out |
+| l3b.sh | L3, revised: 1 ms suspending service, 64 permits, 2C open loop, RSS, recovery | l3b.out |
 
-Results and their reading are in SPEC.md, "§28.11 第 3 步".
+Results and their reading are in SPEC.md, "§28.11 第 3 步" and "§28.11 第 4 步".
