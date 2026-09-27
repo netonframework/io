@@ -55,3 +55,25 @@ next: make it adaptive per connection.
   both write modes (41). That run's throughput was lower than v38–v41 (io_uring pinned 0.986, ×4 0.967); the
   deterministic check says it is the host, not the code — cachegrind Ir/request v38 vs v42: epoll 2328 / 2326,
   io_uring 2956 / 2944, and GC yields per request stay 0.
+
+## io_uring reads straight into the user buffer (SPEC §24.7, v43–v45)
+
+The payload matrix (`…matrix2-raw.txt`) showed io_uring behind geario only at 64 KB (0.80–0.89): multishot with
+16 KB provided buffers splits each message into ≥ 4 CQEs with a copy each. Reads now go straight into the caller's
+buffer (one RECV, allocation-free, completed by the reactor), with `IORING_RECVSEND_POLL_FIRST` — without it about
+10 % of connections were starved at 64 KB / 1000 connections (`…fair64-raw.txt`, `…v44-pf-raw.txt`).
+
+v45 (`…v45-raw.txt`; paired vs geario, 4 rounds; tests: neton-io 73 × 3 drivers, msgtrans 41):
+
+| payload | pinned, 12 conns | ×4, 100 conns | ×4, 1000 conns |
+|---|---|---|---|
+| 128 B | io_uring 0.986 (1/4), epoll 0.933 | 1.000 (2/4), 0.945 | **1.096 (4/4)**, 1.056 (4/4) |
+| 4 KB | **1.240 (4/4)**, 1.277 (4/4) | **1.125 (4/4)**, 1.081 (4/4) | **1.194 (4/4)**, 1.161 (4/4) |
+| 64 KB | **1.777 (4/4)**, 1.679 (4/4) | **1.372 (4/4)**, 1.334 (4/4) | **1.366 (4/4)**, 1.342 (4/4) |
+
+Fairness at 64 KB / 1000 connections, server on cores 0–1 and client on 2–3: io_uring min completions per
+connection 244–399 (Jain 0.94–0.96), epoll 282–333 (0.87–0.92), geario 255–276 (0.999). Memory at ×4 also dropped
+(no provided-buffer pool: ≈ 20 MB instead of ≈ 46 MB at 100 connections).
+
+Open: 128 B at one pinned core and at ×4/100 is a tie (0.986–1.000); in the v43 run without POLL_FIRST it was
+1.18 / 0.99. geario keeps better fairness at 64 KB / 1000 (0.999 vs 0.94–0.96).
