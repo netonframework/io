@@ -18,7 +18,9 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 import platform.windows.AI_NUMERICHOST
 import platform.windows.AI_PASSIVE
 import platform.windows.addrinfo
@@ -46,8 +48,6 @@ import platform.posix.listen
 import platform.posix.memset
 import platform.posix.sockaddr
 import platform.posix.socket
-import kotlin.native.concurrent.ObsoleteWorkersApi
-import kotlin.native.concurrent.Worker
 
 // Windows address resolution and TCP socket setup (SPEC §18.2, §20). Same contract as the POSIX
 // implementation: getaddrinfo produces the sockaddr bytes, listen/connect are non-blocking.
@@ -76,19 +76,14 @@ private fun lookup(host: String, port: Int, passive: Boolean, numericOnly: Boole
     Lookup(out, 0)
 }
 
-@OptIn(ObsoleteWorkersApi::class)
-private val resolverWorker: Worker by lazy { Worker.start(name = "neton-resolver") }
-
-@OptIn(ObsoleteWorkersApi::class)
 internal actual suspend fun resolve(host: String, port: Int, passive: Boolean): List<SockAddr> {
     require(port in 0..65535) { "port out of range: $port" }
     val numeric = lookup(host, port, passive, numericOnly = true)
     if (numeric.error == 0 && numeric.addrs.isNotEmpty()) return numeric.addrs
     // WSAHOST_NOT_FOUND is what getaddrinfo reports for a name when AI_NUMERICHOST forbids a lookup.
     if (numeric.error != 0 && numeric.error != WSAHOST_NOT_FOUND) throw ResolveException("cannot resolve '$host': error ${numeric.error}")
-    val done = CompletableDeferred<Lookup>()
-    resolverWorker.executeAfter(0L) { done.complete(lookup(host, port, passive, numericOnly = false)) }
-    val r = done.await()
+    // SPEC §27.5: getaddrinfo blocks; it runs on kotlinx's IO pool, in parallel with other lookups.
+    val r = withContext(Dispatchers.IO) { lookup(host, port, passive, numericOnly = false) }
     if (r.error != 0 || r.addrs.isEmpty()) throw ResolveException("cannot resolve '$host': error ${r.error}")
     return r.addrs
 }

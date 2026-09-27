@@ -16,7 +16,9 @@ import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 import platform.posix.AF_INET6
 import platform.posix.AF_UNSPEC
 import platform.posix.AI_NUMERICHOST
@@ -43,8 +45,6 @@ import platform.posix.setsockopt
 import platform.posix.sockaddr
 import platform.posix.socket
 import platform.posix.strerror
-import kotlin.native.concurrent.ObsoleteWorkersApi
-import kotlin.native.concurrent.Worker
 
 private class Lookup(val addrs: List<SockAddr>, val gaiError: Int, val message: String?)
 
@@ -71,11 +71,6 @@ private fun lookup(host: String, port: Int, passive: Boolean, numericOnly: Boole
     Lookup(out, 0, null)
 }
 
-/** One thread for name lookups: `getaddrinfo` blocks, so it never runs on a reactor thread. */
-@OptIn(ObsoleteWorkersApi::class)
-private val resolverWorker: Worker by lazy { Worker.start(name = "neton-resolver") }
-
-@OptIn(ObsoleteWorkersApi::class)
 internal actual suspend fun resolve(host: String, port: Int, passive: Boolean): List<SockAddr> {
     require(port in 0..65535) { "port out of range: $port" }
     val numeric = lookup(host, port, passive, numericOnly = true)
@@ -83,9 +78,9 @@ internal actual suspend fun resolve(host: String, port: Int, passive: Boolean): 
     if (numeric.gaiError != 0 && numeric.gaiError != EAI_NONAME) {
         throw ResolveException("cannot resolve '$host': ${numeric.message}")
     }
-    val done = CompletableDeferred<Lookup>()
-    resolverWorker.executeAfter(0L) { done.complete(lookup(host, port, passive, numericOnly = false)) }
-    val r = done.await()
+    // SPEC §27.5: `getaddrinfo` blocks, so it runs on kotlinx's IO pool (in parallel with other
+    // lookups, never on a reactor thread); the caller resumes on its own reactor.
+    val r = withContext(Dispatchers.IO) { lookup(host, port, passive, numericOnly = false) }
     if (r.gaiError != 0 || r.addrs.isEmpty()) throw ResolveException("cannot resolve '$host': ${r.message ?: "no addresses"}")
     return r.addrs
 }

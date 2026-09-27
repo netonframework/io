@@ -1027,3 +1027,9 @@ EPIPE 的 `IoException`，不调用 send。回归测试：`UnixSocketTest.peerGo
 每个方向一个有界字节队列，自旋锁只保护一次最多 `capacity` 字节的拷贝，等待用 `CompletableDeferred`）。原来测试目录里的 `memoryPair`
 （无界 channel，无反压、无半关闭）改为调用它。测试：`InFlightServiceTest`（10 个并发调用峰值 3；取消等待者不漏许可）、`MemoryStreamTest`
 （Framed 回显、容量反压、半关闭、关闭、跨线程 20 万字节）；macOS 93/93。
+
+**§27.5 实现记录**：`ReactorGroup` 加引用计数（`retain` / `release`，只在反应器 0 上改），`TcpServerGroup` 的 `serve` 结束与 `shutdown` 各自只释放一次；
+`listenAlso` 在同一组反应器上开新端口（反应器已停时报错，非反应器 0 调用报错）。名字解析改为 `withContext(Dispatchers.IO)`（POSIX 与 Windows），
+去掉单线程的 `neton-resolver` Worker。测试：`SharedReactorsTest`（两个端口各自回显、第二个端口用到两个反应器、先停一个另一个照常、
+都停后工作线程退出、之后 `listenAlso` 报错；32 个并发解析全部成功）。macOS 95/95，colima Linux arm64 io_uring / multishot / epoll 各 96/96；
+mingwX64、Android、iOS 编译通过。

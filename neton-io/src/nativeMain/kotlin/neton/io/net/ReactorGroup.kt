@@ -50,6 +50,8 @@ internal class ReactorGroup(private val count: Int) {
     /** Completed by each worker thread after its reactor has shut down (SPEC §18.1). */
     private val exited = ArrayList<CompletableDeferred<Unit>>()
     private var stopped = false
+    /** Server groups using these reactors (SPEC §27.5); the last to release stops them. Reactor 0 only. */
+    private var users = 1
     /** Connections handled per reactor (diagnostics / tests). */
     val handled = Array(count) { AtomicInt(0) }
 
@@ -120,6 +122,12 @@ internal class ReactorGroup(private val count: Int) {
         for (w in workers) w.requestTermination(processScheduledJobs = true)
     }
 
+    /** Another server group shares these reactors (SPEC §27.5). */
+    fun retain() { check(!stopped) { "the reactors have stopped" }; users++ }
+
+    /** A server group is done with these reactors; the last one stops them. */
+    fun release() { if (--users <= 0) stop() }
+
     /** Suspend until every worker reactor has shut down. */
     suspend fun awaitExit() { for (d in exited) d.await() }
 }
@@ -154,6 +162,10 @@ class TcpServerGroup internal constructor(
     // Set by close(); accept loops on any reactor check it after every wait.
     private val closing = AtomicInt(0)
     private var next = 0
+    private var released = false
+
+    /** Give the reactors back once (serve's end and shutdown both come here). Reactor 0 only. */
+    private fun releaseReactors() { if (!released) { released = true; group.release() } }
 
     /** Connections currently being served (plus accept slots reserved by parked accept loops). */
     val activeConnections: Int get() = active.load()
@@ -180,7 +192,7 @@ class TcpServerGroup internal constructor(
                 }
             }
         } finally {
-            group.stop()
+            releaseReactors()
         }
     }
 
@@ -270,11 +282,46 @@ class TcpServerGroup internal constructor(
             for (i in 0 until reactors) group.runOn(i) { for (j in connJobs[i].toList()) j.cancel() }
             while (active.load() > 0) delay(10)
         }
-        group.stop()
+        releaseReactors()
     }
 
-    /** Suspend until the worker reactors have exited (their connections have all ended). */
+    /**
+     * Suspend until the worker reactors have exited (their connections have all ended). With groups
+     * sharing reactors ([listenAlso]) that is after every one of them has stopped.
+     */
     suspend fun awaitWorkers() { group.awaitExit() }
+
+    /**
+     * Listen on another port with the same reactors (SPEC §27.5, like geario's `Server::bind` for
+     * several services): the returned group has its own handler (via [serve]), cap, pause and
+     * shutdown; the reactors stop when every group sharing them has. Call on reactor 0, the thread
+     * that created the first group.
+     */
+    suspend fun listenAlso(
+        host: String,
+        port: Int,
+        options: SocketOptions = SocketOptions.Default,
+        maxConnections: Int = 0,
+        acceptMode: AcceptMode = this.acceptMode,
+    ): TcpServerGroup {
+        require(maxConnections >= 0) { "maxConnections must be >= 0" }
+        check(currentReactor() === group.member(0).reactor) { "listenAlso must be called on reactor 0" }
+        val mode = if (acceptMode == AcceptMode.ReusePort && reusePortBalancesLoad && reactors > 1) AcceptMode.ReusePort else AcceptMode.Handoff
+        val opts = if (mode == AcceptMode.ReusePort) options.withReusePort() else options
+        val ls = arrayOfNulls<TcpServer>(reactors)
+        ls[0] = listenTcpServer(host, port, opts)
+        if (mode == AcceptMode.ReusePort) {
+            try {
+                for (i in 1 until reactors) ls[i] = group.callOn(i) { listenTcpServer(host, port, opts) }
+            } catch (t: Throwable) {
+                ls[0]?.close()
+                for (i in 1 until reactors) ls[i]?.let { l -> group.runOn(i) { l.close() } }
+                throw t
+            }
+        }
+        try { group.retain() } catch (t: Throwable) { for (l in ls) l?.close(); throw t }
+        return TcpServerGroup(ls, group, reactors, mode, maxConnections)
+    }
 
     /** Tests: run [block] on reactor [i]'s thread and wait for it. */
     internal suspend fun callOnForTest(i: Int, block: () -> Unit) = group.callOn(i) { block() }
