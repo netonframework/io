@@ -34,3 +34,7 @@ internal actual val TCP_KEEP_COUNT_OPTION: Int = platform.posix.TCP_KEEPCNT
 
 /** Apple accepts SO_REUSEPORT but does not load-balance between the sockets. */
 internal actual val reusePortBalancesLoad: Boolean = false
+
+/** F_SETNOSIGPIPE (fcntl.h, 73): writes to this pipe fail with EPIPE instead of raising SIGPIPE. */
+internal actual fun pipeNoSigpipe(fd: Int) { platform.posix.fcntl(fd, 73, 1) }
+

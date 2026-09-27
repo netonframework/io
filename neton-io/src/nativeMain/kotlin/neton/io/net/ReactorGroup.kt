@@ -201,8 +201,17 @@ class TcpServerGroup internal constructor(
     private fun launchConnection(i: Int, fd: Int, handler: suspend (IoStream) -> Unit) {
         val m = group.member(i)
         val job = m.scope.launch(start = CoroutineStart.LAZY) {
+            val stream = ReactorStream(fd, m.reactor)
             try {
-                handler(ReactorStream(fd, m.reactor))
+                handler(stream)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                // One connection's failure (a peer reset, a throwing handler) ends that connection
+                // only. Escaping here cancelled the reactor's scope: every connection on it died, and
+                // with one reactor the whole server (macOS `nc -z` resets the connection).
+                reportConnectionFault(t)
+                stream.close()
             } finally {
                 connJobs[i].remove(coroutineContext[Job])
                 releaseSlot()
@@ -328,3 +337,11 @@ fun serveTcp(
         }
     }
 }
+
+/** One line on stderr for a connection that ended with an error; the server keeps running. */
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+internal fun reportConnectionFault(t: Throwable) {
+    platform.posix.fprintf(platform.posix.stderr, "neton-io: connection closed after error: %s\n", t.message ?: t.toString())
+    platform.posix.fflush(platform.posix.stderr)
+}
+

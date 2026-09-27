@@ -129,7 +129,11 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     protected val wakeReadFd: Int get() = wakePipe[0]
 
     /** Wake the loop from another thread after [dispatch] queued work. Must be thread-safe. */
-    protected open fun wakeup() { signalWakePipe(wakePipe[1]) }
+    protected open fun wakeup() { if (wakeClosed.load() == 0) signalWakePipe(wakePipe[1]) }
+
+    // Set before the wake pipe is closed: a late cross-thread dispatch must not write to a closed
+    // (or already reused) fd number, nor raise SIGPIPE on a pipe without a reader.
+    private val wakeClosed = kotlin.concurrent.atomics.AtomicInt(0)
 
     // ---- timers (min-heap by deadline, lazy cancellation)
     private class Timer(val deadlineNs: Long, val seq: Long, val block: Runnable) : DisposableHandle {
@@ -204,7 +208,10 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     fun checkOwnerPublic(what: String) = checkOwner(what)
 
-    protected fun closeWakePipe() { if (wakePipeLazy.isInitialized()) { closeFd(wakePipe[0]); closeFd(wakePipe[1]) } }
+    protected fun closeWakePipe() {
+        wakeClosed.store(1)
+        if (wakePipeLazy.isInitialized()) { closeFd(wakePipe[1]); closeFd(wakePipe[0]) }
+    }
 
     /**
      * Close a stream's fd: fail every coroutine parked on it with [neton.io.core.ClosedException],

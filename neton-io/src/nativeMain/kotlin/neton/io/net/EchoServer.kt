@@ -93,6 +93,8 @@ private suspend fun echoConnection(conn: IoStream) {
             if (n < 0) break
             conn.write(buf)
         }
+    } catch (_: neton.io.core.IoException) {
+        // peer reset / socket error: this connection ends, the server does not
     } finally {
         conn.close()
     }

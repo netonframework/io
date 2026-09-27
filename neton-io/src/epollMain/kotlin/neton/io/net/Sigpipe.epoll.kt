@@ -16,3 +16,7 @@ internal actual val TCP_KEEP_COUNT_OPTION: Int = platform.posix.TCP_KEEPCNT
 
 /** Linux/Android hash incoming connections across the SO_REUSEPORT sockets of a port. */
 internal actual val reusePortBalancesLoad: Boolean = true
+
+/** Linux has no per-fd switch; the reactor stops writing to its wake pipe before closing it. */
+internal actual fun pipeNoSigpipe(fd: Int) {}
+

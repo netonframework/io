@@ -88,6 +88,7 @@ internal actual fun createWakePipe(): IntArray = memScoped {
     val fds = allocArray<IntVar>(2)
     check(pipe(fds) == 0) { "pipe() failed: ${errnoMessage(errno)}" }
     setNonBlocking(fds[0]); setNonBlocking(fds[1])
+    pipeNoSigpipe(fds[1])
     intArrayOf(fds[0], fds[1])
 }
 
@@ -104,3 +105,7 @@ internal actual fun drainWakePipe(readFd: Int): Unit = memScoped {
     val buf = allocArray<kotlinx.cinterop.ByteVar>(64)
     while (read(readFd, buf, 64u) > 0) { /* drain */ }
 }
+
+/** A write to [fd] (a pipe) must not raise SIGPIPE: Apple has F_SETNOSIGPIPE; elsewhere a no-op. */
+internal expect fun pipeNoSigpipe(fd: Int)
+
