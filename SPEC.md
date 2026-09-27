@@ -970,3 +970,41 @@ msgtrans SPEC §14.1：自动调节（默认）下 1k 连接每秒 4.3 次 GC、
 关闭自动调节 + 目标 64 MiB 为 20 次 GC，`setMinHeap(64)` 为 5 次（与 200 / 9 ≈ 22 和 200 / 41 ≈ 5 吻合）。高并发效果由 msgtrans mt15 测量。
 mt15（msgtrans §14.2）：下限 64 MiB 时 1k 连接 GC 次数与安全点等待约降为 1/5，吞吐 +2 %（两种连接数各 3/4 轮胜，处在本机噪声边缘），p99 不变差，
 堆 24 → 63 MiB；256 MiB 无更多收益。默认仍是自动调节（GC 设置属于整个进程，库不替应用设置）；内存充裕的服务端可设 `NETON_IO_GC_MIN_HEAP_MB=64`。
+
+## 27. 服务端补齐（2026-09-27 用户："把这 1-5 实现了"）
+对照 geario 源码（`~/projects/Neton/geario`）余下的服务端能力。原则同 §26.1：协程常规写法；性能项必须实验证明收益才进默认。
+
+### 27.1 进程信号与平滑停机
+geario：服务端内置信号处理，SIGINT 立即停，SIGTERM 平滑停，SIGQUIT 按配置；`signal()` 让应用等待信号。
+- `suspend fun awaitSignal(vararg signals: Signal = [Int, Term, Quit]): Signal`：挂起直到收到其中一个。首次等待某个信号时才为它安装处理函数
+  （不改变应用没要求处理的信号的默认行为）。
+- 实现：信号处理函数里不能执行 Kotlin 代码。C 垫片（`sigshim.def`，POSIX）的处理函数只向自管道写一个字节（写端非阻塞，满了丢弃，同一信号
+  已在管道里即可）；一个专用线程阻塞读管道，把信号交给等待者（`CompletableDeferred`，在等待者自己的调度器上恢复）。Windows：
+  `SetConsoleCtrlHandler`（Ctrl-C → Int，Ctrl-Break → Quit，关闭 / 注销 / 关机 → Term），经事件对象交给同一个专用线程。
+- `suspend fun TcpServerGroup.shutdownOnSignal(gracefulTimeoutMillis = 30_000)`：Int → 立即停（`shutdown(0)`），Term / Quit → 平滑停。
+- `serveTcp(..., shutdownOnSignals = true, shutdownTimeoutMillis = 30_000)`：默认开启，与 geario 相同。
+- 验收：进程内 `raise(SIGTERM)` 使 `awaitSignal` 返回 Term；`serveTcp` 收到 SIGTERM 后等活动连接结束再返回，收到 SIGINT 立即返回。
+
+### 27.2 反应器线程绑核
+geario：`enable_affinity()`。neton：`listenGroup(..., pinThreads = false)` / `serveTcp(..., pinThreads = false)`：反应器 i 绑到进程允许的
+CPU 集合（`sched_getaffinity`）中的第 i 个（取模）。Linux / Android 用 `sched_setaffinity`（C 垫片），Windows 用 `SetThreadAffinityMask`；
+Apple 不支持线程绑核（返回 false，不报错）。性能项：153 上同一二进制 `NETON_IO_AFFINITY` 0 / 1 配对测量，有收益才考虑默认开启。
+
+### 27.3 Service 并发上限
+更正 §27 前的说法："单连接在途上限"在 neton-io 层不存在——`serve()` 在一个连接上顺序处理请求。geario 的 `InFlight` 限制的是一个 Service 实例
+（所有使用它的连接合计）的并发调用数，满了就不再读取，形成反压。
+- `fun <Req, Res> Service<Req, Res>.limitInFlight(max: Int): InFlightService<Req, Res>`：用 kotlinx `Semaphore`；达到上限的调用挂起，其连接因此
+  停止读取（TCP 反压）。`inFlight` 可读。每次调用多一个协程帧（选用才有）。
+- 验收：max = 3、并发 10 个调用时同时进行的不超过 3 个且全部完成；取消等待中的调用不泄漏许可。
+
+### 27.4 内存流（测试用）
+geario：`IoTest`。neton：`memoryStreamPair(capacity = 64 KiB): Pair<IoStream, IoStream>`（commonMain），两端各是一个 `IoStream`，
+线程安全（kotlinx `Mutex`）。按字节容量反压（写满挂起，读走后继续）；`shutdownOutput` → 对端读到 EOF；`close` → 对端 EOF、对端写抛异常、
+本端挂起的读写抛 `ClosedException`。上层（msgtrans、PulseKit）的协议测试可不走真实 socket。
+- 验收：`Framed` + `LineCodec` 经内存流回显；容量反压；半关闭；关闭；跨线程使用。
+
+### 27.5 多个监听端口共享一组反应器；并行 DNS
+- `suspend fun TcpServerGroup.listenAlso(host, port, options, maxConnections, acceptMode): TcpServerGroup`：在同一组反应器上再开一个监听端口，
+  各自 `serve(handler)`、各自上限 / 暂停 / 停机。反应器按引用计数，最后一个监听组停机时才停。只能在反应器 0 上调用。
+- 名字解析：`getaddrinfo` 从单个解析线程（串行）改到 kotlinx `Dispatchers.IO`（线程池，并行），恢复回调用者的反应器。
+- 验收：两个端口各自回显、各自停机互不影响、全部停机后工作线程退出；并发解析多个名字全部成功。
