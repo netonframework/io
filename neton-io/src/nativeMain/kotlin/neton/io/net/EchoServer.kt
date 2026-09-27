@@ -23,6 +23,7 @@ import neton.io.core.IoStream
  * Framed + serve() (batched flush, SPEC §23.2); `lines-unbatched` does the same with one flush per
  * request (the pre-§23.2 behaviour, kept here for comparison only).
  *
+ * NETON_IO_GC_STATS=1 prints GC statistics once a second (SPEC §26.3).
  * NETON_IO_POOL=0 turns buffer pooling off (SPEC §23.7), for paired comparisons.
  * NETON_IO_RUN_SECONDS=n stops the server after n seconds (orderly, so NETON_IO_STATS is printed);
  * otherwise it runs until killed.
@@ -36,6 +37,7 @@ fun echoServerMain(args: Array<String>) {
     val runSeconds = platform.posix.getenv("NETON_IO_RUN_SECONDS")?.toKString()?.toIntOrNull()
     // Bench knob (SPEC §17c): fix the GC target heap instead of letting the runtime autotune it.
     GcTuning.fromEnvironment()?.let { mb -> println("gc target heap = $mb MiB (autotune off)") }
+    GcStats.startFromEnvironment()
     if (!pooling) neton.io.bytes.BufferPoolConfig.enabled = false
     println("echo-server listening on $host:$port reactors=$reactors accept=${platform.posix.getenv("NETON_IO_ACCEPT_MODE")?.toKString() ?: "handoff"}")
     val unixPath = host.removePrefix("unix:").takeIf { host.startsWith("unix:") }

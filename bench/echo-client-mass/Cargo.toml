@@ -1,0 +1,14 @@
+[package]
+name = "echo-client-mass"
+version = "0.1.0"
+edition = "2024"
+# High-concurrency echo load generator (neton-io SPEC §26.3): a few event-loop threads drive many
+# connections, so 10k-50k connections measure the server, not the client's thread count.
+# Output format matches echo-client-fair.
+
+[dependencies]
+mio = { version = "1.2", features = ["os-poll", "net"] }
+socket2 = "0.6"
+
+[profile.release]
+opt-level = 3
