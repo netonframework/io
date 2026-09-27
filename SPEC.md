@@ -803,3 +803,10 @@ reuseAddress = true, reusePort = false, lingerSec = null, connectTimeoutMillis =
   系统调用 2.17/请求，已进入跳过模式）；×4 100 连接 296k（off 302k，差在噪声内，系统调用同为 2.05，保持投机）；×4 1000 连接 234k（off 221k），Jain ≥ 0.976。
   验收通过，auto 为默认。当前 epoll 对 geario：单核持平（中位数 126.6k 对 127.3k），×4 100 连接 0.93–0.95，×4 1000 连接 1.06–1.08。
 
+
+### 24.6 GC 调优接口（不默认启用）
+neton-io 自身收发路径已零分配，但上层协议每条消息仍需分配（解码对象、载荷、响应）。Kotlin/Native 的 GC 会暂停所有线程，其协调线程自旋等待安全点，
+每次回收都占用反应器时间。`GcTuning.fixTargetHeap(mb)` / `GcTuning.fromEnvironment()`（`NETON_IO_GC_TARGET_MB`）固定目标堆、关闭自动调节，
+让回收更少发生。这是进程级设置，库不默认修改，由服务端应用在启动时决定。
+实测（153，单反应器）：msgtrans rpc 在 64 / 256 MB 目标下吞吐 +5.5 % / +5.7 %，framed 256 MB +4.6 %，每请求 GC 自旋减半
+（`msgtrans-kotlin/bench/results/2026-09-27-153-mt4-raw.txt`）。
