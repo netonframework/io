@@ -848,3 +848,8 @@ neton-io 自身收发路径已零分配，但上层协议每条消息仍需分�
   64 KB 1.58–1.76（4/4），128 B / 4 KB 两者被客户端封顶在同一吞吐（≈ 1.00）；每请求服务端 CPU kqueue 少 10–13 %（13.5–14.1 µs 对 15.0–16.2 µs）。
 - 途中修复：macOS `nc -z` 以 RST 断开，读错误逃出连接协程，取消整个反应器作用域（单反应器时整个服务端退出，多反应器时随后因写已关闭的唤醒管道死于 SIGPIPE）。
   现在连接处理函数的失败只结束该连接（stderr 记一行）；反应器关闭唤醒管道前先停止写入；Apple 的管道设 F_SETNOSIGPIPE。
+
+### 24.10 Buffer 整数原语
+依据（153，callgrind，msgtrans framed / rpc，epoll 单反应器 12 连接 64 B；每请求 6006 / 7921 条指令）：`Buffer.ensureWritable` 777 与 `Buffer.getByte` 640 条/请求——
+16 字节包头逐字节写读，每字节一次函数调用和完整检查。新增大端序 `writeShort / writeInt / writeLong`、`getUnsignedByte / getUnsignedShort / getInt`、
+`readInt / readUnsignedShort`，每个值一次边界检查；`writeByte` 有内联快路径。msgtrans 编解码改用这些原语。

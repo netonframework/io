@@ -52,9 +52,63 @@ class Buffer private constructor(
     // ---- write ----
 
     fun writeByte(b: Byte) {
+        val i = writerIndex
+        if (i < array.size && mode and BORROWED == 0) { array[i] = b; writerIndex = i + 1; return }
         ensureWritable(1, null)
         array[writerIndex++] = b
     }
+
+    // ---- big-endian (network order) primitives: one capacity / bounds check per value (SPEC §24.10).
+    // Byte-at-a-time header codecs spent ~1,400 instructions per message in writeByte / getByte.
+
+    /** Append the low 16 bits of [v], big-endian. */
+    fun writeShort(v: Int) {
+        ensureWritable(2, null)
+        val a = array; val i = writerIndex
+        a[i] = (v ushr 8).toByte(); a[i + 1] = v.toByte()
+        writerIndex = i + 2
+    }
+
+    /** Append [v], big-endian. */
+    fun writeInt(v: Int) {
+        ensureWritable(4, null)
+        val a = array; val i = writerIndex
+        a[i] = (v ushr 24).toByte(); a[i + 1] = (v ushr 16).toByte(); a[i + 2] = (v ushr 8).toByte(); a[i + 3] = v.toByte()
+        writerIndex = i + 4
+    }
+
+    /** Append [v], big-endian. */
+    fun writeLong(v: Long) {
+        writeInt((v ushr 32).toInt())
+        writeInt(v.toInt())
+    }
+
+    /** Readable byte at [i] (from the reader cursor) as 0..255, without consuming. */
+    fun getUnsignedByte(i: Int): Int {
+        if (i < 0 || i >= readableBytes) throw IndexOutOfBoundsException("index $i, readable $readableBytes")
+        return array[readerIndex + i].toInt() and 0xFF
+    }
+
+    /** Big-endian unsigned 16-bit value at [i] (from the reader cursor), without consuming. */
+    fun getUnsignedShort(i: Int): Int {
+        if (i < 0 || i + 2 > readableBytes) throw IndexOutOfBoundsException("index $i+2, readable $readableBytes")
+        val a = array; val p = readerIndex + i
+        return ((a[p].toInt() and 0xFF) shl 8) or (a[p + 1].toInt() and 0xFF)
+    }
+
+    /** Big-endian 32-bit value at [i] (from the reader cursor), without consuming. */
+    fun getInt(i: Int): Int {
+        if (i < 0 || i + 4 > readableBytes) throw IndexOutOfBoundsException("index $i+4, readable $readableBytes")
+        val a = array; val p = readerIndex + i
+        return ((a[p].toInt() and 0xFF) shl 24) or ((a[p + 1].toInt() and 0xFF) shl 16) or
+            ((a[p + 2].toInt() and 0xFF) shl 8) or (a[p + 3].toInt() and 0xFF)
+    }
+
+    /** Read and consume a big-endian 32-bit value. */
+    fun readInt(): Int { val v = getInt(0); skip(4); return v }
+
+    /** Read and consume a big-endian unsigned 16-bit value. */
+    fun readUnsignedShort(): Int { val v = getUnsignedShort(0); skip(2); return v }
 
     fun writeBytes(src: ByteArray, offset: Int = 0, length: Int = src.size - offset) {
         require(offset >= 0 && length >= 0 && offset + length <= src.size) { "bad range" }
@@ -220,7 +274,8 @@ class Buffer private constructor(
         mode = mode and POOLED
     }
 
-    private fun ensureWritable(length: Int, pool: BufferPool?) {
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun ensureWritable(length: Int, pool: BufferPool?) {
         // Past writerIndex is ours even when slices share the array (they only cover read space).
         if (writerIndex + length <= array.size && mode and BORROWED == 0) return
         growOrMove(length, pool)
