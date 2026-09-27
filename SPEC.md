@@ -905,3 +905,17 @@ GC：稳态无 GC（1k 连接 8 s 约 250 万请求，0 次）；GC 只在建立
 1. 建立连接慢：10k 连接 epoll 0.42 s、io_uring 1.72 s，geario 0.15 s；50k 为 2.4 / 3.2 s 对 1.3 s。诊断：accept 队列溢出计数（hc2）。
 2. io_uring 空闲连接内存是 epoll 的 2 倍：挂起的 RECV 占着用户缓冲区（epoll 挂起时把数组还给池）。
 3. io_uring 连接数少时低于 epoll（64 连接 368k 对 417k）。
+
+### 26.5 io_uring 空闲读不占缓冲区
+依据（§26.4）：每条空闲连接 io_uring 3.4 KB、epoll 1.5 KB。单次 RECV（§24.7）把读者的池化数组 pin 住交给内核，直到数据到来；
+epoll 挂起时不占数组（空闲清扫把它还给池）。
+
+做法：沿用空闲清扫（IDLE_SWEEP_MS / SWEEP_ROUNDS）。挂起跨过一整个清扫周期的 RECV 被 ASYNC_CANCEL；其 -ECANCELED CQE 到达后
+取消该 fd 的读 pin、数组还给池，改挂 POLL_ADD(POLLIN)（不带缓冲区）；POLLIN 到达后从池取数组、重新 pin，提交不带 POLL_FIRST 的 RECV，
+回到常规路径。提交 SQE 的步骤都在收割之后（与短写重提交相同）。取消先于数据：RECV 已收到数据则按常规完成，迟到的取消找不到目标。
+读者在任何阶段被取消、超时或流被关闭，都按原来的结果结束；排队中（无操作在途）的读由收割后的处理或 shutdown 释放。
+只影响挂起超过一个清扫周期的读，活跃连接的路径不变。`NETON_IO_URING_IDLE_POLL=0` 关闭（A/B）。`NETON_IO_STATS` 新增
+`idle_demotions` / `idle_wakes`。
+
+验证：`IdleReadTest`（空闲后收数据 ×3、EOF、取消、关闭；io_uring 上计数确认走了降级路径），colima Linux arm64 全部测试
+io_uring / io_uring multishot / epoll 各 81/81，macOS 80/80。效果以 153 C2 每连接内存与 C1 吞吐（不得回退）衡量。
