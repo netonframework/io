@@ -87,6 +87,7 @@ internal class IocpReactor : Reactor() {
     private var servedRound = LongArray(256)
     private var pollAccept = BooleanArray(256)          // listener where AcceptEx is unsupported (AF_UNIX)
     private var pinRefs = arrayOfNulls<PinRef>(256)
+    private var wPinRefs = arrayOfNulls<PinRef>(256)
     private var watchJobA = arrayOfNulls<Job>(256); private var watchHandleA = arrayOfNulls<DisposableHandle>(256)
     private var watchJobB = arrayOfNulls<Job>(256); private var watchHandleB = arrayOfNulls<DisposableHandle>(256)
 
@@ -96,7 +97,7 @@ internal class IocpReactor : Reactor() {
             var n = associated.size
             while (n <= i) n *= 2
             associated = associated.copyOf(n); skipOn = skipOn.copyOf(n); servedRound = servedRound.copyOf(n)
-            pollAccept = pollAccept.copyOf(n); pinRefs = pinRefs.copyOf(n)
+            pollAccept = pollAccept.copyOf(n); pinRefs = pinRefs.copyOf(n); wPinRefs = wPinRefs.copyOf(n)
             watchJobA = watchJobA.copyOf(n); watchHandleA = watchHandleA.copyOf(n)
             watchJobB = watchJobB.copyOf(n); watchHandleB = watchHandleB.copyOf(n)
         }
@@ -133,9 +134,18 @@ internal class IocpReactor : Reactor() {
         return PinRef(array, array.pin()).also { pinRefs[i] = it }
     }
 
+    private fun pinForWrite(fd: Int, array: ByteArray): PinRef {
+        val i = ix(fd)
+        val cur = wPinRefs[i]
+        if (cur != null && cur.array === array) return cur
+        if (cur != null) { cur.retired = true; cur.release() }
+        return PinRef(array, array.pin()).also { wPinRefs[i] = it }
+    }
+
     private fun retirePin(fd: Int) {
         val i = ix(fd)
         pinRefs[i]?.let { it.retired = true; it.release(); pinRefs[i] = null }
+        wPinRefs[i]?.let { it.retired = true; it.release(); wPinRefs[i] = null }
     }
 
     // ---- in-flight operations: a slot table; each slot owns one native neton_op (OVERLAPPED first).
@@ -144,6 +154,10 @@ internal class IocpReactor : Reactor() {
         var pin: PinRef? = null; var cont: Continuation<Int>? = null
         var cancelOnAbort = true; var isWrite = false
         var extraPins: Array<Pinned<ByteArray>>? = null; var nativeBlock: COpaquePointer? = null
+        // SPEC §24 (as in UringReactor): a read or whole-buffer send completed by the reactor, and the
+        // cause a cancelled / timed-out one is resumed with once its completion has been accounted.
+        var readBuf: Buffer? = null; var readSizer: ReadSizer? = null
+        var sendBuf: Buffer? = null; var sendTotal = 0; var abort: Throwable? = null
     }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
@@ -168,6 +182,7 @@ internal class IocpReactor : Reactor() {
 
     private fun releaseSlot(idx: Int, slot: Slot) {
         slot.live = false; slot.cont = null; slot.fd = -1; slot.kind = 0; slot.isWrite = false
+        slot.readBuf = null; slot.readSizer = null; slot.sendBuf = null; slot.sendTotal = 0; slot.abort = null
         slot.pin?.let { it.refs--; it.release() }; slot.pin = null
         slot.extraPins?.let { for (p in it) p.unpin() }; slot.extraPins = null
         slot.nativeBlock?.let { neton_free(it) }; slot.nativeBlock = null
@@ -203,6 +218,7 @@ internal class IocpReactor : Reactor() {
             if (!slot.live || slot.fd != fd) continue
             val c = slot.cont ?: continue
             if (c.context[Job] !== job) continue
+            if (slot.readBuf != null || slot.sendBuf != null) { abortOp(slot, ex); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, ex)
             if (slot.cancelOnAbort) neton_cancel(fd.toSocket(), slot.op)
@@ -215,6 +231,7 @@ internal class IocpReactor : Reactor() {
             if (!slot.live || slot.fd != fd) continue
             if (if (slot.isWrite) !writes else !reads) continue
             val c = slot.cont ?: continue
+            if (slot.readBuf != null || slot.sendBuf != null) { abortOp(slot, cause); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, cause)
             if (slot.cancelOnAbort) neton_cancel(fd.toSocket(), slot.op)
@@ -272,41 +289,100 @@ internal class IocpReactor : Reactor() {
         kotlin.coroutines.coroutineContext[Job]?.let { if (!it.isActive) throw it.getCancellationException() }
     }
 
+    // ---- reads and writes (SPEC §24, as in UringReactor): the reactor completes them from the
+    // completion packet and resumes the caller; the fast paths are tail calls, nothing is allocated.
+
     override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         checkOwner("read")
-        val i = ix(fd)
-        if (servedRound[i] == round) waitNextRound()
+        if (servedRound[ix(fd)] == round) return readNextRound(fd, dst, sizer)
+        return readNow(fd, dst, sizer)
+    }
+
+    private suspend fun readNextRound(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        waitNextRound()
+        return readNow(fd, dst, sizer)
+    }
+
+    private suspend fun readNow(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        val skip = if (ensureAssociated(fd)) 1 else 0
         val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val at = dst.writerIndex()
-        val r0 = round
-        val n = submit(fd, KIND_RECV, pin, cancelOnAbort = true, isWrite = false) { op, skip ->
-            neton_recv(fd.toSocket(), op, pin.pinned.addressOf(at), cap.toUInt(), skip)
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.kind = KIND_RECV; slot.cancelOnAbort = true; slot.isWrite = false
+        slot.pin = pin; pin.refs++
+        slot.readBuf = dst; slot.readSizer = sizer
+        return suspendCoroutineUninterceptedOrReturn { cont ->
+            try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
+            when (val rc = neton_recv(fd.toSocket(), slot.op, pin.pinned.addressOf(at), cap.toUInt(), skip)) {
+                0 -> {                              // completed at once: no packet follows
+                    val n = neton_op_bytes(slot.op).toInt()
+                    releaseSlot(idx, slot)
+                    boxedInt(commitRead(fd, dst, sizer, n, sync = true))
+                }
+                1 -> { slot.cont = cont; COROUTINE_SUSPENDED }
+                else -> { releaseSlot(idx, slot); throw IoException("WSARecv failed: ${errnoMessage(rc)}", rc) }
+            }
         }
-        stats?.let { it.reads++; if (n > 0) it.readBytes += n }
-        if (n <= 0) return -1                         // 0 bytes: orderly shutdown by the peer
+    }
+
+    /** Commit [n] received bytes into [dst]; -1 at EOF. A read that completed at once is this fd's turn (§19.5). */
+    private fun commitRead(fd: Int, dst: Buffer, sizer: ReadSizer, n: Int, sync: Boolean): Int {
+        if (n <= 0) return -1                        // 0 bytes: orderly shutdown by the peer
         dst.commitWrite(n)
         sizer.onRead(n)
-        // Completed without suspending (skip-on-success): the round did not move. Such a read is the
-        // one this connection gets this round; a read that waited for its packet costs no extra turn.
-        if (round == r0) servedRound[i] = round
+        stats?.let { it.reads++; it.readBytes += n }
+        if (sync) servedRound[ix(fd)] = round
         return n
     }
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         checkOwner("write")
-        var total = 0
-        while (src.readableBytes > 0) {
-            val pin = pinFor(fd, src.backingArray())
-            val at = src.readerIndex(); val len = src.readableBytes
-            // A cancelled send is not aborted: it either transmitted or not, as with io_uring.
-            val n = submit(fd, KIND_SEND, pin, cancelOnAbort = false, isWrite = true) { op, skip ->
-                neton_send(fd.toSocket(), op, pin.pinned.addressOf(at), len.toUInt(), skip)
+        if (src.readableBytes == 0) return 0
+        return sendAll(fd, src)
+    }
+
+    /** Send all of [src]: sends that complete at once are chained here; a pending one continues in [onSendDone]. */
+    private suspend fun sendAll(fd: Int, src: Buffer): Int {
+        val skip = if (ensureAssociated(fd)) 1 else 0
+        val pin = pinForWrite(fd, src.backingArray())
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.kind = KIND_SEND; slot.cancelOnAbort = false; slot.isWrite = true
+        slot.pin = pin; pin.refs++
+        slot.sendBuf = src; slot.sendTotal = 0
+        return suspendCoroutineUninterceptedOrReturn { cont ->
+            try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
+            while (true) {
+                val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), src.readableBytes.toUInt(), skip)
+                when (rc) {
+                    0 -> {
+                        val n = neton_op_bytes(slot.op).toInt()
+                        src.consumeSent(n); slot.sendTotal += n
+                        stats?.let { it.writes++; it.writeBytes += n }
+                        if (src.readableBytes == 0) {
+                            val total = slot.sendTotal
+                            releaseSlot(idx, slot)
+                            return@suspendCoroutineUninterceptedOrReturn boxedInt(total)
+                        }
+                    }
+                    1 -> { slot.cont = cont; return@suspendCoroutineUninterceptedOrReturn COROUTINE_SUSPENDED }
+                    else -> { releaseSlot(idx, slot); throw IoException("WSASend failed: ${errnoMessage(rc)}", rc) }
+                }
             }
-            stats?.let { it.writes++; it.writeBytes += n }
-            src.consumeSent(n); total += n
+            @Suppress("UNREACHABLE_CODE") COROUTINE_SUSPENDED
         }
-        return total
+    }
+
+    /**
+     * A read or send whose caller gave up (cancelled, timed out): cancel the I/O and resume the caller
+     * with [cause] from the completion, once the bytes that did move are accounted in its buffer.
+     */
+    private fun abortOp(slot: Slot, cause: Throwable) {
+        if (slot.abort != null) return
+        slot.abort = cause
+        neton_cancel(slot.fd.toSocket(), slot.op)
     }
 
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
@@ -379,7 +455,7 @@ internal class IocpReactor : Reactor() {
             val slot = slots[i] ?: continue
             if (!slot.live || slot.fd != fd) continue
             any = true
-            slot.cont?.let { slot.cont = null; enqueueResumeInt(it, 0, ClosedException()) }
+            slot.cont?.let { slot.cont = null; enqueueResumeInt(it, 0, slot.abort ?: ClosedException()) }
         }
         if (any) neton_cancel(fd.toSocket(), null)   // their packets arrive (aborted) and free the slots
         forgetWatches(fd)
@@ -427,6 +503,8 @@ internal class IocpReactor : Reactor() {
         val idx = neton_op_slot(op).toInt()
         val slot = slots.getOrNull(idx) ?: return
         if (!slot.live || slot.gen != neton_op_gen(op)) return
+        if (slot.readBuf != null) { onReadDone(idx, slot, n, err); return }
+        if (slot.sendBuf != null) { onSendDone(idx, slot, n, err); return }
         val fd = slot.fd
         val cont = slot.cont
         var value = n
@@ -442,6 +520,53 @@ internal class IocpReactor : Reactor() {
         releaseSlot(idx, slot)
         if (cont == null) return
         if (failure != null) enqueueResumeInt(cont, 0, failure) else enqueueResumeInt(cont, value)
+    }
+
+    /** A read's completion: commit what arrived (also for an aborted read), then resume the reader. */
+    private fun onReadDone(idx: Int, slot: Slot, n: Int, err: Int) {
+        val cont = slot.cont
+        val fd = slot.fd; val dst = slot.readBuf!!; val sizer = slot.readSizer!!; val abort = slot.abort
+        releaseSlot(idx, slot)
+        if (cont == null) return                              // stream closed: buffer abandoned
+        val moved = if (n > 0 && (err == 0 || err == ERROR_OPERATION_ABORTED)) commitRead(fd, dst, sizer, n, sync = false) else 0
+        when {
+            abort != null -> enqueueResumeInt(cont, 0, abort)
+            err == ERROR_OPERATION_ABORTED -> enqueueResumeInt(cont, 0, ClosedException())
+            err != 0 -> enqueueResumeInt(cont, 0, IoException("WSARecv failed: ${errnoMessage(err)}", err))
+            else -> enqueueResumeInt(cont, if (moved > 0) moved else -1)
+        }
+    }
+
+    /** A send's completion: account it, then continue with the rest or resume the writer. */
+    private fun onSendDone(idx: Int, slot: Slot, n: Int, err: Int) {
+        val cont = slot.cont
+        if (cont == null) { releaseSlot(idx, slot); return }  // stream closed: buffer abandoned
+        val src = slot.sendBuf!!
+        if (n > 0 && (err == 0 || err == ERROR_OPERATION_ABORTED)) {
+            src.consumeSent(n); slot.sendTotal += n
+            stats?.let { it.writes++; it.writeBytes += n }
+        }
+        val abort = slot.abort
+        if (abort != null || err != 0) {
+            releaseSlot(idx, slot)
+            enqueueResumeInt(cont, 0, abort ?: if (err == ERROR_OPERATION_ABORTED) ClosedException()
+                else IoException("WSASend failed: ${errnoMessage(err)}", err))
+            return
+        }
+        val fd = slot.fd
+        val skip = if (skipOn[ix(fd)]) 1 else 0
+        val pin = slot.pin!!
+        while (src.readableBytes > 0) {
+            val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), src.readableBytes.toUInt(), skip)
+            when (rc) {
+                0 -> { val m = neton_op_bytes(slot.op).toInt(); src.consumeSent(m); slot.sendTotal += m }
+                1 -> return                                   // the next completion continues
+                else -> { releaseSlot(idx, slot); enqueueResumeInt(cont, 0, IoException("WSASend failed: ${errnoMessage(rc)}", rc)); return }
+            }
+        }
+        val total = slot.sendTotal
+        releaseSlot(idx, slot)
+        enqueueResumeInt(cont, total)
     }
 
     /**
