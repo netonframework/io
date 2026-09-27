@@ -968,3 +968,5 @@ msgtrans SPEC §14.1：自动调节（默认）下 1k 连接每秒 4.3 次 GC、
 改法：`GcTuning.setMinHeap(mb)`（环境变量 `NETON_IO_GC_MIN_HEAP_MB`）保持自动调节，只抬高 `GC.minHeapBytes`——下一目标仍是 `存活 / 0.5`，但不低于下限，
 触发线每次 GC 后照常更新。旧的 `fixTargetHeap` 删除（0.1.0 之后加入，未发布）。`GcTuningTest` 复现：16 MiB 存活、约 200 MiB 垃圾，
 关闭自动调节 + 目标 64 MiB 为 20 次 GC，`setMinHeap(64)` 为 5 次（与 200 / 9 ≈ 22 和 200 / 41 ≈ 5 吻合）。高并发效果由 msgtrans mt15 测量。
+mt15（msgtrans §14.2）：下限 64 MiB 时 1k 连接 GC 次数与安全点等待约降为 1/5，吞吐 +2 %（两种连接数各 3/4 轮胜，处在本机噪声边缘），p99 不变差，
+堆 24 → 63 MiB；256 MiB 无更多收益。默认仍是自动调节（GC 设置属于整个进程，库不替应用设置）；内存充裕的服务端可设 `NETON_IO_GC_MIN_HEAP_MB=64`。
