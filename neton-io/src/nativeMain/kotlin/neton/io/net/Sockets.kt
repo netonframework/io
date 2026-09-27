@@ -32,7 +32,7 @@ internal expect fun errnoMessage(code: Int): String
  * must not alter the host's signal handling): SO_NOSIGPIPE on Apple, MSG_NOSIGNAL on every send on
  * Linux/Android (and IORING_OP_SEND with MSG_NOSIGNAL on io_uring); Windows has no SIGPIPE.
  */
-internal expect fun suppressSigpipe(fd: Int)
+internal expect fun suppressSigpipe(fd: Int): Boolean
 
 /**
  * Non-blocking recv into [pinned] at [offset], at most [len] bytes. Returns the byte count (>0),

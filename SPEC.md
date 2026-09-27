@@ -1008,3 +1008,10 @@ geario：`IoTest`。neton：`memoryStreamPair(capacity = 64 KiB): Pair<IoStream,
   各自 `serve(handler)`、各自上限 / 暂停 / 停机。反应器按引用计数，最后一个监听组停机时才停。只能在反应器 0 上调用。
 - 名字解析：`getaddrinfo` 从单个解析线程（串行）改到 kotlinx `Dispatchers.IO`（线程池，并行），恢复回调用者的反应器。
 - 验收：两个端口各自回显、各自停机互不影响、全部停机后工作线程退出；并发解析多个名字全部成功。
+
+### 27.6 缺陷：Apple 上对端在 accept 之前关闭 / 重置，服务端写入时进程死于 SIGPIPE（实现 §27.1 时发现）
+`ConnectionFaultTest` 单独运行必现退出码 141（SIGPIPE）；此前全量运行能过是时序碰巧。原因（C 程序验证）：对端在服务端 `accept()` 之前
+已关闭（Unix 域）或已 RST（TCP）时，macOS 对该 socket 的 `setsockopt(SO_NOSIGPIPE)` 返回 EINVAL，选项没设上，此后任何 send 都给整个进程
+发 SIGPIPE——任一"连上、发数据、立即 RST"的客户端都能打死 macOS / iOS 上的 neton 服务端。TCP 正常 FIN（含半关闭）时该选项仍可设置。
+修复：设置失败时不丢弃连接（Unix 域上对端写完就关闭，缓冲里仍有数据），而是标记该 fd，读照常（先读完对端发的数据，再 EOF），写直接抛
+EPIPE 的 `IoException`，不调用 send。回归测试：`UnixSocketTest.peerGoneBeforeAcceptStillDeliversAndWritesFail`；`ConnectionFaultTest` 单独连跑 5 次通过。

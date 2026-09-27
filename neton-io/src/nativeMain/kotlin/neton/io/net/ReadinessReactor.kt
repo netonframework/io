@@ -75,6 +75,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private var idleArrays = false          // some parked read may hold an idle pooled array
     // The last event for the fd carried EOF / hang-up: its FIN may already be in, with no edge to follow.
     private var peerClosed = BooleanArray(64)
+    // Apple: SO_NOSIGPIPE could not be set (peer gone before accept); a send would raise SIGPIPE.
+    private var sendsFail = BooleanArray(64)
     // SPEC §24.5 short-read rule. After a short recv the next recv on an edge-triggered fd is
     // speculative: it may find the peer's next request already there, or return EAGAIN. The reactor
     // (not each fd: a mix let speculating connections jump the edge queue, p99 +60 % and Jain 0.87 at
@@ -104,7 +106,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         persistent = persistent.copyOf(n); readyRead = readyRead.copyOf(n)
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
         wPinnedArrays = wPinnedArrays.copyOf(n); wPins = wPins.copyOf(n); parkEpoch = parkEpoch.copyOf(n)
-        peerClosed = peerClosed.copyOf(n)
+        peerClosed = peerClosed.copyOf(n); sendsFail = sendsFail.copyOf(n)
         specPending = specPending.copyOf(n)
     }
 
@@ -293,6 +295,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         ensureFd(fd)
+        if (sendsFail[fd]) throw IoException("send failed: peer closed (EPIPE)", platform.posix.EPIPE)
         var total = 0
         while (src.readableBytes > 0) {
             val n = sendPinned(fd, pinForWrite(fd, src.backingArray()), src.readerIndex(), src.readableBytes)
@@ -333,6 +336,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     /** One sendmsg per batch of up to [MAX_IOV] buffers; parks on would-block like [write] (SPEC §23.3). */
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
         ensureFd(fd)
+        if (sendsFail[fd]) throw IoException("send failed: peer closed (EPIPE)", platform.posix.EPIPE)
         var total = 0L
         var i = 0
         while (i < count && bufs[i].readableBytes == 0) i++
@@ -355,7 +359,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
             val clientFd = acceptOne(listenFd)
             if (clientFd >= 0) {
                 setNonBlocking(clientFd)
-                suppressSigpipe(clientFd)
+                // Apple rejects SO_NOSIGPIPE once the peer has closed or reset before accept() returned;
+                // a send would then kill the process. The peer is gone, so reads still deliver what it
+                // sent (then EOF) and every write fails with EPIPE without calling send.
+                if (!suppressSigpipe(clientFd)) { ensureFd(clientFd); sendsFail[clientFd] = true }
                 return clientFd
             }
             waitReadable(listenFd)
@@ -429,7 +436,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         if (writeConts[fd] != null) finishWrite(fd, 0, ClosedException())
         forgetCancellation(fd)
         servedRound[fd] = 0
-        persistent[fd] = false; readyRead[fd] = false; peerClosed[fd] = false
+        persistent[fd] = false; readyRead[fd] = false; peerClosed[fd] = false; sendsFail[fd] = false
         specPending[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         wPins[fd]?.unpin(); wPins[fd] = null; wPinnedArrays[fd] = null

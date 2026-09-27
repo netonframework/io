@@ -13,13 +13,16 @@ import platform.posix.SO_NOSIGPIPE
 import platform.posix.pthread_self
 import platform.posix.setsockopt
 
-/** Apple: SO_NOSIGPIPE per socket; send(2) then returns EPIPE instead of raising SIGPIPE. */
+/**
+ * Apple: SO_NOSIGPIPE per socket; send(2) then returns EPIPE instead of raising SIGPIPE. Returns false
+ * if it could not be set: on a connection already reset by the peer before accept() returned, macOS
+ * rejects the option (EINVAL), and a send on that socket would then kill the process with SIGPIPE.
+ */
 @OptIn(ExperimentalForeignApi::class)
-internal actual fun suppressSigpipe(fd: Int) = memScoped {
+internal actual fun suppressSigpipe(fd: Int): Boolean = memScoped {
     val one = alloc<IntVar>()
     one.value = 1
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, one.ptr, sizeOf<IntVar>().convert())
-    Unit
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, one.ptr, sizeOf<IntVar>().convert()) == 0
 }
 
 internal actual val SEND_FLAGS: Int = 0

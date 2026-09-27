@@ -73,7 +73,7 @@ internal actual fun lastSocketError(): Int = WSAGetLastError()
 internal actual fun errnoMessage(code: Int): String = "Winsock error $code"
 
 /** Windows has no SIGPIPE. */
-internal actual fun suppressSigpipe(fd: Int) {}
+internal actual fun suppressSigpipe(fd: Int): Boolean = true
 
 internal actual fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
     val n = recv(fd.toSocket(), pinned.addressOf(offset), len, 0)

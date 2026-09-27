@@ -81,6 +81,30 @@ class UnixSocketTest {
         c.close(); server.join(); l.close()
     }
 
+    /**
+     * A peer that writes and closes before accept(): its data is still delivered, then EOF, and a
+     * write fails with IoException. On Apple SO_NOSIGPIPE cannot be set on such a socket; a send
+     * used to kill the process with SIGPIPE.
+     */
+    @Test
+    fun peerGoneBeforeAcceptStillDeliversAndWritesFail() = runReactor {
+        if (!socketFilesAllowed("peerGoneBeforeAcceptStillDeliversAndWritesFail")) return@runReactor
+        val path = "neton-uds-gone.sock"
+        val l = listenUnix(path)
+        val c = connectUnix(path)
+        val out = neton.io.bytes.Buffer(); out.writeBytes("req\n".encodeToByteArray()); c.write(out)
+        c.close()
+        kotlinx.coroutines.delay(100)
+        val s = l.accept()
+        val b = neton.io.bytes.Buffer()
+        assertEquals(4, s.read(b))
+        assertEquals("req\n", b.readBytes(4).decodeToString())
+        assertEquals(-1, s.read(b))
+        val e = runCatching { val w = neton.io.bytes.Buffer(); w.writeBytes("x".encodeToByteArray()); s.write(w) }.exceptionOrNull()
+        assertTrue(e is neton.io.core.IoException, "a write to a gone peer must fail with IoException, got $e")
+        s.close(); l.close()
+    }
+
     @Test
     fun abstractNamespaceOnLinuxOnly() = runReactor {
         if (!UNIX_ABSTRACT_SUPPORTED) {
