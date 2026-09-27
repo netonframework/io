@@ -321,11 +321,12 @@ fun serveTcp(
     reactors: Int = cpuCount(),
     until: CompletableDeferred<Unit>? = null,
     acceptMode: AcceptMode = AcceptMode.Handoff,
+    options: SocketOptions = SocketOptions.Default,
     handler: suspend (IoStream) -> Unit,
 ) {
     require(reactors >= 1)
     runReactor {
-        val group = listenGroup(host, port, reactors, acceptMode = acceptMode)
+        val group = listenGroup(host, port, reactors, options, acceptMode = acceptMode)
         val serveJob = launch { group.serve(handler) }
         if (until != null) {
             until.await()

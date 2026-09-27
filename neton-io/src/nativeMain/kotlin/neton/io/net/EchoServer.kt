@@ -71,7 +71,10 @@ fun echoServerMain(args: Array<String>) {
         }
         // Bench knob (SPEC §23.4): NETON_IO_ACCEPT_MODE=reuseport gives every reactor its own listener.
         val mode = if (platform.posix.getenv("NETON_IO_ACCEPT_MODE")?.toKString() == "reuseport") AcceptMode.ReusePort else AcceptMode.Handoff
-        serveTcp(host, port, reactors, until, mode) { conn -> echoConnection(conn) }
+        // Bench knob (SPEC §26.6): NETON_IO_BACKLOG sets the listen backlog.
+        val backlog = platform.posix.getenv("NETON_IO_BACKLOG")?.toKString()?.toIntOrNull()
+        val options = if (backlog != null) SocketOptions(backlog = backlog) else SocketOptions.Default
+        serveTcp(host, port, reactors, until, mode, options) { conn -> echoConnection(conn) }
     }
 }
 
