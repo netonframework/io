@@ -70,6 +70,9 @@ private class MemoryStream(
     private val beforeLock: (() -> Unit)?,
 ) : IoStream {
     private val closed = AtomicInt(0)
+
+    // SPEC §28.6: half-close, any thread, usable after a cancelled operation; no timeouts.
+    override val capabilities: Set<StreamCapability> get() = MEMORY_STREAM_CAPABILITIES
     // One parked reader / writer per direction (SPEC §27.8): a second one would take the first's
     // waiter slot and leave it unwoken, so it is refused instead.
     private val reading = AtomicInt(0)
@@ -166,3 +169,6 @@ private class MemoryStream(
 
 /** [MemoryStream.read]'s marker for "this end was closed" (a real count is > 0, EOF is -1, wait is 0). */
 private const val CLOSED = Int.MIN_VALUE
+
+private val MEMORY_STREAM_CAPABILITIES: Set<StreamCapability> =
+    setOf(StreamCapability.HalfClose, StreamCapability.AnyThread, StreamCapability.ResumableAfterCancel)

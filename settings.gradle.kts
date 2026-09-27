@@ -7,3 +7,5 @@ rootProject.name = "neton-io-build"
 // differently only because Gradle does not allow a subproject named like its root.
 include(":io")
 project(":io").projectDir = file("neton-io")
+// SPEC §28.6: the IoStream conformance suite, com.netonstream:io-testkit.
+include(":io-testkit")

@@ -220,6 +220,8 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         ensureFd(fd)
+        // SPEC §28.6: one read at a time; a second one would take the parked one's slot (or its data).
+        if (readConts[fd] != null || readWaiters[fd] != null) throw IllegalStateException("concurrent read on fd $fd")
         // SPEC §19.5: one successful recv per connection per poll round; SPEC §17: a persistent fd
         // whose edge was consumed waits for the next edge instead of a speculative recv.
         if (servedRound[fd] != round && (!persistent[fd] || readyRead[fd])) {
@@ -299,6 +301,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         ensureFd(fd)
+        if (writeConts[fd] != null || writeWaiters[fd] != null) throw IllegalStateException("concurrent write on fd $fd")
         if (sendsFail[fd]) throw IoException("send failed: peer closed (EPIPE)", platform.posix.EPIPE)
         var total = 0
         while (src.readableBytes > 0) {
@@ -340,6 +343,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     /** One sendmsg per batch of up to [MAX_IOV] buffers; parks on would-block like [write] (SPEC §23.3). */
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
         ensureFd(fd)
+        if (writeConts[fd] != null || writeWaiters[fd] != null) throw IllegalStateException("concurrent write on fd $fd")
         if (sendsFail[fd]) throw IoException("send failed: peer closed (EPIPE)", platform.posix.EPIPE)
         var total = 0L
         var i = 0

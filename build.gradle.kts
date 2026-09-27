@@ -14,6 +14,7 @@ allprojects {
 // must compile with the same Kotlin version as the publisher.
 val unpublished = setOf<String>()
 val pomDescriptions = mapOf(
+    "io-testkit" to "com.netonstream:io-testkit - the IoStream conformance suite of com.netonstream:io, for stream implementations and wrappers",
     "io" to "com.netonstream:io (neton-io) - coroutine-native async I/O for Kotlin/Native: byte buffers, codec contracts, the IoStream/Filter/Framed model and a TCP reactor (kqueue on Apple, epoll/poll and io_uring on Linux) that doubles as the coroutine dispatcher; the I/O foundation of the Neton stack"
 )
 

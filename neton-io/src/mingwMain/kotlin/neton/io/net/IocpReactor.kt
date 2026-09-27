@@ -100,9 +100,16 @@ internal class IocpReactor : Reactor() {
             pollAccept = pollAccept.copyOf(n); pinRefs = pinRefs.copyOf(n); wPinRefs = wPinRefs.copyOf(n)
             watchJobA = watchJobA.copyOf(n); watchHandleA = watchHandleA.copyOf(n)
             watchJobB = watchJobB.copyOf(n); watchHandleB = watchHandleB.copyOf(n)
+            readBusy = readBusy.copyOf(n); readDeferred = readDeferred.copyOf(n); writeBusy = writeBusy.copyOf(n)
         }
         return i
     }
+
+    // SPEC §28.6: one read and one write per socket at a time. Set when an op parks (slot or the
+    // next-round wait), cleared when its slot is released or the wait ends; writev clears on return.
+    private var readBusy = BooleanArray(256)
+    private var readDeferred = BooleanArray(256)
+    private var writeBusy = BooleanArray(256)
 
     /** Associate [fd] with the port once; returns whether skip-on-success is active for it. */
     private fun ensureAssociated(fd: Int): Boolean {
@@ -181,6 +188,8 @@ internal class IocpReactor : Reactor() {
     }
 
     private fun releaseSlot(idx: Int, slot: Slot) {
+        if (slot.readBuf != null) readBusy[ix(slot.fd)] = false
+        if (slot.sendBuf != null) writeBusy[ix(slot.fd)] = false
         slot.live = false; slot.cont = null; slot.fd = -1; slot.kind = 0; slot.isWrite = false
         slot.readBuf = null; slot.readSizer = null; slot.sendBuf = null; slot.sendTotal = 0; slot.abort = null
         slot.pin?.let { it.refs--; it.release() }; slot.pin = null
@@ -299,12 +308,16 @@ internal class IocpReactor : Reactor() {
 
     override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         checkOwner("read")
-        if (servedRound[ix(fd)] == round) return readNextRound(fd, dst, sizer)
+        val i = ix(fd)
+        if (readBusy[i] || readDeferred[i]) throw IllegalStateException("concurrent read on socket $fd")
+        if (servedRound[i] == round) return readNextRound(fd, dst, sizer)
         return readNow(fd, dst, sizer)
     }
 
     private suspend fun readNextRound(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
-        waitNextRound()
+        val i = ix(fd)
+        readDeferred[i] = true
+        try { waitNextRound() } finally { readDeferred[i] = false }
         return readNow(fd, dst, sizer)
     }
 
@@ -318,6 +331,7 @@ internal class IocpReactor : Reactor() {
         slot.fd = fd; slot.kind = KIND_RECV; slot.cancelOnAbort = true; slot.isWrite = false
         slot.pin = pin; pin.refs++
         slot.readBuf = dst; slot.readSizer = sizer
+        readBusy[ix(fd)] = true
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
             when (val rc = neton_recv(fd.toSocket(), slot.op, pin.pinned.addressOf(at), cap.toUInt(), skip)) {
@@ -344,6 +358,7 @@ internal class IocpReactor : Reactor() {
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         checkOwner("write")
+        if (writeBusy[ix(fd)]) throw IllegalStateException("concurrent write on socket $fd")
         if (src.readableBytes == 0) return 0
         return sendAll(fd, src)
     }
@@ -357,6 +372,7 @@ internal class IocpReactor : Reactor() {
         slot.fd = fd; slot.kind = KIND_SEND; slot.cancelOnAbort = false; slot.isWrite = true
         slot.pin = pin; pin.refs++
         slot.sendBuf = src; slot.sendTotal = 0
+        writeBusy[ix(fd)] = true
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
             while (true) {
@@ -392,6 +408,13 @@ internal class IocpReactor : Reactor() {
 
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
         checkOwner("writev")
+        val w = ix(fd)
+        if (writeBusy[w]) throw IllegalStateException("concurrent write on socket $fd")
+        writeBusy[w] = true
+        try { return writevBatches(fd, bufs, count) } finally { writeBusy[w] = false }
+    }
+
+    private suspend fun writevBatches(fd: Int, bufs: Array<Buffer>, count: Int): Long {
         var total = 0L
         var i = 0
         while (i < count && bufs[i].readableBytes == 0) i++
@@ -460,7 +483,10 @@ internal class IocpReactor : Reactor() {
             val slot = slots[i] ?: continue
             if (!slot.live || slot.fd != fd) continue
             any = true
-            slot.cont?.let { slot.cont = null; enqueueResumeInt(it, 0, slot.abort ?: ClosedException()) }
+            // SPEC §28.6: the op keeps its awaiter until its completion packet says the kernel is done
+            // with the buffer; a read or send ends with ClosedException (or the cause it already had),
+            // other ops with ClosedException from the aborted completion.
+            if (slot.cont != null && (slot.readBuf != null || slot.sendBuf != null) && slot.abort == null) slot.abort = ClosedException()
         }
         if (any) neton_cancel(fd.toSocket(), null)   // their packets arrive (aborted) and free the slots
         forgetWatches(fd)
@@ -514,7 +540,9 @@ internal class IocpReactor : Reactor() {
         val cont = slot.cont
         var value = n
         var failure: Throwable? = null
-        if (err != 0) {
+        if (err == ERROR_OPERATION_ABORTED && n > 0 && slot.kind != KIND_ACCEPT) {
+            // Cancelled (e.g. the stream was closed) after bytes moved: they count (SPEC §28.6).
+        } else if (err != 0) {
             if (slot.kind == KIND_ACCEPT) neton_accept_discard(slot.op)
             failure = if (err == ERROR_OPERATION_ABORTED) ClosedException()
                       else IoException("${KIND_NAMES[slot.kind]} failed: ${errnoMessage(err)}", err)

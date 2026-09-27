@@ -1459,3 +1459,20 @@ Gradle 任务路径从 `:neton-io:…` 变为 `:io:…`。旧坐标的重定位 
 msgtrans：`ReactorQueue` 对被拒绝的恢复关闭队列并报告；`MSGTRANS_REACTOR_RESUMER=0` 关闭快速路径（msgtrans §15.1）。
 验证：neton-io macOS 117/117（2 次），colima Linux arm64 io_uring / multishot / epoll 各 119/119（各 3 次）；msgtrans macOS 与 Linux io_uring / epoll 在
 `MSGTRANS_REACTOR_RESUMER` = 1 / 0 下均 44/44；mingwX64、Android、iOS 编译通过。
+
+**§28.11 第 2 步完成（2026-09-27）**：§28.6 契约落地。
+- `IoStream.capabilities`（`StreamCapability`：HalfClose / ReadTimeout / WriteTimeout / IdleTimeout / AnyThread / ResumableAfterCancel）；未声明的能力
+  调用即失败：`shutdownOutput` 默认抛 `UnsupportedOperationException`，非零超时经 `requireTimeoutCapabilities` 拒绝（0 = 不设超时，总是接受）。
+  套接字流声明 HalfClose + 三种超时 + ResumableAfterCancel；内存流声明 HalfClose + AnyThread + ResumableAfterCancel；`BaseFilter` 透传。
+  `Framed` 设置 `readRate` 时要求 ReadTimeout。
+- 同一流同时至多一个读、一个写：三个驱动与内存流在入口检查，第二个并发调用抛 `IllegalStateException`（io_uring / IOCP 以 `readBusy` / `writeBusy` 实现，槽位释放时清除）。
+- io_uring / IOCP：`closeStream` 不再立即唤醒挂起操作，只设置中止原因并请求取消；收割到 CQE / 完成包（内核不再使用缓冲区）后才以 `ClosedException` 唤醒。
+- 新模块 `io-testkit`（`com.netonstream:io-testkit`）：`IoStreamConformance` 一致性套件，17 项检查，逐项独立建流、限时、汇总失败。必选：读追加且不返回 0；
+  写完全部并清空 src；写返回后 src 可复用；FIN 先数据后 -1；写已关闭的对端得 `IoException`；关闭幂等、挂起操作与关闭后调用得 `ClosedException`；
+  并发第二读 / 第二写被拒；writev 保序；任意切分重组一致；被取消的大写入 src 前进量 = 对端收到量；RST 为 `IoException` 而非 EOF（可选工厂）。
+  按能力：已声明的必须可用，未声明的必须被拒绝（HalfClose、ReadTimeout 及超时后可继续、Write / Idle 超时、取消后可继续否则关闭、跨线程写）。
+- 运行对象：TCP（含 linger 0 的 RST 工厂）、Unix 套接字、`memoryStreamPair`、`BaseFilter`(TCP)、`BaseFilter`(内存)；另有一项确认套件能发现违约（读返回 0）。
+  反向验证：临时去掉内存流的并发读检查，memory 与 filter(memory) 两项失败。CI 测试任务同时运行 `:io-testkit:`。
+验证：macOS kqueue 与 poll 驱动 6/6；colima Linux arm64 io_uring（multishot）/ io_uring 单次 RECV（`NETON_IO_URING_MULTISHOT=0`）/ epoll 各 6/6（各 3 次）；
+`:io` 全量在单次 RECV 配置下 119/119（第 1 步记录的 "multishot" 与 "io_uring" 两组实际都是默认的 multishot，单次 RECV 路径此次补测）；
+mingwX64（含测试编译）、iOS、Android 编译通过。Windows 上的运行结果待 `ci/windows-validation`。

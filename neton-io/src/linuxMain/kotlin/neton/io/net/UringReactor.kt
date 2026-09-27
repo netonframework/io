@@ -150,7 +150,10 @@ internal class UringReactor : Reactor() {
         // kernel and the writer is resumed with this once its CQE has said how much went out.
         var sendAbort: Throwable? = null
         // SPEC §24.7: a single RECV straight into the reader's buffer, completed by the reactor.
-        var readBuf: Buffer? = null; var readSizer: ReadSizer? = null; var readAbort: Throwable? = null }
+        var readBuf: Buffer? = null; var readSizer: ReadSizer? = null; var readAbort: Throwable? = null
+        // SPEC §28.6: the stream was closed under an op without its own abort path (writev, accept,
+        // connect): the op ends with this when its CQE says it was cancelled.
+        var closeCause: Throwable? = null }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -176,9 +179,11 @@ internal class UringReactor : Reactor() {
     }
 
     private fun releaseSlot(idx: Int, slot: Slot) {
+        if (slot.readBuf != null) readBusy[slot.fd] = false
+        if (slot.sendBuf != null) writeBusy[slot.fd] = false
         slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false; slot.isWrite = false
         slot.sendBuf = null; slot.sendAbort = null
-        slot.readBuf = null; slot.readSizer = null; slot.readAbort = null
+        slot.readBuf = null; slot.readSizer = null; slot.readAbort = null; slot.closeCause = null
         if (slot.nativeBlock != null) releaseVectored(slot)     // writev only; keeps this path small enough to inline
         freeSlots[freeTop++] = idx
         liveOps--
@@ -311,6 +316,7 @@ internal class UringReactor : Reactor() {
     // ---- multishot reads (SPEC §24): a non-suspending take, or a tail call into [msPark].
     private suspend fun readMultishot(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         ensureMsFd(fd)
+        if (fd < readers.size && readers[fd] != null) throw IllegalStateException("concurrent read on fd $fd")
         val n = msTake(fd, dst, sizer)
         if (n != NOTHING_QUEUED) return intResult(n)
         if (!msArmed[fd] && !msPaused[fd]) armMultishot(fd)
@@ -488,7 +494,13 @@ internal class UringReactor : Reactor() {
         var n = pinRefs.size
         while (n <= fd) n *= 2
         pinRefs = pinRefs.copyOf(n); wPinRefs = wPinRefs.copyOf(n)
+        readBusy = readBusy.copyOf(n); writeBusy = writeBusy.copyOf(n)
     }
+
+    // SPEC §28.6: one read and one write per fd at a time. Set when the op starts, cleared when its
+    // slot is released (releaseSlot) or, for writev, when it returns.
+    private var readBusy = BooleanArray(64)
+    private var writeBusy = BooleanArray(64)
 
     private fun pinFor(fd: Int, array: ByteArray): PinRef {
         ensureFd(fd)
@@ -690,12 +702,15 @@ internal class UringReactor : Reactor() {
      * resumes the reader from [onReadCqe]. A tail call into the intrinsic: nothing allocated.
      */
     private suspend fun readSingle(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
+        ensureFd(fd)
+        if (readBusy[fd]) throw IllegalStateException("concurrent read on fd $fd")
         val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
         val idx = takeSlot()
         val slot = slots[idx]!!
         slot.fd = fd; slot.pin = pin; pin.refs++
         slot.readBuf = dst; slot.readSizer = sizer; slot.cancelOnAbort = true
+        readBusy[fd] = true
         val ud = (idx.toULong() shl 32) or slot.gen.toULong()
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { pin.refs--; releaseSlot(idx, slot); throw t }
@@ -736,6 +751,8 @@ internal class UringReactor : Reactor() {
      * reaping, and the caller is resumed once, with the total. A tail call: nothing allocated.
      */
     override suspend fun write(fd: Int, src: Buffer): Int {
+        ensureFd(fd)
+        if (writeBusy[fd]) throw IllegalStateException("concurrent write on fd $fd")
         if (src.readableBytes == 0) return 0
         val pin = pinForWrite(fd, src.backingArray())
         val idx = takeSlot()
@@ -743,6 +760,7 @@ internal class UringReactor : Reactor() {
         slot.fd = fd; slot.pin = pin; pin.refs++
         slot.isWrite = true; slot.cancelOnAbort = false
         slot.sendBuf = src; slot.sendTotal = 0
+        writeBusy[fd] = true
         val ud = (idx.toULong() shl 32) or slot.gen.toULong()
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { pin.refs--; releaseSlot(idx, slot); throw t }
@@ -816,6 +834,13 @@ internal class UringReactor : Reactor() {
      * msghdr + iovec live in one malloc'd block and the arrays are pinned until the op's CQE.
      */
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
+        ensureFd(fd)
+        if (writeBusy[fd]) throw IllegalStateException("concurrent write on fd $fd")
+        writeBusy[fd] = true
+        try { return writevBatches(fd, bufs, count) } finally { writeBusy[fd] = false }
+    }
+
+    private suspend fun writevBatches(fd: Int, bufs: Array<Buffer>, count: Int): Long {
         var total = 0L
         var i = 0
         while (i < count && bufs[i].readableBytes == 0) i++
@@ -850,16 +875,20 @@ internal class UringReactor : Reactor() {
 
     override fun closeStream(fd: Int) {
         checkOwner("close")
-        // Fail the awaiters now; the ops stay in flight (buffers pinned) until their CQEs arrive.
+        // SPEC §28.6: an op still in the kernel keeps its awaiter; the kernel is asked to cancel it,
+        // and the awaiter ends with ClosedException (or the cause it already had) only when the CQE
+        // arrives, with its buffer advanced by what was really transferred. Waking it now let the
+        // caller reuse a buffer the kernel could still write into.
         for (i in slots.indices) {
             val slot = slots[i] ?: continue
             if (!slot.live || slot.fd != fd) continue
-            val cont = slot.cont
-            if (cont == null && !slot.multishot) continue
-            slot.cont = null
-            // A send already being aborted keeps its cause (e.g. the writer's cancellation): the
-            // writer must see the same outcome it asked for, not a closed stream.
-            if (cont != null) enqueueResumeInt(cont, 0, slot.sendAbort ?: slot.readAbort ?: ClosedException())
+            if (slot.cont == null && !slot.multishot) continue
+            if (!slot.multishot) when {
+                // A read / send already being aborted keeps its cause (e.g. the caller's cancellation).
+                slot.readBuf != null -> if (slot.readAbort == null) slot.readAbort = ClosedException()
+                slot.sendBuf != null -> if (slot.sendAbort == null) slot.sendAbort = ClosedException()
+                else -> if (slot.closeCause == null) slot.closeCause = ClosedException()
+            }
             requestCancel((i.toULong() shl 32) or slot.gen.toULong())
         }
         if (multishot && fd < msArmed.size) {
@@ -960,9 +989,12 @@ internal class UringReactor : Reactor() {
             if (slot.readBuf != null) { onReadCqe(idx, slot, res); continue }
             slot.pin?.let { it.refs--; it.release() }      // the kernel is done with the buffer
             val cont = slot.cont                           // null if the awaiter was cancelled/closed
+            val closed = slot.closeCause
             releaseSlot(idx, slot)
             if (cont == null) continue
-            if (res < 0) enqueueResumeInt(cont, 0, IoException("io_uring op failed: ${errnoMessage(-res)}", -res))
+            // Closed under it: bytes that did go out still count (SPEC §28.6); otherwise ClosedException.
+            if (closed != null && res <= 0) enqueueResumeInt(cont, 0, closed)
+            else if (res < 0) enqueueResumeInt(cont, 0, IoException("io_uring op failed: ${errnoMessage(-res)}", -res))
             else enqueueResumeInt(cont, res)
         }
         neton_store32(cqBase, cqHeadOff, tail)

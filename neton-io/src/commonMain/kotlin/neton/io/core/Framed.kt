@@ -37,6 +37,13 @@ class Framed<In, Out>(
     /** Optional per-frame read rate; when set, Framed manages the stream's read timeout. */
     @PublishedApi internal val readRate: FrameReadRate? = null,
 ) {
+    init {
+        // SPEC §28.6: the frame read rate is enforced through the stream's read timeout.
+        require(readRate == null || StreamCapability.ReadTimeout in io.stream.capabilities) {
+            "a frame read rate needs a stream that declares ReadTimeout"
+        }
+    }
+
     /** Frame stream: read then decode; read more when a frame is incomplete; end at EOF. */
     fun incoming(): Flow<In> = flow {
         val buf = io.readBuf

@@ -24,21 +24,33 @@ class TimeoutException(message: String) : IoException(message)
  *   `read` parks the coroutine when there is nothing to read and is resumed by the reactor
  *   on readiness or completion. The interface is identical across both.
  *
- * Contract:
- * - `read` returns a positive count or -1 at EOF; it never returns 0 (it suspends instead).
- *   A socket error throws [IoException]; EOF and error are never conflated.
- * - `write` writes *all* readable bytes of [src] (suspending as needed) and returns the count;
- *   a socket error throws [IoException] after consuming whatever was accepted, so the caller
- *   can see how much of [src] is still unsent.
- * - `close` is idempotent. It must be called on the reactor thread that owns the stream. Any
- *   coroutine parked in `read`/`write` on the stream is resumed with [ClosedException]; a call
- *   after close throws [ClosedException]. A buffer handed to a parked operation is released only
- *   when the driver no longer needs it (completion drivers: when the kernel completes or cancels
- *   the operation), never earlier.
- * - Ownership: a stream belongs to the reactor that created it and must be used from its
- *   coroutines only; it is not thread-safe.
+ * Contract (SPEC §28.6; the `io-testkit` conformance suite checks it):
+ * - `read` returns a positive count, appending that many bytes to `dst` (what `dst` held is kept),
+ *   or -1 at EOF; it never returns 0 (it suspends instead). A socket error throws [IoException]
+ *   with `dst` unchanged; EOF and error are never conflated. A peer's orderly close (FIN) is EOF
+ *   once the data before it has been read; a reset (RST) is an [IoException].
+ * - `write` writes *all* readable bytes of `src` (suspending as needed), returns the count and
+ *   leaves `src` empty; a socket error throws [IoException] after advancing `src` by what the kernel
+ *   accepted, so the caller can see how much is still unsent.
+ * - Cancellation or a timeout of a parked operation, and closing the stream under it, never roll
+ *   back: bytes already received are in `dst`, `src` is advanced by what was sent. Every exit
+ *   happens only once the driver (and the kernel, for completion drivers) no longer touches the
+ *   buffer, so it can be reused at once. Each operation ends exactly once: a count, [IoException],
+ *   [ClosedException], `CancellationException` or [TimeoutException].
+ * - `close` is idempotent. Parked operations end with [ClosedException] (on completion drivers
+ *   once the kernel has given the operation back); later calls throw [ClosedException].
+ * - At most one read and one write at a time (full duplex); a second one in the same direction
+ *   throws [IllegalStateException] instead of queueing or replacing the first.
+ * - Threads: by default a stream belongs to the reactor that created it and must be used on its
+ *   thread; one declaring [StreamCapability.AnyThread] may be used from any thread (the rule above
+ *   still holds).
+ * - Optional operations are declared in [capabilities]; calling one that is not declared throws
+ *   [UnsupportedOperationException] (a timeout of 0, meaning "none", is always accepted).
  */
 interface IoStream {
+    /** Optional operations this stream supports (SPEC §28.6). */
+    val capabilities: Set<StreamCapability> get() = emptySet()
+
     /** Read available bytes into [dst]; returns the count (>0), or -1 at EOF; suspends when idle. */
     suspend fun read(dst: Buffer): Int
 
@@ -63,20 +75,24 @@ interface IoStream {
 
     /**
      * Half-close (SPEC §23.3): no more writes from this side; the peer reads EOF once everything
-     * written so far has arrived. This side can still read. The default does nothing.
+     * written so far has arrived. This side can still read. Needs [StreamCapability.HalfClose].
      */
-    suspend fun shutdownOutput() {}
+    suspend fun shutdownOutput() { throw UnsupportedOperationException("shutdownOutput: this stream does not declare HalfClose") }
 
     /**
      * Timeouts (SPEC §23.2), in milliseconds; 0 disables. [readTimeoutMillis]: a read parked longer
      * throws [TimeoutException] (the stream stays usable). [writeTimeoutMillis]: likewise for a write
      * waiting on a full socket. [idleTimeoutMillis]: no successful read or write for that long closes
-     * the stream; parked operations get [TimeoutException]. The default does nothing.
+     * the stream; parked operations get [TimeoutException]. Each non-zero value needs its
+     * capability ([StreamCapability.ReadTimeout], [StreamCapability.WriteTimeout],
+     * [StreamCapability.IdleTimeout]); 0 is always accepted.
      */
-    fun setTimeouts(readTimeoutMillis: Long = 0, writeTimeoutMillis: Long = 0, idleTimeoutMillis: Long = 0) {}
+    fun setTimeouts(readTimeoutMillis: Long = 0, writeTimeoutMillis: Long = 0, idleTimeoutMillis: Long = 0) {
+        requireTimeoutCapabilities(this, readTimeoutMillis, writeTimeoutMillis, idleTimeoutMillis)
+    }
 
     /** Change only the read timeout (used per read by [Framed]'s frame read rate). */
-    fun setReadTimeout(millis: Long) {}
+    fun setReadTimeout(millis: Long) { requireTimeoutCapabilities(this, millis, 0, 0) }
 }
 
 /**
@@ -101,8 +117,34 @@ suspend fun IoStream.closeGracefully(timeoutMillis: Long) {
     }
 }
 
+/** Optional [IoStream] operations (SPEC §28.6). */
+enum class StreamCapability {
+    /** [IoStream.shutdownOutput]. */
+    HalfClose,
+    /** A non-zero read timeout. */
+    ReadTimeout,
+    /** A non-zero write timeout. */
+    WriteTimeout,
+    /** A non-zero idle timeout. */
+    IdleTimeout,
+    /** Usable from any thread (still one read and one write at a time). */
+    AnyThread,
+    /** After a cancelled or timed-out operation the stream stays usable and loses no data. */
+    ResumableAfterCancel,
+}
+
+/** Throws [UnsupportedOperationException] for a non-zero timeout the stream does not declare. */
+fun requireTimeoutCapabilities(stream: IoStream, read: Long, write: Long, idle: Long) {
+    val caps = stream.capabilities
+    if (read != 0L && StreamCapability.ReadTimeout !in caps) throw UnsupportedOperationException("read timeout: this stream does not declare ReadTimeout")
+    if (write != 0L && StreamCapability.WriteTimeout !in caps) throw UnsupportedOperationException("write timeout: this stream does not declare WriteTimeout")
+    if (idle != 0L && StreamCapability.IdleTimeout !in caps) throw UnsupportedOperationException("idle timeout: this stream does not declare IdleTimeout")
+}
+
 /**
- * A layer that wraps a lower [IoStream] and may transform bytes (decorator).
+ * A layer that wraps a lower [IoStream] and may transform bytes (decorator). A transforming
+ * layer (TLS, ...) declares its own [IoStream.capabilities] item by item; only a transparent one
+ * such as [BaseFilter] passes the inner stream's through.
  *
  * This is where TLS lives: a future `TlsFilter` decrypts on read and encrypts on write with
  * every other layer unaware. The P0 filters are identity/demo layers proving composition.
@@ -111,6 +153,7 @@ interface Filter : IoStream
 
 /** Identity (pass-through) filter. */
 class BaseFilter(private val inner: IoStream) : Filter {
+    override val capabilities: Set<StreamCapability> get() = inner.capabilities
     override suspend fun read(dst: Buffer): Int = inner.read(dst)
     override suspend fun write(src: Buffer): Int = inner.write(src)
     override suspend fun flush() = inner.flush()

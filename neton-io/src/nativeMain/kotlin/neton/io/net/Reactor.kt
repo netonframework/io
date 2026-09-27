@@ -578,6 +578,10 @@ internal class ReactorStream(
     private val reactor: Reactor,
     private val maxReadChunk: Int = 64 * 1024,
 ) : WheelNode(), neton.io.core.IoStream, ReadSizer {
+    // SPEC §28.6: sockets (TCP and Unix) support half-close, all three timeouts and cancellation
+    // without losing data; they belong to their reactor's thread.
+    override val capabilities: Set<neton.io.core.StreamCapability> get() = SOCKET_STREAM_CAPABILITIES
+
     private var closed = false
 
     // SPEC §23.2 timeouts (ms, 0 = off) and the deadlines they produce, in reactor-clock ms.
@@ -735,3 +739,9 @@ fun dumpReactorStats() {
  * coroutines outside the reactor's scope can hit this, which is a lifecycle bug in the caller.
  */
 class ReactorStoppedException(message: String) : IllegalStateException(message)
+
+private val SOCKET_STREAM_CAPABILITIES: Set<neton.io.core.StreamCapability> = setOf(
+    neton.io.core.StreamCapability.HalfClose, neton.io.core.StreamCapability.ReadTimeout,
+    neton.io.core.StreamCapability.WriteTimeout, neton.io.core.StreamCapability.IdleTimeout,
+    neton.io.core.StreamCapability.ResumableAfterCancel,
+)
