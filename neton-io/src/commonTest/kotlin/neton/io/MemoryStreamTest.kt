@@ -144,4 +144,26 @@ class MemoryStreamTest {
         val (a, _) = closingPair { it.second }
         assertEquals(-1, withTimeout(2_000) { a.read(Buffer()) })
     }
+
+    @Test
+    fun aSecondConcurrentReadIsRefusedAndTheFirstStillEnds() = runBlocking {
+        val (a, _) = memoryStreamPair()
+        val first = async { runCatching { a.read(Buffer()) } }
+        delay(30)                                                    // parked on an empty pipe
+        val second = runCatching { a.read(Buffer()) }.exceptionOrNull()
+        assertTrue(second is IllegalStateException, "got $second")
+        a.close()
+        assertTrue(withTimeout(2_000) { first.await() }.exceptionOrNull() is ClosedException)
+    }
+
+    @Test
+    fun aSecondConcurrentWriteIsRefusedAndTheFirstStillEnds() = runBlocking {
+        val (a, _) = memoryStreamPair(capacity = 4)
+        val first = async { runCatching { a.write(buf("12345678")) } }  // parks on the full pipe
+        delay(30)
+        val second = runCatching { a.write(buf("x")) }.exceptionOrNull()
+        assertTrue(second is IllegalStateException, "got $second")
+        a.close()
+        assertTrue(withTimeout(2_000) { first.await() }.exceptionOrNull() is ClosedException)
+    }
 }

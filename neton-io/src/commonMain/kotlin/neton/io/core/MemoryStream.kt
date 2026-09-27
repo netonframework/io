@@ -18,6 +18,8 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * - [IoStream.close] on one end: the peer reads what was sent, then EOF, and its writes fail with
  *   [IoException]; operations on the closed end, parked or later, fail with [ClosedException].
  * - Unlike a socket stream, either end may be used from any thread (a short lock guards each direction).
+ *   As on a socket stream, each end allows one read and one write at a time: a second concurrent
+ *   read (or write) on the same end throws [IllegalStateException] (SPEC §27.8).
  */
 fun memoryStreamPair(capacity: Int = 64 * 1024): Pair<IoStream, IoStream> = memoryStreamPairWithHook(capacity, null)
 
@@ -68,10 +70,19 @@ private class MemoryStream(
     private val beforeLock: (() -> Unit)?,
 ) : IoStream {
     private val closed = AtomicInt(0)
+    // One parked reader / writer per direction (SPEC §27.8): a second one would take the first's
+    // waiter slot and leave it unwoken, so it is refused instead.
+    private val reading = AtomicInt(0)
+    private val writing = AtomicInt(0)
 
     private fun checkOpen() { if (closed.load() != 0) throw ClosedException() }
 
     override suspend fun read(dst: Buffer): Int {
+        check(reading.compareAndSet(0, 1)) { "concurrent read on one end of a memory stream" }
+        try { return readOne(dst) } finally { reading.store(0) }
+    }
+
+    private suspend fun readOne(dst: Buffer): Int {
         while (true) {
             checkOpen()
             beforeLock?.invoke()
@@ -101,6 +112,11 @@ private class MemoryStream(
     }
 
     override suspend fun write(src: Buffer): Int {
+        check(writing.compareAndSet(0, 1)) { "concurrent write on one end of a memory stream" }
+        try { return writeAll(src) } finally { writing.store(0) }
+    }
+
+    private suspend fun writeAll(src: Buffer): Int {
         val total = src.readableBytes
         while (src.readableBytes > 0) {
             checkOpen()
