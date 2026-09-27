@@ -196,8 +196,11 @@ internal class IocpReactor : Reactor() {
         if (!job.isActive) throw job.getCancellationException()
         val i = ix(fd)
         if (watchJobA[i] === job || watchJobB[i] === job) return
-        val handle = job.invokeOnCompletion(onCancelling = true, invokeImmediately = false) {
-            postToReactor { onJobCancelled(fd, job) }
+        val handle = job.invokeOnCompletion(onCancelling = true, invokeImmediately = false) { cause ->
+            // Also called when the job completes normally (cause == null): nothing is parked then, and
+            // building a cancellation exception (a stack walk) per completed job cost a request's worth
+            // of CPU on short-lived jobs such as withContext / withTimeout (SPEC §24.12).
+            if (cause != null) postToReactor { onJobCancelled(fd, job) }
         }
         if (watchJobA[i] == null) { watchJobA[i] = job; watchHandleA[i] = handle }
         else if (watchJobB[i] == null) { watchJobB[i] = job; watchHandleB[i] = handle }

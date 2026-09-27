@@ -858,3 +858,9 @@ neton-io 自身收发路径已零分配，但上层协议每条消息仍需分�
 协议层在同一反应器的协程之间交接（如 msgtrans 读循环 → 处理循环）时，kotlinx 的 `intercepted().resume()` 要经过调度器、`DispatchedTask`
 与上下文查找（callgrind：rpc 每请求约 300–400 条指令）。反应器新增对象值恢复环；`reactorResumer(context)` 取得一次，`resume(cont, value)`
 在反应器线程上只占一个环槽，其它线程调用时回退到调度恢复。
+
+### 24.12 取消监听只在真正取消时工作
+`invokeOnCompletion(onCancelling = true)` 的回调在作业**正常结束**时也会被调用（cause 为 null）。各驱动与 msgtrans `ReactorQueue` 的回调
+不看 cause，一律投递"作业被取消"处理并调用 `job.getCancellationException()`——每次都新建一个带栈回溯的异常。在短命作业里挂起时
+（msgtrans `request()` 的 `withContext`，INLINE 写模式下发请求的协程自己写 socket），这发生在每个请求上：153 上 rpc 客户端
+`_Unwind_Find_FDE` 占 7.9 % CPU，每请求 CPU 27 µs 对 CHANNEL 的 12 µs，吞吐 4 万对 8–10 万。现在只在 cause 非空时处理。

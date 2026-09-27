@@ -172,8 +172,11 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         handles[fd]?.dispose()
         jobs[fd] = job
         // Cancellation may come from any thread; the waiter slots are reactor-thread state.
-        handles[fd] = job.invokeOnCompletion(onCancelling = true, invokeImmediately = false) {
-            postToReactor { onParkCancelled(fd, write, job) }
+        handles[fd] = job.invokeOnCompletion(onCancelling = true, invokeImmediately = false) { cause ->
+            // Also called when the job completes normally (cause == null): nothing is parked then, and
+            // building a cancellation exception (a stack walk) per completed job cost a request's worth
+            // of CPU on short-lived jobs such as withContext / withTimeout (SPEC §24.12).
+            if (cause != null) postToReactor { onParkCancelled(fd, write, job) }
         }
     }
 
