@@ -962,3 +962,9 @@ io_uring 对 epoll 4 胜 3 平 2 负（−10 %、−6 %），且 hc1 / hc6 在�
 msgtrans SPEC §14.1：自动调节（默认）下 1k 连接每秒 4.3 次 GC、停顿占墙钟 0.04 %，10k 连接几乎不 GC——GC 不是瓶颈，剩余成本在到达安全点的等待。
 固定目标堆（`GcTuning`，64 / 256 MiB）在 1k / 10k 连接下 GC 次数多 20 倍、吞吐 −11 至 −14 %（8 对全负），与 §24.6 的 12 连接结论（+5.5 %）相反，
 原因待查。建议改为默认（自动调节），`GcTuning` 文档已改。
+原因已查明（K/N 2.4.0 源码 `gcScheduler/common/cpp/HeapGrowthController.hpp`）：触发线 `triggerHeapBytes_` 只在构造时按初始 10 MiB 算一次（0.9 × 10 MiB），
+`updateBoundaries` 只在自动调节开启时重算它；自动调节关闭时只更新目标、不更新触发线。所以"关闭自动调节 + 目标 64 / 256 MiB"实际是"对象超过 9 MiB 就 GC"：
+1k 连接存活 16 MiB 时每轮都立刻再触发；§24.6 的 12 连接存活很小，9 MiB 反而比自动调节的约 4.5 MiB 宽松，所以当时是 +5.5 %。
+改法：`GcTuning.setMinHeap(mb)`（环境变量 `NETON_IO_GC_MIN_HEAP_MB`）保持自动调节，只抬高 `GC.minHeapBytes`——下一目标仍是 `存活 / 0.5`，但不低于下限，
+触发线每次 GC 后照常更新。旧的 `fixTargetHeap` 删除（0.1.0 之后加入，未发布）。`GcTuningTest` 复现：16 MiB 存活、约 200 MiB 垃圾，
+关闭自动调节 + 目标 64 MiB 为 20 次 GC，`setMinHeap(64)` 为 5 次（与 200 / 9 ≈ 22 和 200 / 41 ≈ 5 吻合）。高并发效果由 msgtrans mt15 测量。

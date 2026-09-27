@@ -35,8 +35,8 @@ fun echoServerMain(args: Array<String>) {
         ?: platform.posix.getenv("NETON_IO_REACTORS")?.toKString()?.toIntOrNull()
         ?: 1
     val runSeconds = platform.posix.getenv("NETON_IO_RUN_SECONDS")?.toKString()?.toIntOrNull()
-    // Bench knob (SPEC §17c): fix the GC target heap instead of letting the runtime autotune it.
-    GcTuning.fromEnvironment()?.let { mb -> println("gc target heap = $mb MiB (autotune off)") }
+    // Bench knob (SPEC §26.8): a floor for the autotuned GC target heap.
+    GcTuning.fromEnvironment()?.let { mb -> println("gc min heap = $mb MiB (autotune on)") }
     GcStats.startFromEnvironment()
     if (!pooling) neton.io.bytes.BufferPoolConfig.enabled = false
     println("echo-server listening on $host:$port reactors=$reactors accept=${platform.posix.getenv("NETON_IO_ACCEPT_MODE")?.toKString() ?: "handoff"}")
