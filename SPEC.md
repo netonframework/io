@@ -951,3 +951,9 @@ io_uring / io_uring multishot / epoll 各 81/81，macOS 80/80。效果以 153 C2
 实验（hc8，当前 HEAD，同核分配同 §26.2）：负载 128 B / 4 KB / 64 KB × 连接 64 / 1k / 10k（64 KB 只到 1k），外加 64 活跃 + 50k 空闲；
 驱动 epoll、io_uring、io_uring multishot（参考）；4 轮，顺序轮换。默认驱动取多数格胜出且没有大幅落后格的一方；两者各有大胜时保留
 按场景选择的开关并在文档写明。
+
+结果（hc8，v51，4 轮均值，raw `docs/benchmarks/2026-09-27-153-hc8-driver-matrix-raw.txt`），io_uring / epoll 与 multishot / epoll：
+128 B：64 连接 0.90 / 0.90，64 + 50k 空闲 1.12 / 0.94，1k 1.10 / 0.99，10k 0.98 / 0.91；4 KB：64 1.04 / 1.01，1k 1.01 / 0.86，10k 0.94 / 0.84；
+64 KB：64 1.05 / 0.57，1k 1.00 / 0.52。Jain 全部 ≥ 0.95。
+io_uring 对 epoll 4 胜 3 平 2 负（−10 %、−6 %），且 hc1 / hc6 在同样两格（1k；64 + 50k 空闲）上得到相反的结论（0.92；0.70–0.94）：
+两者之差在本机轮间波动之内。**默认不变（io_uring，不可用时 epoll）；multishot 在大负载只有一半，维持默认关闭。**
