@@ -1178,6 +1178,7 @@ websocket http/2 quic http/3 的库，最终可能这些库又可以被 neton �
 | 平台支持 | §20；Windows 以 §28.5 验收为准 |
 | 产物坐标、包名与框架集成边界 | §28.13 |
 | 协议库建设方法 | §28.14 |
+| 协议库提出的底座缺口 | §28.15 |
 其他章节是历史记录或已完成工作的说明（见开头导读），不构成契约。
 
 **兼容性**：`com.netonstream:neton-io:0.1.0` 已发布（2026-09-25），保持不动。§28.3、§28.6、§28.12 的破坏性变更（`ReactorResumer.resume`
@@ -1395,7 +1396,7 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
 | 职责 | Maven 坐标 | Kotlin 包 |
 |---|---|---|
 | I/O 与网络底座 | `com.netonstream:io`（testkit：`com.netonstream:io-testkit`） | `neton.io.*`（不变） |
-| HTTP 协议库（§28.7 起步），仓库 `http` | `com.netonstream:http` | `neton.http`（通用的请求、响应、客户端、服务端等类型）；协议专属实现在 `neton.http.h1`，以后 `neton.http.h2` / `neton.http.h3` |
+| HTTP 协议库（§28.7 起步），仓库 `http` | `com.netonstream:http`（通用 + HTTP/1.1 + HTTP/2）；提议另发 `com.netonstream:http3`（HTTP/3，依赖 `quic`），同一仓库，待评审 | `neton.http`（通用的请求、响应、客户端、服务端等类型）；协议专属实现在 `neton.http.h1` / `neton.http.h2` / `neton.http.h3` |
 | WebSocket 协议库，仓库 `websocket` | `com.netonstream:websocket` | `neton.websocket` |
 | QUIC 协议库，仓库 `quic` | `com.netonstream:quic` | `neton.quic`（依赖 §28.9 数据报层） |
 | msgtrans | `com.netonstream:msgtrans`（不变） | `msgtrans.*`（不变） |
@@ -1427,3 +1428,15 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
   对比对方完整实现宣布胜出；参考实现也不是"已证明最快"的排行榜。
 - **许可与署名**：参考实现为 MIT 或 MIT / Apache-2.0 双许可；各库以 Apache-2.0 发布，`NOTICE` 保留上游版权声明与 MIT 许可正文（已建立）。
 - **顺序**：HTTP/1.1 → WebSocket → HTTP/2 → QUIC → HTTP/3（QUIC 依赖 §28.9 数据报层，届时另起 neton-io SPEC）。
+
+### 28.15 协议库 SPEC 提出的底座缺口（2026-09-27，随三份 SPEC 草案汇总）
+各库草案：`~/projects/PulseKit/http/SPEC.md`、`websocket/SPEC.md`、`quic/SPEC.md`（本地仓库，远程待建）。对 neton-io 的要求：
+| 缺口 | 提出方 | 处理 |
+|---|---|---|
+| 数据报层（13 项：非阻塞与就绪、批量接收、每数据报 ECN、PKTINFO 源 / 目的 IP、DF / PMTU 探测与 `mayFragment`、Linux GSO / GRO、Windows USO / URO、双栈与 v4 映射、EINVAL 回退、容忍 EMSGSIZE / ECONNRESET、套接字缓冲、重绑定） | quic §9 | §28.9 从"只列需求"升级为另起数据报层 SPEC（以 `quinn-udp` 的逐平台设施与 8 个测试为依据）；实施排在 QUIC 之前 |
+| 高精度计时：1 ms 粒度，pacing 需亚毫秒 | quic §9 | 反应器计时轮精度 10 ms（§23.2）；另起：高精度计时（或以最近截止时间直接驱动一次轮询超时） |
+| 公开的单调时钟与系统时间 | quic §9 | 公开为 API |
+| 加密安全的随机数 | http（HeaderMap 防碰撞）、websocket（掩码、key）、quic（连接 ID、令牌、重置密钥） | 三方共用，评估放入 neton-io（平台 CSPRNG：`arc4random_buf` / `getrandom` / `BCryptGenRandom`，I/O 平台层的一部分）或单独的小模块 |
+| 读取前准入 | http（服务端可选） | §28.12 |
+| 升级后交出"读缓冲剩余 + 原流" | http、websocket | 协议库内以 `IoStream` 包装实现，无需改 neton-io |
+TLS 1.3（QUIC 所需的 12 项能力见 quic §4）不在 neton-io，实现方式待用户决定。
