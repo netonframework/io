@@ -1434,9 +1434,9 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
 | 缺口 | 提出方 | 处理 |
 |---|---|---|
 | 数据报层（13 项：非阻塞与就绪、批量接收、每数据报 ECN、PKTINFO 源 / 目的 IP、DF / PMTU 探测与 `mayFragment`、Linux GSO / GRO、Windows USO / URO、双栈与 v4 映射、EINVAL 回退、容忍 EMSGSIZE / ECONNRESET、套接字缓冲、重绑定） | quic §9 | §28.9 从"只列需求"升级为另起数据报层 SPEC（以 `quinn-udp` 的逐平台设施与 8 个测试为依据）；实施排在 QUIC 之前 |
-| 高精度计时：1 ms 粒度，pacing 需亚毫秒 | quic §9 | 反应器计时轮精度 10 ms（§23.2）；另起：高精度计时（或以最近截止时间直接驱动一次轮询超时） |
+| 计时精度：1 ms 粒度，pacing 需亚毫秒 | quic §9 | 反应器已有两套计时：10 ms 计时轮（只给流超时，§23.2）与按截止时间的纳秒最小堆（`Reactor.kt:159`，`delay` / `withTimeout` 走它）；等待时截止时间向上取整到毫秒作轮询超时（epoll_wait 只收毫秒）。**先审计**公开接口、各驱动轮询超时的精度（epoll_pwait2 / io_uring TIMEOUT / kqueue 可到纳秒）与实测调度延迟，再决定补什么；不另造计时器 |
 | 公开的单调时钟与系统时间 | quic §9 | 公开为 API |
 | 加密安全的随机数 | http（HeaderMap 防碰撞）、websocket（掩码、key）、quic（连接 ID、令牌、重置密钥） | 三方共用，评估放入 neton-io（平台 CSPRNG：`arc4random_buf` / `getrandom` / `BCryptGenRandom`，I/O 平台层的一部分）或单独的小模块 |
 | 读取前准入 | http（服务端可选） | §28.12 |
 | 升级后交出"读缓冲剩余 + 原流" | http、websocket | 协议库内以 `IoStream` 包装实现，无需改 neton-io |
-TLS 1.3（QUIC 所需的 12 项能力见 quic §4）不在 neton-io，实现方式待用户决定。
+TLS 1.3（QUIC 所需的 12 项能力见 quic §4）不在 neton-io，实现方式待用户决定；quic SPEC v1 建议先验证 OpenSSL 3.5+ 的第三方 QUIC TLS 接口。
