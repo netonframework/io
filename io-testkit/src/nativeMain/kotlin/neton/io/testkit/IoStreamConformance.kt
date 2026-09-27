@@ -43,6 +43,12 @@ class IoStreamConformance(
     private val openResetting: (suspend () -> StreamPair)? = null,
     /** Per-check time limit. */
     private val timeoutMillis: Long = 5_000,
+    /**
+     * How [StreamPair.a] ends its output in an orderly way before the peer checks for EOF. Plain
+     * `close()` for byte streams; a stream whose `close()` cannot send its protocol's end marker (TLS:
+     * close_notify needs a write, and `close()` does not suspend) passes `{ it.shutdownOutput(); it.close() }`.
+     */
+    private val orderlyClose: suspend (IoStream) -> Unit = { it.close() },
 ) {
     private val failures = ArrayList<String>()
 
@@ -145,7 +151,7 @@ class IoStreamConformance(
 
     private suspend fun finEof(p: StreamPair) {
         p.a.write(buf("tail"))
-        p.a.close()
+        orderlyClose(p.a)
         expect(readToEof(p.b).decodeToString() == "tail") { "the data before the close was not delivered" }
         expect(p.b.read(Buffer()) == -1) { "read after EOF must keep returning -1" }
     }
@@ -232,10 +238,24 @@ class IoStreamConformance(
         delay(50)
         writer.cancel(); writer.join()
         val sent = size - src.readableBytes
-        p.a.close()
-        val got = readToEof(p.b)
-        expect(got.size == sent) { "src says $sent bytes were sent, the peer received ${got.size}" }
-        for (k in got.indices) if (got[k] != (k % 251).toByte()) fail("byte $k differs")
+        if (StreamCapability.ResumableAfterCancel in p.a.capabilities) {
+            orderlyClose(p.a)
+            val got = readToEof(p.b)
+            expect(got.size == sent) { "src says $sent bytes were sent, the peer received ${got.size}" }
+            for (k in got.indices) if (got[k] != (k % 251).toByte()) fail("byte $k differs")
+        } else {
+            // The cancel closed the stream, possibly mid-message: the peer may see an error instead of EOF,
+            // but it must never receive bytes that src still counts as unsent.
+            p.a.close()
+            val acc = Buffer()
+            try {
+                while (true) { val r = Buffer(); if (p.b.read(r) < 0) break; acc.writeBytes(r.readAll()) }
+            } catch (_: IoException) {
+            }
+            val got = acc.readAll()
+            expect(got.size <= sent) { "the peer received ${got.size} bytes but src says only $sent were sent" }
+            for (k in got.indices) if (got[k] != (k % 251).toByte()) fail("byte $k differs")
+        }
     }
 
     private suspend fun resetIsError(p: StreamPair) {
@@ -296,8 +316,8 @@ class IoStreamConformance(
         val reader = launch { p.a.read(Buffer()) }
         delay(50)
         reader.cancel(); reader.join()
-        p.b.write(buf("z"))
         if (StreamCapability.ResumableAfterCancel in p.a.capabilities) {
+            p.b.write(buf("z"))
             expect(readExactly(p.a, 1).decodeToString() == "z") { "after a cancelled read the stream must deliver later data" }
         } else {
             expect(runCatching { p.a.read(Buffer()) }.exceptionOrNull() is ClosedException) { "without ResumableAfterCancel the stream must close after a cancel" }

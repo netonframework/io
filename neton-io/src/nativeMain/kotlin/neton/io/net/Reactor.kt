@@ -1,5 +1,7 @@
 package neton.io.net
 
+import neton.io.core.boxedInt
+
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -610,27 +612,6 @@ internal class FixedReadSize(private val size: Int) : ReadSizer {
     override fun readChunk(): Int = size
     override fun onRead(n: Int) {}
 }
-
-private val intBoxes = arrayOfNulls<Any>(65537)
-
-/**
- * [v] as a shared boxed Int for 0..65536 (SPEC §24), created once and reused, so resuming a
- * continuation with a byte count allocates nothing. Racy first stores are harmless: equal values.
- */
-internal fun boxedInt(v: Int): Any {
-    if (v < 0 || v > 65536) return v
-    return intBoxes[v] ?: (v as Any).also { intBoxes[v] = it }
-}
-
-/**
- * Return [n] from a suspend function without allocating (SPEC §24). A suspend function's result is
- * an `Any?` at the ABI level, so `return n` boxes every Int outside -128..127 — one heap object per
- * read or write. Returning through the intrinsic hands the shared box from [boxedInt] up the tail
- * calls unchanged; the caller's state machine unboxes it.
- */
-@Suppress("NOTHING_TO_INLINE")
-internal suspend inline fun intResult(n: Int): Int =
-    kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { boxedInt(n) }
 
 /** [neton.io.core.IoStream] over a fd, delegating every operation to the [Reactor]. */
 internal class ReactorStream(

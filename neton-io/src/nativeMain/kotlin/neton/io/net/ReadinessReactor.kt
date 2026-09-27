@@ -1,5 +1,6 @@
 package neton.io.net
 
+import neton.io.core.intResult
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.pin

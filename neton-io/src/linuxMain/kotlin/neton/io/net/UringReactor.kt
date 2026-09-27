@@ -1,5 +1,6 @@
 package neton.io.net
 
+import neton.io.core.intResult
 import platform.posix.msghdr
 
 import platform.posix.iovec

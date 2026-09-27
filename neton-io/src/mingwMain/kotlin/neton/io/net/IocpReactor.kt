@@ -2,6 +2,7 @@
 
 package neton.io.net
 
+import neton.io.core.boxedInt
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.COpaquePointerVar
