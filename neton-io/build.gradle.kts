@@ -54,6 +54,13 @@ kotlin {
         }
     }
 
+    // SPEC §27.1 / §27.2: signal-to-pipe handler and thread affinity helpers for every POSIX target.
+    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().matching { it.name != "mingwX64" }.configureEach {
+        compilations.getByName("main").cinterops.create("posixshim") {
+            defFile(project.file("src/nativeInterop/cinterop/posixshim.def"))
+        }
+    }
+
     // io_uring bindings (self-contained UAPI; the cross sysroot predates io_uring).
     linux.forEach { target ->
         target.compilations.getByName("main").cinterops.create("uring") {

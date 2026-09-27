@@ -1015,3 +1015,10 @@ geario：`IoTest`。neton：`memoryStreamPair(capacity = 64 KiB): Pair<IoStream,
 发 SIGPIPE——任一"连上、发数据、立即 RST"的客户端都能打死 macOS / iOS 上的 neton 服务端。TCP 正常 FIN（含半关闭）时该选项仍可设置。
 修复：设置失败时不丢弃连接（Unix 域上对端写完就关闭，缓冲里仍有数据），而是标记该 fd，读照常（先读完对端发的数据，再 EOF），写直接抛
 EPIPE 的 `IoException`，不调用 send。回归测试：`UnixSocketTest.peerGoneBeforeAcceptStillDeliversAndWritesFail`；`ConnectionFaultTest` 单独连跑 5 次通过。
+
+**§27.1 / §27.2 实现记录**：C 垫片 `posixshim.def`（全部 POSIX 目标）与 `winshim.def` 的新增函数；`Signals.kt`（公共：`Signal`、`awaitSignal`、
+等待者列表与读信号的专用线程）、`Signals.posix.kt`（自管道 + sigaction）、`Signals.mingw.kt`（控制台事件）。`serveTcp` 默认处理信号：
+`until` 与信号两条停止路径各有自己的标志（共用一个时，`until` 停止后会去等一个永远不来的信号——`MultiReactorTest` 挂起，已修）。
+测试进程一旦为 SIGTERM 装了处理函数，`kill` / `timeout` 的 SIGTERM 就不再结束它（这正是语义）；卡住时只能 SIGKILL。
+绑核：在启动任何线程前记录允许的 CPU 集合（新线程继承创建者的掩码）；`AffinityTest` 在 Linux 上确认两个反应器线程各只能运行在一个 CPU 上
+（Apple 跳过）。测试：macOS 86/86，colima Linux arm64 io_uring / multishot / epoll 各 87/87；mingwX64、Android、iOS 编译通过。

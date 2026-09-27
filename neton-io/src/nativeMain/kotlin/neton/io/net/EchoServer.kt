@@ -24,6 +24,8 @@ import neton.io.core.IoStream
  * request (the pre-§23.2 behaviour, kept here for comparison only).
  *
  * NETON_IO_GC_STATS=1 prints GC statistics once a second (SPEC §26.3).
+ * NETON_IO_AFFINITY=1 pins each reactor thread to a CPU (SPEC §27.2); NETON_IO_BACKLOG sets the backlog.
+ * With several reactors SIGTERM / SIGQUIT stop the server gracefully and SIGINT at once (SPEC §27.1).
  * NETON_IO_POOL=0 turns buffer pooling off (SPEC §23.7), for paired comparisons.
  * NETON_IO_RUN_SECONDS=n stops the server after n seconds (orderly, so NETON_IO_STATS is printed);
  * otherwise it runs until killed.
@@ -74,7 +76,9 @@ fun echoServerMain(args: Array<String>) {
         // Bench knob (SPEC §26.6): NETON_IO_BACKLOG sets the listen backlog.
         val backlog = platform.posix.getenv("NETON_IO_BACKLOG")?.toKString()?.toIntOrNull()
         val options = if (backlog != null) SocketOptions(backlog = backlog) else SocketOptions.Default
-        serveTcp(host, port, reactors, until, mode, options) { conn -> echoConnection(conn) }
+        // Bench knob (SPEC §27.2): NETON_IO_AFFINITY=1 pins each reactor to a CPU.
+        val pin = platform.posix.getenv("NETON_IO_AFFINITY")?.toKString() == "1"
+        serveTcp(host, port, reactors, until, mode, options, pinThreads = pin) { conn -> echoConnection(conn) }
     }
 }
 

@@ -1,0 +1,92 @@
+package = neton.io.posixshim
+# Only the helpers below are exported (SPEC §27.1, §27.2).
+headers = signal.h
+headerFilter = neton_posixshim_none.h
+compilerOpts = -D_GNU_SOURCE
+
+---
+
+#include <errno.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <sched.h>
+#endif
+
+/*
+ * SPEC §27.1: a signal handler may not run Kotlin code. This one only writes the signal number to a
+ * non-blocking pipe (async-signal-safe); a Kotlin thread reads the pipe.
+ */
+static volatile int neton_sig_fd = -1;
+
+static void neton_sig_handler(int sig) {
+    int saved = errno;
+    unsigned char b = (unsigned char) sig;
+    int fd = neton_sig_fd;
+    if (fd >= 0) { ssize_t r = write(fd, &b, 1); (void) r; }   /* pipe full: that signal is already pending */
+    errno = saved;
+}
+
+static int neton_signal_install(int sig, int fd) {
+    struct sigaction sa;
+    neton_sig_fd = fd;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = neton_sig_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    return sigaction(sig, &sa, NULL);
+}
+
+/*
+ * SPEC §27.2: pin the calling thread to the n-th CPU (modulo) of the set captured by
+ * neton_affinity_capture(). Capture once, before any thread is pinned: new threads inherit their
+ * creator's mask. Returns the CPU, or -1 (not supported, or failed).
+ */
+#ifdef __linux__
+static cpu_set_t neton_allowed;
+static int neton_allowed_count = -1;
+#endif
+
+static int neton_affinity_capture(void) {
+#ifdef __linux__
+    CPU_ZERO(&neton_allowed);
+    if (sched_getaffinity(0, sizeof neton_allowed, &neton_allowed) != 0) { neton_allowed_count = -1; return -1; }
+    neton_allowed_count = CPU_COUNT(&neton_allowed);
+    return neton_allowed_count;
+#else
+    return -1;
+#endif
+}
+
+static int neton_pin_thread_nth(int n) {
+#ifdef __linux__
+    int want, seen = 0, cpu;
+    if (neton_allowed_count <= 0) return -1;
+    want = n % neton_allowed_count;
+    for (cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        if (!CPU_ISSET(cpu, &neton_allowed)) continue;
+        if (seen++ == want) {
+            cpu_set_t one;
+            CPU_ZERO(&one);
+            CPU_SET(cpu, &one);
+            return sched_setaffinity(0, sizeof one, &one) == 0 ? cpu : -1;
+        }
+    }
+    return -1;
+#else
+    (void) n;
+    return -1;
+#endif
+}
+
+/* How many CPUs the calling thread may run on now (tests); -1 where unsupported. */
+static int neton_thread_cpu_count(void) {
+#ifdef __linux__
+    cpu_set_t s;
+    CPU_ZERO(&s);
+    return sched_getaffinity(0, sizeof s, &s) == 0 ? CPU_COUNT(&s) : -1;
+#else
+    return -1;
+#endif
+}

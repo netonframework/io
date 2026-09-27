@@ -59,7 +59,7 @@ internal class ReactorGroup(private val count: Int) {
      * Start reactors 1..n-1 on worker threads and wait until each has reported its reactor and
      * scope. Reactor 0 is the caller's (passed in), which must already be running.
      */
-    fun start(primary: Reactor, primaryScope: CoroutineScope) {
+    fun start(primary: Reactor, primaryScope: CoroutineScope, pinThreads: Boolean = false) {
         members[0] = Member(primary, primaryScope)
         val readies = ArrayList<CompletableDeferred<Member>>()
         for (i in 1 until count) {
@@ -69,7 +69,10 @@ internal class ReactorGroup(private val count: Int) {
             val w = Worker.start(name = "neton-reactor-$i")
             workers.add(w)
             val stopRef = stop
-            w.execute(TransferMode.SAFE, { Triple(ready, stopRef, done) }) { (r, s, d) ->
+            val pinTo = if (pinThreads) i else -1
+            w.execute(TransferMode.SAFE, { Pair(Triple(ready, stopRef, done), pinTo) }) { (t, pin) ->
+                val (r, s, d) = t
+                if (pin >= 0) pinCurrentThread(pin)
                 try {
                     Reactor.runServing(s) { reactor, scope -> r.complete(Member(reactor, scope)) }
                 } finally {
@@ -272,12 +275,18 @@ class TcpServerGroup internal constructor(
 
     /** Suspend until the worker reactors have exited (their connections have all ended). */
     suspend fun awaitWorkers() { group.awaitExit() }
+
+    /** Tests: run [block] on reactor [i]'s thread and wait for it. */
+    internal suspend fun callOnForTest(i: Int, block: () -> Unit) = group.callOn(i) { block() }
 }
 
 /**
  * Listen on [host]:[port] and spread connections over [reactors] reactors (SPEC §18.1, §23.4). Must
  * be called inside a running reactor: that reactor is reactor 0; `reactors - 1` more are started on
  * their own threads. Handlers on reactor 0 run as children of the caller's job.
+ *
+ * [pinThreads] pins reactor i to the i-th CPU the process may run on (SPEC §27.2; Linux, Android,
+ * Windows; ignored on Apple). Off by default: it only helps when nothing else competes for those CPUs.
  */
 suspend fun listenGroup(
     host: String,
@@ -286,6 +295,7 @@ suspend fun listenGroup(
     options: SocketOptions = SocketOptions.Default,
     maxConnections: Int = 0,
     acceptMode: AcceptMode = AcceptMode.Handoff,
+    pinThreads: Boolean = false,
 ): TcpServerGroup {
     require(reactors >= 1) { "reactors must be >= 1" }
     require(maxConnections >= 0) { "maxConnections must be >= 0" }
@@ -296,7 +306,10 @@ suspend fun listenGroup(
     val listeners = arrayOfNulls<TcpServer>(reactors)
     listeners[0] = listenTcpServer(host, port, opts)
     val group = ReactorGroup(reactors)
-    group.start(currentReactor(), localScope)
+    // SPEC §27.2: capture the allowed CPUs before any thread is pinned (new threads inherit masks).
+    if (pinThreads) captureAffinity()
+    group.start(currentReactor(), localScope, pinThreads)
+    if (pinThreads) pinCurrentThread(0)
     if (mode == AcceptMode.ReusePort) {
         try {
             for (i in 1 until reactors) listeners[i] = group.callOn(i) { listenTcpServer(host, port, opts) }
@@ -311,9 +324,21 @@ suspend fun listenGroup(
 }
 
 /**
+ * Wait for a termination signal, then stop this server (SPEC §27.1, as geario does): [Signal.Int]
+ * stops at once (open connections are cancelled), [Signal.Term] and [Signal.Quit] stop gracefully,
+ * letting connections finish for up to [gracefulTimeoutMillis]. Returns the signal once stopped.
+ */
+suspend fun TcpServerGroup.shutdownOnSignal(gracefulTimeoutMillis: Long = 30_000): Signal {
+    val s = awaitSignal(Signal.Int, Signal.Term, Signal.Quit)
+    shutdown(if (s == Signal.Int) 0 else gracefulTimeoutMillis)
+    return s
+}
+
+/**
  * Serve [host]:[port] on [reactors] reactors (default one per core). Blocks the calling thread
- * until [until] completes (never, by default — the process ends the server). Each accepted
- * connection runs [handler] on the reactor it is pinned to.
+ * until the server stops: when [until] completes, or on a termination signal (unless
+ * [shutdownOnSignals] is false; see [shutdownOnSignal] and [shutdownTimeoutMillis]). Each accepted
+ * connection runs [handler] on the reactor it is pinned to. Returns after the worker reactors exit.
  */
 fun serveTcp(
     host: String,
@@ -322,20 +347,29 @@ fun serveTcp(
     until: CompletableDeferred<Unit>? = null,
     acceptMode: AcceptMode = AcceptMode.Handoff,
     options: SocketOptions = SocketOptions.Default,
+    shutdownOnSignals: Boolean = true,
+    shutdownTimeoutMillis: Long = 30_000,
+    pinThreads: Boolean = false,
     handler: suspend (IoStream) -> Unit,
 ) {
     require(reactors >= 1)
     runReactor {
-        val group = listenGroup(host, port, reactors, options, acceptMode = acceptMode)
+        val group = listenGroup(host, port, reactors, options, acceptMode = acceptMode, pinThreads = pinThreads)
         val serveJob = launch { group.serve(handler) }
-        if (until != null) {
-            until.await()
-            group.close()
-            serveJob.join()
-            group.awaitWorkers()
-        } else {
-            serveJob.join()
-        }
+        // All of these coroutines run on this reactor, so the flags need no synchronisation.
+        var signalled = false
+        val signalJob = if (shutdownOnSignals) launch {
+            val s = awaitSignal(Signal.Int, Signal.Term, Signal.Quit)
+            signalled = true
+            group.shutdown(if (s == Signal.Int) 0 else shutdownTimeoutMillis)
+        } else null
+        val untilJob = until?.let { u -> launch { u.await(); if (!signalled) group.close() } }
+        serveJob.join()
+        untilJob?.cancel()
+        // A signal-triggered shutdown closed the listener first (ending serve) and is still letting
+        // connections finish: wait for it. Otherwise nobody needs a signal any more.
+        if (signalJob != null) { if (signalled) signalJob.join() else signalJob.cancel() }
+        group.awaitWorkers()
     }
 }
 
