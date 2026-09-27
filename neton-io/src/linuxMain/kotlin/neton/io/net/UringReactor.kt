@@ -145,7 +145,9 @@ internal class UringReactor : Reactor() {
         var sendBuf: Buffer? = null; var sendTotal = 0
         // A whole-buffer send whose writer was cancelled or timed out: the SEND is cancelled in the
         // kernel and the writer is resumed with this once its CQE has said how much went out.
-        var sendAbort: Throwable? = null }
+        var sendAbort: Throwable? = null
+        // SPEC §24.7: a single RECV straight into the reader's buffer, completed by the reactor.
+        var readBuf: Buffer? = null; var readSizer: ReadSizer? = null; var readAbort: Throwable? = null }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
     private var freeTop = 256           // freeSlots[0 until freeTop] are free
@@ -173,6 +175,7 @@ internal class UringReactor : Reactor() {
     private fun releaseSlot(idx: Int, slot: Slot) {
         slot.live = false; slot.cont = null; slot.pin = null; slot.fd = -1; slot.multishot = false; slot.isWrite = false
         slot.sendBuf = null; slot.sendAbort = null
+        slot.readBuf = null; slot.readSizer = null; slot.readAbort = null
         if (slot.nativeBlock != null) releaseVectored(slot)     // writev only; keeps this path small enough to inline
         freeSlots[freeTop++] = idx
         liveOps--
@@ -421,6 +424,7 @@ internal class UringReactor : Reactor() {
             val c = slot.cont ?: continue
             if (c.context[Job] !== job) continue
             if (slot.sendBuf != null) { abortSend(i, slot, ex); continue }
+            if (slot.readBuf != null) { abortRead(i, slot, ex); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, ex)
             if (slot.cancelOnAbort) requestCancel((i.toULong() shl 32) or slot.gen.toULong())
@@ -452,6 +456,7 @@ internal class UringReactor : Reactor() {
             if (if (slot.isWrite) !writes else !reads) continue
             val c = slot.cont ?: continue
             if (slot.sendBuf != null) { abortSend(i, slot, cause); continue }
+            if (slot.readBuf != null) { abortRead(i, slot, cause); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, cause)
             if (slot.cancelOnAbort) requestCancel((i.toULong() shl 32) or slot.gen.toULong())
@@ -538,7 +543,10 @@ internal class UringReactor : Reactor() {
 
         // Provided-buffer pool for multishot recv. Registered synchronously (one blocking enter) so
         // that an unsupported kernel is detected here and reads fall back to plain recv SQEs.
-        val wantMs = getenv("NETON_IO_URING_MULTISHOT")?.toKString() != "0"
+        // SPEC §24.7: reads go straight into the caller's buffer by default (single RECV); multishot
+        // with provided buffers is opt-in (NETON_IO_URING_MULTISHOT=1): less memory for idle
+        // connections, but a copy and a CQE per 16 KB chunk (0.78-0.93 of geario at 64 KB).
+        val wantMs = getenv("NETON_IO_URING_MULTISHOT")?.toKString() == "1"
         bufCount = getenv("NETON_IO_URING_BUFS")?.toKString()?.toIntOrNull() ?: DEFAULT_BUFS
         bufSize = getenv("NETON_IO_URING_BUFSZ")?.toKString()?.toIntOrNull() ?: DEFAULT_BUFSZ
         var ok = false
@@ -647,12 +655,50 @@ internal class UringReactor : Reactor() {
     override suspend fun read(fd: Int, dst: Buffer, sizer: ReadSizer): Int =
         if (multishot) readMultishot(fd, dst, sizer) else readSingle(fd, dst, sizer)
 
+    /**
+     * SPEC §24.7: one RECV straight into [dst] (pinned, no copy); the reactor commits the bytes and
+     * resumes the reader from [onReadCqe]. A tail call into the intrinsic: nothing allocated.
+     */
     private suspend fun readSingle(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         val cap = dst.reserve(sizer.readChunk(), bufferPool)     // may replace the backing array: pin after
         val pin = pinFor(fd, dst.backingArray())
-        val res = submit(NETON_IORING_OP_READ, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, pin)
-        stats?.let { it.reads++; if (res > 0) it.readBytes += res }
-        return if (res > 0) { dst.commitWrite(res); sizer.onRead(res); res } else -1 // 0 = EOF (errors throw)
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.pin = pin; pin.refs++
+        slot.readBuf = dst; slot.readSizer = sizer; slot.cancelOnAbort = true
+        val ud = (idx.toULong() shl 32) or slot.gen.toULong()
+        return suspendCoroutineUninterceptedOrReturn { cont ->
+            try { watchCancellation(fd, cont) } catch (t: Throwable) { pin.refs--; releaseSlot(idx, slot); throw t }
+            prepSqe(NETON_IORING_OP_RECV, fd, pin.pinned.addressOf(dst.writerIndex()).toLong(), cap, 0, ud)
+            slot.cont = cont
+            COROUTINE_SUSPENDED
+        }
+    }
+
+    /** A RECV CQE: commit what arrived into the reader's buffer, then resume it (SPEC §24.7). */
+    private fun onReadCqe(idx: Int, slot: Slot, res: Int) {
+        val cont = slot.cont
+        val dst = slot.readBuf!!
+        val sizer = slot.readSizer!!
+        val abort = slot.readAbort
+        slot.pin?.let { it.refs--; it.release() }
+        releaseSlot(idx, slot)
+        if (cont == null) return                     // stream closed under the RECV: buffer abandoned
+        // Bytes that arrived before a cancel/timeout took effect are kept, never dropped.
+        if (res > 0) { dst.commitWrite(res); sizer.onRead(res); stats?.let { it.reads++; it.readBytes += res } }
+        when {
+            abort != null -> enqueueResumeInt(cont, 0, abort)
+            res > 0 -> enqueueResumeInt(cont, res)
+            res == 0 -> enqueueResumeInt(cont, -1)
+            else -> enqueueResumeInt(cont, 0, IoException("io_uring recv failed: ${errnoMessage(-res)}", -res))
+        }
+    }
+
+    /** A single RECV whose reader gave up: cancel it in the kernel; [onReadCqe] resumes with [cause]. */
+    private fun abortRead(idx: Int, slot: Slot, cause: Throwable) {
+        if (slot.readAbort != null) return
+        slot.readAbort = cause
+        requestCancel((idx.toULong() shl 32) or slot.gen.toULong())
     }
 
     /**
@@ -783,7 +829,7 @@ internal class UringReactor : Reactor() {
             slot.cont = null
             // A send already being aborted keeps its cause (e.g. the writer's cancellation): the
             // writer must see the same outcome it asked for, not a closed stream.
-            if (cont != null) enqueueResumeInt(cont, 0, slot.sendAbort ?: ClosedException())
+            if (cont != null) enqueueResumeInt(cont, 0, slot.sendAbort ?: slot.readAbort ?: ClosedException())
             requestCancel((i.toULong() shl 32) or slot.gen.toULong())
         }
         if (multishot && fd < msArmed.size) {
@@ -874,6 +920,7 @@ internal class UringReactor : Reactor() {
             if (!slot.live || slot.gen != ud.toUInt()) continue   // stale generation: unknown op
             if (slot.multishot) { onMultishotCqe(idx, slot, res, cqe.flags); continue }
             if (slot.sendBuf != null) { onSendCqe(idx, slot, res); continue }
+            if (slot.readBuf != null) { onReadCqe(idx, slot, res); continue }
             slot.pin?.let { it.refs--; it.release() }      // the kernel is done with the buffer
             val cont = slot.cont                           // null if the awaiter was cancelled/closed
             releaseSlot(idx, slot)
