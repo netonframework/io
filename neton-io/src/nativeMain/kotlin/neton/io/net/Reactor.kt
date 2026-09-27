@@ -90,6 +90,27 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     private var intVals = IntArray(64)
     private var intErrs = arrayOfNulls<Throwable>(64)
     private var intHead = 0
+    // SPEC §24.11: same-thread handoffs between coroutines of one reactor (queues in protocol layers)
+    // resume through this ring — an object value, no DispatchedTask, no context lookups.
+    private var anyConts = arrayOfNulls<kotlin.coroutines.Continuation<Any?>>(64)
+    private var anyVals = arrayOfNulls<Any?>(64)
+    private var anyErrs = arrayOfNulls<Throwable>(64)
+    private var anyHead = 0
+    private var anyCount = 0
+
+    /** Queue [cont] to be resumed with [value] (or [error]) on this reactor's next drain. Owner thread only. */
+    internal fun enqueueResumeAny(cont: kotlin.coroutines.Continuation<*>, value: Any?, error: Throwable?) {
+        if (anyCount == anyConts.size) {
+            val n = anyConts.size
+            val c2 = arrayOfNulls<kotlin.coroutines.Continuation<Any?>>(n * 2); val v2 = arrayOfNulls<Any?>(n * 2); val e2 = arrayOfNulls<Throwable>(n * 2)
+            for (i in 0 until anyCount) { val j = (anyHead + i) % n; c2[i] = anyConts[j]; v2[i] = anyVals[j]; e2[i] = anyErrs[j] }
+            anyConts = c2; anyVals = v2; anyErrs = e2; anyHead = 0
+        }
+        val i = (anyHead + anyCount) % anyConts.size
+        @Suppress("UNCHECKED_CAST")
+        anyConts[i] = cont as kotlin.coroutines.Continuation<Any?>; anyVals[i] = value; anyErrs[i] = error
+        anyCount++
+    }
     private var intCount = 0
 
     /** Queue [cont] to be resumed with [value] (or [error] if non-null) on the next drain. Owner thread only. */
@@ -333,6 +354,12 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
                 @Suppress("UNCHECKED_CAST")
                 if (e == null) (c as kotlin.coroutines.Continuation<Any?>).resumeWith(Result.success(boxedInt(v)))
                 else c.resumeWith(Result.failure(e))
+            } else if (anyCount > 0) {
+                val i = anyHead
+                val c = anyConts[i]!!; val v = anyVals[i]; val e = anyErrs[i]
+                anyConts[i] = null; anyVals[i] = null; anyErrs[i] = null
+                anyHead = (i + 1) % anyConts.size; anyCount--
+                if (e == null) c.resumeWith(Result.success(v)) else c.resumeWith(Result.failure(e))
             } else if (tasks.isNotEmpty()) {
                 tasks.removeFirst().run()
             } else break
@@ -363,7 +390,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
         fflush(stderr)
     }
 
-    protected fun hasTasks(): Boolean = resumeCount > 0 || intCount > 0 || tasks.isNotEmpty()
+    protected fun hasTasks(): Boolean = resumeCount > 0 || intCount > 0 || anyCount > 0 || tasks.isNotEmpty()
 
     /**
      * Read available bytes into [dst]; returns the count (>0) or -1 at EOF. Reactor thread only.

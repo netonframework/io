@@ -853,3 +853,8 @@ neton-io 自身收发路径已零分配，但上层协议每条消息仍需分�
 依据（153，callgrind，msgtrans framed / rpc，epoll 单反应器 12 连接 64 B；每请求 6006 / 7921 条指令）：`Buffer.ensureWritable` 777 与 `Buffer.getByte` 640 条/请求——
 16 字节包头逐字节写读，每字节一次函数调用和完整检查。新增大端序 `writeShort / writeInt / writeLong`、`getUnsignedByte / getUnsignedShort / getInt`、
 `readInt / readUnsignedShort`，每个值一次边界检查；`writeByte` 有内联快路径。msgtrans 编解码改用这些原语。
+
+### 24.11 同反应器交接：ReactorResumer
+协议层在同一反应器的协程之间交接（如 msgtrans 读循环 → 处理循环）时，kotlinx 的 `intercepted().resume()` 要经过调度器、`DispatchedTask`
+与上下文查找（callgrind：rpc 每请求约 300–400 条指令）。反应器新增对象值恢复环；`reactorResumer(context)` 取得一次，`resume(cont, value)`
+在反应器线程上只占一个环槽，其它线程调用时回退到调度恢复。
