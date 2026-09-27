@@ -1061,3 +1061,17 @@ mingwX64、Android、iOS 编译通过。
 **§27.7 验证**：macOS 103/103；colima Linux arm64 io_uring / multishot / epoll 各 105/105（含 `SignalChildProcessTest`：子进程平滑停、
 返回后 SIGTERM 以默认行为结束，退出码 143）；mingwX64、Android、iOS 编译通过。反向验证：把恢复逻辑临时改为空操作，子进程测试
 （子进程打印 "survived"）与全部检查恢复的进程内测试失败；把内存流锁内检查临时去掉，四个新测试失败（读挂起被超时抓到）。
+
+### 27.8 生命周期修正（二）（2026-09-27 GPT 第二轮审查，四处全部成立）
+1. **第二次停机信号可能丢失**：`holdingSignals` 只让处理函数保持安装，它的 deferred 只能完成一次。第一次信号返回后、`force` 协程登记前，
+   watcher 读到的第二次信号只投给已完成的 deferred——事件丢失。修正：停机全程用**一个持续订阅**（`Channel`，信号到达即入队），第一次与
+   第二次都从同一个订阅里取，中间不存在无人接收的时刻。测试：进程内连发两次 SIGTERM（不留间隔），第二次必须强制停机。
+2. **暂停等待期间被取消，已 accept 的 fd 和连接配额泄漏**：`acceptFd()` 成功后的 `pauseGate.await()` 不在清理保护内。修正：从 accept 成功到
+   交给连接协程之间用 `try / finally`，只有交接成功才转移清理责任（关闭 fd、`releaseSlot`）。测试：暂停状态下有连接到来，取消 serve，
+   `activeConnections` 归零，客户端读到 EOF。
+3. **子反应器启动失败不传回**：worker 在发布 `ready` 之前抛异常，只完成 `done`，主线程在 `ready.isCompleted` 上永远空转。修正：worker 以异常
+   完成 `ready`；启动方看到失败就停掉已启动的 worker、关闭已绑定的监听器并抛出。测试：用测试钩子让一个 worker 启动失败，`listenGroup`
+   必须抛出，端口可以重新绑定，已启动的线程退出。
+4. **内存流同方向并发**：每个方向只有一个等待者槽位，并发的两个读（或写）后者覆盖前者，被覆盖者无人唤醒。修正：与 socket 流的约定一致——
+   每一端同一时刻只允许一个读和一个写，重入直接抛 `IllegalStateException`（公开写入契约），不做排队。测试：并发的第二个读被拒绝；关闭仍能
+   唤醒第一个。
