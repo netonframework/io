@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -279,10 +280,15 @@ class TcpServerGroup internal constructor(
         close()
         withTimeoutOrNull(gracefulTimeoutMillis) { while (active.load() > 0) delay(10) }
         if (active.load() > 0) {
-            for (i in 0 until reactors) group.runOn(i) { for (j in connJobs[i].toList()) j.cancel() }
+            cancelConnections()
             while (active.load() > 0) delay(10)
         }
         releaseReactors()
+    }
+
+    /** Cancel every connection being served now (a graceful [shutdown] then ends at once). Reactor 0 only. */
+    internal fun cancelConnections() {
+        for (i in 0 until reactors) group.runOn(i) { for (j in connJobs[i].toList()) j.cancel() }
     }
 
     /**
@@ -371,21 +377,35 @@ suspend fun listenGroup(
 }
 
 /**
- * Wait for a termination signal, then stop this server (SPEC §27.1, as geario does): [Signal.Int]
- * stops at once (open connections are cancelled), [Signal.Term] and [Signal.Quit] stop gracefully,
- * letting connections finish for up to [gracefulTimeoutMillis]. Returns the signal once stopped.
+ * Wait for a termination signal, then stop this server (SPEC §27.1, §27.7, as geario does):
+ * [Signal.Int] stops at once (open connections are cancelled); [Signal.Term] and [Signal.Quit] stop
+ * gracefully, letting connections finish for up to [gracefulTimeoutMillis], and any second one of
+ * these signals meanwhile cancels the rest at once. The signals are handled only while this runs;
+ * their previous actions are restored when it returns (or is cancelled). Call on reactor 0.
  */
-suspend fun TcpServerGroup.shutdownOnSignal(gracefulTimeoutMillis: Long = 30_000): Signal {
-    val s = awaitSignal(Signal.Int, Signal.Term, Signal.Quit)
-    shutdown(if (s == Signal.Int) 0 else gracefulTimeoutMillis)
-    return s
-}
+suspend fun TcpServerGroup.shutdownOnSignal(gracefulTimeoutMillis: Long = 30_000): Signal =
+    stopOnSignal(gracefulTimeoutMillis) {}
+
+internal suspend fun TcpServerGroup.stopOnSignal(gracefulTimeoutMillis: Long, onSignal: () -> Unit): Signal =
+    holdingSignals(Signal.Int, Signal.Term, Signal.Quit) {
+        val s = awaitSignal(Signal.Int, Signal.Term, Signal.Quit)
+        onSignal()
+        if (s == Signal.Int) {
+            shutdown(0)
+        } else coroutineScope {
+            val force = launch { awaitSignal(Signal.Int, Signal.Term, Signal.Quit); cancelConnections() }
+            try { shutdown(gracefulTimeoutMillis) } finally { force.cancel() }
+        }
+        s
+    }
 
 /**
  * Serve [host]:[port] on [reactors] reactors (default one per core). Blocks the calling thread
- * until the server stops: when [until] completes, or on a termination signal (unless
- * [shutdownOnSignals] is false; see [shutdownOnSignal] and [shutdownTimeoutMillis]). Each accepted
- * connection runs [handler] on the reactor it is pinned to. Returns after the worker reactors exit.
+ * until the server stops: when [until] completes, or — with [shutdownOnSignals], for an
+ * application's entry point — on a termination signal (see [shutdownOnSignal] and
+ * [shutdownTimeoutMillis]). Signals are left alone by default: a library must not change how its
+ * host process reacts to them (SPEC §27.7). Each accepted connection runs [handler] on the reactor
+ * it is pinned to. Returns after the worker reactors exit.
  */
 fun serveTcp(
     host: String,
@@ -394,7 +414,7 @@ fun serveTcp(
     until: CompletableDeferred<Unit>? = null,
     acceptMode: AcceptMode = AcceptMode.Handoff,
     options: SocketOptions = SocketOptions.Default,
-    shutdownOnSignals: Boolean = true,
+    shutdownOnSignals: Boolean = false,
     shutdownTimeoutMillis: Long = 30_000,
     pinThreads: Boolean = false,
     handler: suspend (IoStream) -> Unit,
@@ -406,9 +426,7 @@ fun serveTcp(
         // All of these coroutines run on this reactor, so the flags need no synchronisation.
         var signalled = false
         val signalJob = if (shutdownOnSignals) launch {
-            val s = awaitSignal(Signal.Int, Signal.Term, Signal.Quit)
-            signalled = true
-            group.shutdown(if (s == Signal.Int) 0 else shutdownTimeoutMillis)
+            group.stopOnSignal(shutdownTimeoutMillis) { signalled = true }
         } else null
         val untilJob = until?.let { u -> launch { u.await(); if (!signalled) group.close() } }
         serveJob.join()

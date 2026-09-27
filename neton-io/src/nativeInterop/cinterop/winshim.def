@@ -206,6 +206,11 @@ static int neton_ctrl_install(void) {
     return SetConsoleCtrlHandler(neton_ctrl_handler, TRUE) ? 0 : -1;
 }
 
+/* SPEC §27.7: remove the handler when nobody waits. */
+static int neton_ctrl_uninstall(void) {
+    return SetConsoleCtrlHandler(neton_ctrl_handler, FALSE) ? 0 : -1;
+}
+
 static int neton_ctrl_wait(void) {
     WaitForSingleObject(neton_ctrl_event, INFINITE);
     return (int) InterlockedExchange(&neton_ctrl_last, 0);

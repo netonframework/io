@@ -1038,3 +1038,26 @@ mingwX64、Android、iOS 编译通过。
 绑核 / 不绑核 epoll 128 B 64 / 1k / 10k 连接 1.10 / 0.96 / 1.00，4 KB 1k 0.94；io_uring 0.99 / 1.04 / 1.03，4 KB 1k 0.97。同一格轮间波动 20–40 %，
 比值方向不一致（epoll 64 连接的 1.10 来自一轮 459k 对 353k）——**没有可测量的收益，`pinThreads` 保持默认关闭**，作为选项保留（进程独占机器、
 不受 `taskset` 限制时可自行测量）。
+
+### 27.7 生命周期修正（2026-09-27 GPT 审查，三处 P1 全部成立）
+**内存流**：(1) `shutdownOutput` 之后 `write` 仍能成功，对端读到 EOF 后又读到数据；(2) 本端的关闭检查在锁外、等待者登记在锁内：
+检查通过后另一线程完成 `close()`（此时无等待者可唤醒），读者随后登记并永久挂起（写同理）。修复：本端关闭 / 半关闭状态与等待者登记都在
+同一把锁内判断——读在锁内看 `readerGone`，写在锁内看 `writerClosed` / `writerDone` / `readerGone`。测试用钩子（`memoryStreamPairWithHook`）
+在"开放检查之后、取锁之前"精确地关闭流，不靠 `delay`；把修复临时去掉时这些测试失败（读挂起被超时抓到），修复后通过。
+
+**信号**：处理函数一旦安装就不再恢复，后台线程在没有等待者时直接丢弃信号，而 `serveTcp` 默认开启——库在替宿主进程做进程级决定
+（neton-io 还随 PulseKit SDK 运行在 iOS / Android 应用里）。修正：
+- 按信号计数等待者：第一个等待者出现时安装并保存原来的处理方式，最后一个离开时恢复原样（POSIX `sigaction` 旧值；Windows 移除控制台处理函数）。
+  只有有人等待期间进程的信号行为才被改变。
+- `serveTcp(shutdownOnSignals = false)`：默认不接管信号，应用入口显式开启（geario 默认开启，是因为它的 server 就是入口）。`listenGroup`
+  不碰信号；`TcpServerGroup.shutdownOnSignal` 是显式调用。
+- 停机期间再次收到 Int / Term / Quit：立即取消剩余连接（"再按一次 Ctrl-C"）。平滑停机期间处理函数保持安装，停机结束后恢复。
+- 验证：进程内检查等待结束后处理方式恢复为原值；端到端用独立子进程（测试二进制自身以子进程模式启动）：`serveTcp` 收 SIGTERM 平滑停、
+  第二个信号强制停、返回后子进程对自己发 SIGTERM 必须按默认行为被终止。
+
+**说明**：`limitInFlight` 只限制正在执行的 Service 调用数，不是连接数、排队请求数或内存的上限，不是完整的过载保护（与 `maxConnections`
+一起用）。§27.2 的绑核结论只针对 2 个反应器、`taskset` 限定 2 核的配置，不能外推到 16 / 32 核。
+
+**§27.7 验证**：macOS 103/103；colima Linux arm64 io_uring / multishot / epoll 各 105/105（含 `SignalChildProcessTest`：子进程平滑停、
+返回后 SIGTERM 以默认行为结束，退出码 143）；mingwX64、Android、iOS 编译通过。反向验证：把恢复逻辑临时改为空操作，子进程测试
+（子进程打印 "survived"）与全部检查恢复的进程内测试失败；把内存流锁内检查临时去掉，四个新测试失败（读挂起被超时抓到）。

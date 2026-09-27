@@ -78,7 +78,7 @@ fun echoServerMain(args: Array<String>) {
         val options = if (backlog != null) SocketOptions(backlog = backlog) else SocketOptions.Default
         // Bench knob (SPEC §27.2): NETON_IO_AFFINITY=1 pins each reactor to a CPU.
         val pin = platform.posix.getenv("NETON_IO_AFFINITY")?.toKString() == "1"
-        serveTcp(host, port, reactors, until, mode, options, pinThreads = pin) { conn -> echoConnection(conn) }
+        serveTcp(host, port, reactors, until, mode, options, shutdownOnSignals = true, pinThreads = pin) { conn -> echoConnection(conn) }
     }
 }
 

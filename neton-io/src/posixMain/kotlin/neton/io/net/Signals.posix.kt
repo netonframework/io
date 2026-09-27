@@ -14,6 +14,7 @@ import kotlinx.cinterop.value
 import neton.io.posixshim.neton_affinity_capture
 import neton.io.posixshim.neton_pin_thread_nth
 import neton.io.posixshim.neton_signal_install
+import neton.io.posixshim.neton_signal_restore
 import platform.posix.EINTR
 import platform.posix.FD_CLOEXEC
 import platform.posix.F_GETFL
@@ -35,7 +36,6 @@ private fun Signal.number(): Int = when (this) { Signal.Int -> SIGINT; Signal.Te
 
 private object SignalPipe {
     private val state = AtomicInt(0)          // 0 none, 1 creating, 2 ready
-    private val installed = AtomicInt(0)      // bit per Signal.ordinal
     var readFd = -1; private set
     var writeFd = -1; private set
 
@@ -58,17 +58,15 @@ private object SignalPipe {
 
     fun install(s: Signal) {
         ensure()
-        val bit = 1 shl s.ordinal
-        while (true) {
-            val cur = installed.load()
-            if (cur and bit != 0) return
-            if (installed.compareAndSet(cur, cur or bit)) break
-        }
         check(neton_signal_install(s.number(), writeFd) == 0) { "sigaction(${s.name}) failed (errno=$errno)" }
     }
+
+    fun restore(s: Signal) { neton_signal_restore(s.number()) }
 }
 
 internal actual fun signalInstall(signal: Signal) = SignalPipe.install(signal)
+
+internal actual fun signalRestore(signal: Signal) = SignalPipe.restore(signal)
 
 internal actual fun signalWaitBlocking(): Signal? = memScoped {
     SignalPipe.ensure()

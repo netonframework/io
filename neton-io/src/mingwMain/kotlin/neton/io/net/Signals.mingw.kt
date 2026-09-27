@@ -4,16 +4,21 @@ package neton.io.net
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import neton.io.win.neton_ctrl_install
+import neton.io.win.neton_ctrl_uninstall
 import neton.io.win.neton_ctrl_wait
 import neton.io.win.neton_pin_thread_nth
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
-private val ctrlInstalled = AtomicInt(0)
+/** Signals wanted now; one console control handler covers them all (SPEC §27.1, §27.7). Hub lock held. */
+private var ctrlUsers = 0
 
-/** One console control handler covers every [Signal] (SPEC §27.1). */
 internal actual fun signalInstall(signal: Signal) {
-    if (ctrlInstalled.compareAndSet(0, 1)) check(neton_ctrl_install() == 0) { "SetConsoleCtrlHandler failed" }
+    if (ctrlUsers == 0) check(neton_ctrl_install() == 0) { "SetConsoleCtrlHandler failed" }
+    ctrlUsers++
+}
+
+internal actual fun signalRestore(signal: Signal) {
+    if (--ctrlUsers == 0) neton_ctrl_uninstall()
 }
 
 internal actual fun signalWaitBlocking(): Signal? = when (neton_ctrl_wait()) {

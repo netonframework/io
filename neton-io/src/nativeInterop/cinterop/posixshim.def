@@ -28,14 +28,32 @@ static void neton_sig_handler(int sig) {
     errno = saved;
 }
 
+/* SPEC §27.7: the action each signal had before we installed ours, restored when nobody waits. */
+#define NETON_NSIG 65
+static struct sigaction neton_sig_old[NETON_NSIG];
+
 static int neton_signal_install(int sig, int fd) {
     struct sigaction sa;
+    if (sig <= 0 || sig >= NETON_NSIG) return -1;
     neton_sig_fd = fd;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = neton_sig_handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
-    return sigaction(sig, &sa, NULL);
+    return sigaction(sig, &sa, &neton_sig_old[sig]);
+}
+
+static int neton_signal_restore(int sig) {
+    if (sig <= 0 || sig >= NETON_NSIG) return -1;
+    return sigaction(sig, &neton_sig_old[sig], NULL);
+}
+
+/* Tests: 1 if our handler is installed for sig, 0 if the default action is, 2 for anything else. */
+static int neton_signal_disposition(int sig) {
+    struct sigaction cur;
+    if (sigaction(sig, NULL, &cur) != 0) return -1;
+    if (cur.sa_handler == neton_sig_handler) return 1;
+    return cur.sa_handler == SIG_DFL ? 0 : 2;
 }
 
 /*

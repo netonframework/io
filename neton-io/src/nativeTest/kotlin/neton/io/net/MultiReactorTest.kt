@@ -100,6 +100,8 @@ class MultiReactorTest {
         assertEquals(me, handlerThread)
     }
 
-    private suspend fun tryConnectProbe(port: Int): Boolean =
-        try { connect("127.0.0.1", port).also { it.close() }; true } catch (_: ConnectException) { false }
 }
+
+/** Tests: whether something accepts on 127.0.0.1:[port] now (connects and closes at once). */
+internal suspend fun tryConnectProbe(port: Int): Boolean =
+    try { connect("127.0.0.1", port).also { it.close() }; true } catch (_: ConnectException) { false }
