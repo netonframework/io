@@ -58,6 +58,9 @@ import neton.io.uring.NETON_IORING_CQE_F_MORE
 import neton.io.uring.NETON_IORING_CQE_BUFFER_SHIFT
 import neton.io.uring.neton_kernel_timespec
 import neton.io.uring.NETON_MSG_NOSIGNAL
+import neton.io.uring.NETON_IOSQE_FIXED_FILE
+import neton.io.uring.neton_uring_register_sparse_files
+import neton.io.uring.neton_uring_update_file
 import neton.io.uring.NETON_POLLIN
 import neton.io.uring.NETON_POLLOUT
 import neton.io.uring.neton_array_at
@@ -582,6 +585,16 @@ internal class UringReactor : Reactor() {
 
     private fun nowMs(): Long = reactorNowMs()
 
+    // ---- SPEC §24.8 registered files (NETON_IO_URING_FIXED_FILES=1): a sparse table registered at
+    // start; each stream's socket goes into slot == fd, so its SQEs skip the per-op file lookup.
+    private val fixedCap: Int = if (getenv("NETON_IO_URING_FIXED_FILES")?.toKString() == "1")
+        neton_uring_register_sparse_files(ringFd, 65536u).coerceAtLeast(0) else 0
+    private val fixedFd = BooleanArray(fixedCap)
+
+    override fun registerStream(fd: Int) {
+        if (fd in 0 until fixedCap && !fixedFd[fd] && neton_uring_update_file(ringFd, fd.toUInt(), fd) >= 0) fixedFd[fd] = true
+    }
+
     private fun pending(): UInt = neton_load32(sqBase, sqTailOff) - neton_load32(sqBase, sqHeadOff)
 
     private fun prepSqe(opcode: Int, fd: Int, addr: Long, len: Int, opFlags: Int, ud: ULong,
@@ -604,7 +617,13 @@ internal class UringReactor : Reactor() {
         sqe.len = len.toUInt()
         sqe.op_flags = opFlags.toUInt()
         sqe.off = off
-        sqe.flags = sqeFlags.toUByte()
+        // SPEC §24.8: a registered stream socket is referenced by its table slot (slot == fd).
+        var flags = sqeFlags
+        if (fixedCap > 0 && fd in 0 until fixedCap && fixedFd[fd] &&
+            (opcode == NETON_IORING_OP_RECV || opcode == NETON_IORING_OP_SEND || opcode == NETON_IORING_OP_SENDMSG || opcode == NETON_IORING_OP_READ)) {
+            flags = flags or NETON_IOSQE_FIXED_FILE.toInt()
+        }
+        sqe.flags = flags.toUByte()
         sqe.ioprio = ioprio.toUShort()
         sqe.buf_index = bufGroup.toUShort()      // union with buf_group in the UAPI
         sqe.user_data = ud
@@ -849,6 +868,13 @@ internal class UringReactor : Reactor() {
         }
         forgetWatches(fd)
         retirePin(fd)
+        if (fixedCap > 0 && fd in 0 until fixedCap && fixedFd[fd]) {
+            // The registered table keeps the socket alive until every request submitted before this
+            // update has completed (the ring's resource node), so close() alone could leave it open:
+            // no FIN, and a peer parked in a read waits forever. Shut it down explicitly first.
+            platform.posix.shutdown(fd, platform.posix.SHUT_RDWR)
+            neton_uring_update_file(ringFd, fd.toUInt(), -1); fixedFd[fd] = false
+        }
         closeFd(fd)
     }
 

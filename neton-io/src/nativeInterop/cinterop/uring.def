@@ -106,3 +106,35 @@ static struct neton_io_uring_cqe* neton_cqe_at(void* cqes_base, uint32_t cqes_of
 static uint32_t* neton_array_at(void* sq_base, uint32_t array_off, unsigned idx) {
     return &((uint32_t*)((char*)sq_base + array_off))[idx];
 }
+
+/* ---- registered files (SPEC §24.8): SQEs reference sockets by table index, sparing the kernel a
+   file lookup and reference count per operation. ---- */
+#include <stdlib.h>
+#include <errno.h>
+#include <sys/resource.h>
+#define NETON_NR_io_uring_register 427
+#define NETON_IORING_REGISTER_FILES 2
+#define NETON_IORING_REGISTER_FILES_UPDATE 6
+#define NETON_IOSQE_FIXED_FILE (1U << 0)
+struct neton_files_update { uint32_t offset; uint32_t resv; uint64_t fds; };
+
+/* Register a table of n empty (-1) slots; returns n on success or -errno. n is capped by RLIMIT_NOFILE. */
+static int neton_uring_register_sparse_files(int ring, unsigned n) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < n) n = (unsigned) rl.rlim_cur;
+    int* fds = (int*) malloc(sizeof(int) * n);
+    if (!fds) return -ENOMEM;
+    for (unsigned i = 0; i < n; i++) fds[i] = -1;
+    long rc = syscall(NETON_NR_io_uring_register, ring, NETON_IORING_REGISTER_FILES, fds, n);
+    free(fds);
+    return rc < 0 ? -errno : (int) n;
+}
+
+/* Put fd (or -1 to clear) into table slot `slot`; returns 1 on success or -errno. */
+static int neton_uring_update_file(int ring, unsigned slot, int fd) {
+    int f = fd;
+    struct neton_files_update u;
+    u.offset = slot; u.resv = 0; u.fds = (uint64_t)(uintptr_t) &f;
+    long rc = syscall(NETON_NR_io_uring_register, ring, NETON_IORING_REGISTER_FILES_UPDATE, &u, 1);
+    return rc < 0 ? -errno : (int) rc;
+}
