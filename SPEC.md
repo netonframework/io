@@ -1177,6 +1177,7 @@ websocket http/2 quic http/3 的库，最终可能这些库又可以被 neton �
 | 可观测性 | §28.8 |
 | 平台支持 | §20；Windows 以 §28.5 验收为准 |
 | 产物坐标、包名与框架集成边界 | §28.13 |
+| 协议库建设方法 | §28.14 |
 其他章节是历史记录或已完成工作的说明（见开头导读），不构成契约。
 
 **兼容性**：`com.netonstream:neton-io:0.1.0` 已发布（2026-09-25），保持不动。§28.3、§28.6、§28.12 的破坏性变更（`ReactorResumer.resume`
@@ -1320,37 +1321,16 @@ IOCP 与 WSAPoll 只有 mingwX64 编译链接验证。`ci/windows-validation` �
 **一致性套件**：独立产物 `io-testkit`，抽象测试基类，实现方提供"建立一对连通的流"的工厂与（可选）"让对端 RST"的钩子并声明能力；必选契约
 全部运行，可选能力按声明运行。运行对象：TCP（io_uring / epoll / kqueue / poll / IOCP / WSAPoll）、Unix 域套接字、`memoryStreamPair`、`BaseFilter`。
 
-### 28.7 第二个协议消费者：HTTP/1.1 子集（冻结）
-独立模块（neton-io 仓库之外；坐标 `com.netonstream:http`，通用类型在 `neton.http`、HTTP/1.1 专属实现在 `neton.http.h1`，见 §28.13），作为普通依赖使用 `com.netonstream:io`，不引用 `ReactorResumer`。目的是验证公开接口；实现中每一处"只用公开 API
-做不到"的地方记入 neton-io SPEC。依据 RFC 9112（消息语法与边界）、RFC 9110（语义）。
-- **范围**：服务端与客户端；只说 HTTP/1.1（服务端接受 HTTP/1.0 请求，按 1.0 规则默认不保持连接，响应以 1.1 书写）；无 TLS、无压缩、无 HTTP/2、
-  无 Upgrade（`Upgrade` 头忽略，按普通请求处理）。
-- **行结束与头部**：只接受 CRLF；裸 CR、裸 LF 行结束、`obs-fold`（续行）、字段名与冒号之间的空白 → 400 并关闭。
-- **上限**（可配置，默认）：请求行 8 KiB；单个头部行 8 KiB；头部段合计 64 KiB；头部个数 100；请求体 10 MiB（超过 → 413 并关闭）；chunk 大小行
-  1 KiB、十六进制位数 ≤ 16、溢出 → 400 并关闭；chunk 扩展忽略但计入行上限；trailer 段 8 KiB，trailer 丢弃不合并。
-- **消息边界**（RFC 9112 §6.3 的优先级，服务端对请求）：
-  1. `Transfer-Encoding` 与 `Content-Length` 同时出现 → 400 并关闭（不按"TE 优先"继续处理，防止请求走私）。
-  2. `Transfer-Encoding` 出现：只支持 `chunked` 且必须是最后一个编码；最后不是 `chunked` → 400 并关闭；含 `chunked` 以外的编码 → 501 并关闭。
-  3. `Content-Length`：必须全为数字；多个值或逗号列表中值互不相同 → 400 并关闭；全部相同则接受；超出 `Long` 或超出请求体上限 → 400 / 413 并关闭。
-  4. 两者都没有 → 请求体长度 0。
-- **客户端对响应**：收到 1xx 中间响应（100 / 102 / 103）后丢弃并继续等待最终响应；101 不支持（无 Upgrade）→ 错误并关闭；HEAD 的响应、1xx、204、304
-  无响应体（不论头部）；其余同上优先级；两者都没有 → 读到连接关闭为止（以关闭界定的响应体，之后
-  连接不复用）；TE + CL 同时出现 → 视为错误，关闭连接。
-- **截断**：请求体（长度或 chunked）未完整到达即 EOF → 服务端 handler 读取请求体时得到 `IoException`（"truncated"），连接关闭；客户端同理。
-- **keep-alive 与流水线**：HTTP/1.1 默认保持连接；任一方 `Connection: close` → 该响应后关闭。服务端按序处理、按序响应；已缓冲但未处理的流水线请求
-  上限 16 个，达到后停止读取（背压）。
-- **响应时请求体未读完**：handler 返回时若请求体还有剩余，服务端在**字节上限 64 KiB 且时间上限 5 s** 内读掉丢弃后复用连接；剩余超过字节上限、
-  长度未知或超时（慢速发送）→ 响应带 `Connection: close` 并在响应后关闭。
-- **`Expect: 100-continue`**：不支持。服务端收到后立即以 417 响应、带 `Connection: close`，不读取请求体，响应后关闭（不形成双方互等）；客户端从不发送。
-- **流式与背压**：请求体以挂起式分块读取交给 handler；响应体可为固定字节、已知长度的流（`Content-Length`）或未知长度的流（`chunked`）；handler 声明的
-  长度与实际不符 → 连接关闭。**应用缓冲上限**：服务端每连接持有的请求数据不超过一个读缓冲（最大 64 KiB）加一个 chunk 头。100 MB 上传测试把请求体上限
-  **显式调到 200 MiB**，handler 流式读完全部请求体并核对长度与校验和（证明完整消费而非被 413 拒绝），同时断言服务端 RSS 增长 ≤ 16 MiB；另有一个用例用默认
-  上限验证 413 并关闭。
-- **超时**：头部读取速率（慢速攻击，沿用 `Framed` 帧读取速率：首字节起 10 s 内收完头部）、空闲 keep-alive 超时 60 s。
-- **测试**：请求在每个字节边界拆分到达（模糊）；流水线 16 个请求；请求走私向量（TE + CL、重复且不同的 CL、`Transfer-Encoding: gzip, chunked`、
-  `chunked, gzip`、带符号 / 空白 / 溢出的 CL、chunk 大小溢出、`obs-fold`、裸 LF）逐个断言 400 / 501 并关闭；HEAD / 204 / 304 无体；截断；未读完请求体
-  的复用与关闭两种路径；`Expect: 100-continue` → 417 并关闭；上传 100 MB 的内存上限；处理中客户端断开（取消与回收）；平滑停机中在途请求完成、
-  新连接被拒；与 `curl` 互通；可选：同机对照 `~/projects/Neton/geario-http`（§28.4 验收指标）。
+### 28.7 第二个协议消费者：`http` 仓库（首版复刻 hyper 的 HTTP/1.1 能力）
+用户："第一个版本就是按照他们的实现 100% 复刻能力，充分利用我们 neton.io 的底层能力统一定义、统一抽象方式、统一并发模型，基于 Kotlin Native 的特点去
+落地这些库，每个库都要独立仓库和独立的 spec 文档。" 因此修订 3 中"冻结的 HTTP/1.1 子集"不再作为范围：
+- 第二个消费者是独立仓库 `http`（坐标 `com.netonstream:http`，通用类型在 `neton.http`、HTTP/1.1 专属实现在 `neton.http.h1`），首版复刻参考实现
+  `http` 1.5.0、`httparse` 1.10.1、`hyper` 1.11.1 的全部 HTTP/1.1 能力（含原子集排除的 `Expect: 100-continue` 与 Upgrade / CONNECT）；详细规格在
+  `http/SPEC.md`，以参考源码盘点出的能力清单为准（§28.14）。
+- 修订 2 / 3 中冻结的消息边界规则（TE + CL、重复 / 非法 CL、截断、chunk / trailer 上限、HEAD / 1xx / 204 / 304、未读完请求体的复用上限、1xx 后继续等待
+  最终响应、上传内存上限等）**作为安全基线**移入 `http/SPEC.md`：hyper 的行为与基线一致或更严格时照 hyper；不一致之处在 `http/SPEC.md` 逐条记录
+  并决定（默认取两者中更安全的一方，可配置时默认值也取更安全的一方），不得默默采用任何一方。
+- 对 neton-io 的意义不变：只用公开 API（不引用 `ReactorResumer`）；实现中每一处"只用公开 API 做不到"的地方记入本 SPEC（缺口 → 设计 → 修复）。
 
 ### 28.8 可观测性
 - **更新**：计数器按反应器存放，只在所属反应器上用普通字段更新（热路径无原子操作）。
@@ -1415,14 +1395,35 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
 | 职责 | Maven 坐标 | Kotlin 包 |
 |---|---|---|
 | I/O 与网络底座 | `com.netonstream:io`（testkit：`com.netonstream:io-testkit`） | `neton.io.*`（不变） |
-| HTTP 协议库（§28.7 起步） | `com.netonstream:http` | `neton.http`（通用的请求、响应、客户端、服务端等类型）；协议专属实现在 `neton.http.h1`，以后 `neton.http.h2` / `neton.http.h3` |
-| WebSocket 协议库 | `com.netonstream:websocket` | `neton.websocket` |
-| QUIC 协议库 | `com.netonstream:quic` | `neton.quic`（依赖 §28.9 数据报层） |
+| HTTP 协议库（§28.7 起步），仓库 `http` | `com.netonstream:http` | `neton.http`（通用的请求、响应、客户端、服务端等类型）；协议专属实现在 `neton.http.h1`，以后 `neton.http.h2` / `neton.http.h3` |
+| WebSocket 协议库，仓库 `websocket` | `com.netonstream:websocket` | `neton.websocket` |
+| QUIC 协议库，仓库 `quic` | `com.netonstream:quic` | `neton.quic`（依赖 §28.9 数据报层） |
 | msgtrans | `com.netonstream:msgtrans`（不变） | `msgtrans.*`（不变） |
-- **仓库**：仍名 `neton-io`，不随坐标缩短。
+- **仓库**：底座仍名 `neton-io`，不随坐标缩短；协议库仓库与坐标同名：`http`、`websocket`、`quic`（本地在 `~/projects/PulseKit/` 下与 `neton-io` 并列；
+  GitHub 远程仓库待用户确认组织与可见性后再建）。
 - **发布**：`com.netonstream:neton-io:0.1.0` 保持不动；自 0.2.0 起用新坐标，旧坐标发布一次 Maven 重定位（relocation）POM 指向新坐标。
 - **包的划分按职责**：通用 HTTP API 放在 `neton.http`，使用者切换协议版本不必更换整套类型；只有协议专属的实现与扩展放进 `h1` / `h2` / `h3`。
 - **与现有 Neton 框架并行，集成延期**：`io` / `http` / `quic` / `websocket` 是独立建设的协议栈，按自身职责设计 API，**不为现有框架（`com.netonstream:neton-http`，
   `neton.http.*`）避让包名或类型名**，也不要求与它同时链接。等这套协议栈经过验证、性能达到目标后，再由框架调整去接入（届时处理两者的包与类型关系）。
 - **目标表述**：在协议正确、取消安全、资源有界、调度公平的前提下，持续对标领先实现（geario 等）提升性能。"性能无敌"是方向，不是验收标准；每个阶段
   都要有明确的对照场景与数据（§28.4 的规程与验收指标）。
+
+### 28.14 协议库的建设方法（2026-09-27 用户确定）
+- **参考实现固定版本**：本地学习副本在 `~/projects/reference/rust/`（浅克隆到发布 tag，只读；索引与提交号见其中 `README.md`）：`http` 1.5.0、`hyper` 1.11.1、
+  `httparse` 1.10.1、`h2` 0.4.19、`tungstenite` 0.30.0、`tokio-tungstenite` 0.30.0、`quinn` 0.11.12 / `quinn-proto` 0.11.18 / `quinn-udp`、`h3` 0.0.8；
+  自有性能参考 `~/projects/Neton/geario`、`geario-http`。升级参考版本是单独的一步，另行记录。
+- **首版范围 = 能力对等**：每个库的首版复刻对应参考实现的全部能力（配置项、协议行为、错误语义、限值与默认值）；各库 `SPEC.md` 以参考源码逐项盘点
+  出的能力清单作为对等清单，逐项标注"已实现 / 有意不同（附理由）/ 不适用（附理由）"。
+- **统一在 neton.io 之上**：字节流一律是 `IoStream`（及 `Framed` / `Codec`），数据报一律是 §28.9 的数据报层；并发模型一律是 neton-io 的协程 + 反应器
+  （连接归属所属反应器、取消按 §28.3 / §28.6、准入按 §28.12、资源上限与停机按 §23.4 / §27）；运行时相关的抽象（执行器、计时器、I/O trait）不照搬参考实现的
+  trait 层级，而是映射到 neton-io 的对应能力。协议状态机尽量不依赖真实网络与系统时间（像 `quinn-proto` 那样输入字节 / 时间 / 事件、输出字节 / 事件），
+  以便确定性测试，但不强求所有协议套用同一种接口。
+- **按 Kotlin / Native 落地**：不逐字翻译 Rust 的 `Poll`、生命周期参数与 trait 层级；API 用挂起函数与结构化并发；热路径遵守零分配规则（§24、§26.1），
+  以 callgrind 实测为准。
+- **每个库独立仓库、独立 SPEC**：`http`、`websocket`、`quic` 各自的 `SPEC.md` 规定该库的全部内容；neton-io SPEC 只记录底座缺口。
+- **测试**：移植参考实现的测试套件（按其用例逐条对应）与模糊测试目标；外部一致性套件（HTTP/2：h2spec；WebSocket：Autobahn；QUIC：quic-interop-runner）
+  纳入各库验收。
+- **性能对照**：同机同负载、**同等功能配置**对照参考实现（hyper / h2 / tungstenite / quinn）与 geario / geario-http，按 §28.4 的规程与验收指标；不以简化路径
+  对比对方完整实现宣布胜出；参考实现也不是"已证明最快"的排行榜。
+- **许可与署名**：参考实现为 MIT 或 MIT / Apache-2.0 双许可；各库以 Apache-2.0 发布，`NOTICE` 保留上游版权声明与 MIT 许可正文（已建立）。
+- **顺序**：HTTP/1.1 → WebSocket → HTTP/2 → QUIC → HTTP/3（QUIC 依赖 §28.9 数据报层，届时另起 neton-io SPEC）。
