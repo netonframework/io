@@ -1,0 +1,141 @@
+=== round=1 driver=epoll mode=interleave load=0.06
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=28 max_us=3172 pending=0
+cross_thread_wait n=10000 p50_us=10 p99_us=25 max_us=1202 pending=0
+accept_to_handler n=10000 p50_us=4 p99_us=8 max_us=65 pending=0
+elapsed_ms 11201
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":957239,"tasks_run":245053184,"max_tasks_in_round":256,"polls":957238,"polls_zero_timeout":957238,"polls_no_events":937248,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":957238,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=1 driver=epoll mode=strict load=0.20
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=8 p99_us=24 max_us=9426 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30003817
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14611
+elapsed_ms 30003
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":2642624,"tasks_run":676511512,"max_tasks_in_round":256,"polls":2642623,"polls_zero_timeout":2642623,"polls_no_events":2608515,"events":34146,"max_events_in_poll":10,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14616,"budget_exhausted":2642623,"max_resume_queued":1025,"max_plain_queued":14612,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=1 driver=iouring mode=interleave load=0.90
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=7 p99_us=23 max_us=1080 pending=0
+cross_thread_wait n=10000 p50_us=9 p99_us=22 max_us=1031 pending=0
+accept_to_handler n=10000 p50_us=2 p99_us=4 max_us=110 pending=0
+elapsed_ms 10800
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":920698,"tasks_run":235698688,"max_tasks_in_round":256,"polls":920697,"polls_zero_timeout":920697,"polls_no_events":900709,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":920697,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=1 driver=iouring mode=strict load=0.99
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=8 p99_us=24 max_us=8134 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30004607
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14639
+elapsed_ms 30003
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":2657191,"tasks_run":680240692,"max_tasks_in_round":256,"polls":2657190,"polls_zero_timeout":2657190,"polls_no_events":2642550,"events":14642,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14644,"budget_exhausted":2657190,"max_resume_queued":1025,"max_plain_queued":14640,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=2 driver=epoll mode=interleave load=1.00
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=25 max_us=715 pending=0
+cross_thread_wait n=10000 p50_us=10 p99_us=22 max_us=1063 pending=0
+accept_to_handler n=10000 p50_us=5 p99_us=9 max_us=107 pending=0
+elapsed_ms 11200
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":962235,"tasks_run":246332160,"max_tasks_in_round":256,"polls":962234,"polls_zero_timeout":962234,"polls_no_events":942237,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":962234,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=2 driver=epoll mode=strict load=1.00
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=26 max_us=8758 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30003697
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14562
+elapsed_ms 30002
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":2636988,"tasks_run":675068903,"max_tasks_in_round":256,"polls":2636987,"polls_zero_timeout":2636987,"polls_no_events":2602915,"events":34092,"max_events_in_poll":9,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14567,"budget_exhausted":2636987,"max_resume_queued":1025,"max_plain_queued":14563,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=2 driver=iouring mode=interleave load=1.08
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=7 p99_us=21 max_us=64 pending=0
+cross_thread_wait n=10000 p50_us=9 p99_us=20 max_us=748 pending=0
+accept_to_handler n=10000 p50_us=1 p99_us=2 max_us=94 pending=0
+elapsed_ms 10800
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":934406,"tasks_run":239207936,"max_tasks_in_round":256,"polls":934405,"polls_zero_timeout":934405,"polls_no_events":914410,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":934405,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=2 driver=iouring mode=strict load=1.06
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=8 p99_us=23 max_us=11400 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30004224
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14606
+elapsed_ms 30003
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":2651344,"tasks_run":678743827,"max_tasks_in_round":256,"polls":2651343,"polls_zero_timeout":2651343,"polls_no_events":2636735,"events":14609,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14611,"budget_exhausted":2651343,"max_resume_queued":1025,"max_plain_queued":14607,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=3 driver=epoll mode=interleave load=1.04
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=33 max_us=472 pending=0
+cross_thread_wait n=10000 p50_us=12 p99_us=29 max_us=1210 pending=0
+accept_to_handler n=10000 p50_us=5 p99_us=10 max_us=89 pending=0
+elapsed_ms 11301
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":964273,"tasks_run":246853888,"max_tasks_in_round":256,"polls":964272,"polls_zero_timeout":964272,"polls_no_events":944277,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":964272,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=3 driver=epoll mode=strict load=1.03
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=8 p99_us=26 max_us=8734 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30004263
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14637
+elapsed_ms 30003
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":2639857,"tasks_run":675803186,"max_tasks_in_round":256,"polls":2639856,"polls_zero_timeout":2639856,"polls_no_events":2605729,"events":34164,"max_events_in_poll":9,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14642,"budget_exhausted":2639856,"max_resume_queued":1025,"max_plain_queued":14638,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=3 driver=iouring mode=interleave load=1.16
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=8 p99_us=29 max_us=374 pending=0
+cross_thread_wait n=10000 p50_us=12 p99_us=27 max_us=801 pending=0
+accept_to_handler n=10000 p50_us=3 p99_us=4 max_us=89 pending=0
+elapsed_ms 10801
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":806727,"tasks_run":206522112,"max_tasks_in_round":256,"polls":806726,"polls_zero_timeout":806726,"polls_no_events":786736,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":806726,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=3 driver=iouring mode=strict load=1.29
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=7 p99_us=26 max_us=8658 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30003457
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14597
+elapsed_ms 30002
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":2634522,"tasks_run":674437386,"max_tasks_in_round":256,"polls":2634521,"polls_zero_timeout":2634521,"polls_no_events":2619922,"events":14600,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14602,"budget_exhausted":2634521,"max_resume_queued":1025,"max_plain_queued":14598,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=4 driver=epoll mode=interleave load=1.17
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=33 max_us=2402 pending=0
+cross_thread_wait n=10000 p50_us=11 p99_us=29 max_us=1483 pending=0
+accept_to_handler n=10000 p50_us=5 p99_us=10 max_us=65 pending=0
+elapsed_ms 11301
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":961008,"tasks_run":246018048,"max_tasks_in_round":256,"polls":961007,"polls_zero_timeout":961007,"polls_no_events":941017,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":961007,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=4 driver=epoll mode=strict load=1.15
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=8 p99_us=31 max_us=11978 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30017738
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14438
+elapsed_ms 30016
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":2599776,"tasks_run":665542507,"max_tasks_in_round":256,"polls":2599775,"polls_zero_timeout":2599775,"polls_no_events":2566049,"events":33778,"max_events_in_poll":14,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14443,"budget_exhausted":2599775,"max_resume_queued":1025,"max_plain_queued":14439,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=4 driver=iouring mode=interleave load=1.09
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=7 p99_us=30 max_us=3916 pending=0
+cross_thread_wait n=10000 p50_us=12 p99_us=29 max_us=798 pending=0
+accept_to_handler n=10000 p50_us=2 p99_us=5 max_us=112 pending=0
+elapsed_ms 10901
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":910245,"tasks_run":233022720,"max_tasks_in_round":256,"polls":910244,"polls_zero_timeout":910244,"polls_no_events":890254,"events":20000,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":910244,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=4 driver=iouring mode=strict load=1.07
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=8 p99_us=22 max_us=10718 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30010119
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14632
+elapsed_ms 30009
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":2606269,"tasks_run":667204653,"max_tasks_in_round":256,"polls":2606268,"polls_zero_timeout":2606268,"polls_no_events":2591634,"events":14635,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14637,"budget_exhausted":2606268,"max_resume_queued":1025,"max_plain_queued":14633,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=5 driver=epoll mode=interleave load=1.04
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=25 max_us=421 pending=0
+cross_thread_wait n=10000 p50_us=10 p99_us=23 max_us=810 pending=0
+accept_to_handler n=10000 p50_us=4 p99_us=8 max_us=88 pending=0
+elapsed_ms 11200
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":958563,"tasks_run":245392128,"max_tasks_in_round":256,"polls":958562,"polls_zero_timeout":958562,"polls_no_events":938574,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":958562,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=5 driver=epoll mode=strict load=1.11
+fairness-probe pairs=1024 samples=10000 driver=ReadinessReactor
+timer_late n=10000 p50_us=7 p99_us=21 max_us=10062 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30003923
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14554
+elapsed_ms 30003
+NETON_IO_STATS {"driver":"epoll","task_budget":256,"rounds":2624746,"tasks_run":671934943,"max_tasks_in_round":256,"polls":2624745,"polls_zero_timeout":2624745,"polls_no_events":2590745,"events":34036,"max_events_in_poll":10,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14559,"budget_exhausted":2624745,"max_resume_queued":1025,"max_plain_queued":14555,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+=== round=5 driver=iouring mode=interleave load=1.14
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=7 p99_us=27 max_us=5408 pending=0
+cross_thread_wait n=10000 p50_us=9 p99_us=21 max_us=791 pending=0
+accept_to_handler n=10000 p50_us=2 p99_us=3 max_us=53 pending=0
+elapsed_ms 10801
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":918185,"tasks_run":235055360,"max_tasks_in_round":256,"polls":918184,"polls_zero_timeout":918184,"polls_no_events":898191,"events":20001,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":22050,"budget_exhausted":918184,"max_resume_queued":1025,"max_plain_queued":1,"external_batches":10000,"external_tasks":10000,"max_external_batch":1,"refused_posts":0}
+=== round=5 driver=iouring mode=strict load=1.12
+fairness-probe pairs=1024 samples=10000 driver=UringReactor
+timer_late n=10000 p50_us=8 p99_us=22 max_us=13123 pending=0
+cross_thread_wait n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=1 oldest_pending_us=30004070
+accept_to_handler n=0 p50_us=-1 p99_us=-1 max_us=-1 pending=14631
+elapsed_ms 30003
+NETON_IO_STATS {"driver":"iouring+defer","task_budget":256,"rounds":2606614,"tasks_run":667292972,"max_tasks_in_round":256,"polls":2606613,"polls_zero_timeout":2606613,"polls_no_events":2591980,"events":14634,"max_events_in_poll":2,"reads":0,"read_bytes":0,"reads_would_block":0,"writes":0,"write_bytes":0,"writes_would_block":0,"plain_tasks_run":14636,"budget_exhausted":2606613,"max_resume_queued":1025,"max_plain_queued":14632,"external_batches":1,"external_tasks":1,"max_external_batch":1,"refused_posts":0}
+F2-DONE

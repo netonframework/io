@@ -1,0 +1,156 @@
+# round 1
+## ne-lines srv_cpu=1.97 mixed load=3.40 gen_cpu=0.74
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7452958 qps=248432 p50_us=3760 p99_us=7414 p999_us=10051 max_us=17158 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7434 conn_med=7457 min_over_med=0.997 max_gap_ms=17 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7632096 qps=254403 p50_us=3758 p99_us=7453 p999_us=10066 max_us=16786 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=118944 conn_med=119328 min_over_med=0.997 max_gap_ms=16 errors=0 outstanding=1024
+## ne-lines-strict srv_cpu=1.97 mixed load=3.56 gen_cpu=0.75
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7408397 qps=246947 p50_us=3781 p99_us=7356 p999_us=10023 max_us=17168 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7292 conn_med=7516 min_over_med=0.970 max_gap_ms=17 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7566768 qps=252226 p50_us=3789 p99_us=7381 p999_us=10066 max_us=16391 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=116688 conn_med=116752 min_over_med=0.999 max_gap_ms=16 errors=0 outstanding=1024
+## nu-lines srv_cpu=1.96 mixed load=3.33 gen_cpu=0.70
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7433051 qps=247768 p50_us=3758 p99_us=7979 p999_us=11513 max_us=18289 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7389 conn_med=7473 min_over_med=0.989 max_gap_ms=18 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7605776 qps=253526 p50_us=3765 p99_us=7975 p999_us=11486 max_us=16025 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=118224 conn_med=118320 min_over_med=0.999 max_gap_ms=16 errors=0 outstanding=1024
+## ne-raw srv_cpu=1.96 mixed load=3.43 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=11561732 qps=385391 p50_us=2561 p99_us=3315 p999_us=5272 max_us=12200 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=11540 conn_med=11570 min_over_med=0.997 max_gap_ms=12 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=11839664 qps=394655 p50_us=2561 p99_us=3322 p999_us=5212 max_us=12217 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=184656 conn_med=185120 min_over_med=0.997 max_gap_ms=12 errors=0 outstanding=1024
+## geario srv_cpu=1.98 mixed load=3.42 gen_cpu=0.92
+class cold conns=1000 depth=1 rate=0 mode=closed samples=9857055 qps=328568 p50_us=3004 p99_us=4287 p999_us=5933 max_us=10158 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=9727 conn_med=9875 min_over_med=0.985 max_gap_ms=10 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=10087056 qps=336235 p50_us=3006 p99_us=4291 p999_us=5926 max_us=10165 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=155536 conn_med=157904 min_over_med=0.985 max_gap_ms=10 errors=0 outstanding=1024
+## ne-lines srv_cpu=1.97 ref load=3.26 gen_cpu=0.85
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8447452 qps=281582 p50_us=3238 p99_us=6755 p999_us=11704 max_us=29055 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8359 conn_med=8482 min_over_med=0.985 max_gap_ms=29 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=540691 qps=18023 p50_us=3239 p99_us=6704 p999_us=11694 max_us=19844 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8359 conn_med=8482 min_over_med=0.985 max_gap_ms=19 errors=0 outstanding=64
+## ne-lines-strict srv_cpu=1.97 ref load=3.38 gen_cpu=0.88
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7384396 qps=246147 p50_us=3892 p99_us=7937 p999_us=12367 max_us=20614 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7257 conn_med=7446 min_over_med=0.975 max_gap_ms=20 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=472535 qps=15751 p50_us=3894 p99_us=7944 p999_us=12228 max_us=20061 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7258 conn_med=7447 min_over_med=0.975 max_gap_ms=20 errors=0 outstanding=64
+## nu-lines srv_cpu=1.96 ref load=3.59 gen_cpu=0.79
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7841017 qps=261367 p50_us=3626 p99_us=8507 p999_us=13432 max_us=21089 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7823 conn_med=7839 min_over_med=0.998 max_gap_ms=21 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=501873 qps=16729 p50_us=3625 p99_us=8541 p999_us=12931 max_us=17448 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7823 conn_med=7843 min_over_med=0.997 max_gap_ms=17 errors=0 outstanding=64
+## ne-raw srv_cpu=1.94 ref load=3.75 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8973414 qps=299114 p50_us=3025 p99_us=4532 p999_us=6508 max_us=9943 lag_p99_us=0 lag_max_us=0 jain=0.976 conn_min=7535 conn_med=10367 min_over_med=0.727 max_gap_ms=9 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=574468 qps=19149 p50_us=3024 p99_us=4527 p999_us=6485 max_us=9683 lag_p99_us=0 lag_max_us=0 jain=0.975 conn_min=7535 conn_med=10367 min_over_med=0.727 max_gap_ms=9 errors=0 outstanding=64
+## geario srv_cpu=1.98 ref load=3.59 gen_cpu=0.95
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7491207 qps=249707 p50_us=4033 p99_us=5825 p999_us=7616 max_us=13346 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=7205 conn_med=7707 min_over_med=0.935 max_gap_ms=13 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=479240 qps=15975 p50_us=4033 p99_us=5830 p999_us=7591 max_us=13211 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=7206 conn_med=7708 min_over_med=0.935 max_gap_ms=13 errors=0 outstanding=64
+# round 2
+## ne-lines srv_cpu=1.97 mixed load=3.25 gen_cpu=0.84
+class cold conns=1000 depth=1 rate=0 mode=closed samples=5841815 qps=194727 p50_us=4852 p99_us=8604 p999_us=15050 max_us=25575 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=5829 conn_med=5843 min_over_med=0.998 max_gap_ms=25 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=5981664 qps=199389 p50_us=4850 p99_us=8585 p999_us=14916 max_us=25592 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=93264 conn_med=93456 min_over_med=0.998 max_gap_ms=25 errors=0 outstanding=1024
+## ne-lines-strict srv_cpu=1.97 mixed load=3.34 gen_cpu=0.76
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7151129 qps=238371 p50_us=3844 p99_us=7994 p999_us=12538 max_us=31902 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7045 conn_med=7241 min_over_med=0.973 max_gap_ms=31 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7309280 qps=243643 p50_us=3851 p99_us=7995 p999_us=12513 max_us=31890 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=112720 conn_med=112896 min_over_med=0.998 max_gap_ms=31 errors=0 outstanding=1024
+## nu-lines srv_cpu=1.96 mixed load=3.25 gen_cpu=0.73
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6299034 qps=209968 p50_us=4572 p99_us=9618 p999_us=15588 max_us=27000 lag_p99_us=0 lag_max_us=0 jain=0.998 conn_min=6039 conn_med=6539 min_over_med=0.924 max_gap_ms=27 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6356624 qps=211887 p50_us=4650 p99_us=9688 p999_us=15642 max_us=24865 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=96624 conn_med=96784 min_over_med=0.998 max_gap_ms=24 errors=0 outstanding=1024
+## ne-raw srv_cpu=1.98 mixed load=3.56 gen_cpu=0.97
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8873349 qps=295778 p50_us=3122 p99_us=4906 p999_us=7108 max_us=11358 lag_p99_us=0 lag_max_us=0 jain=0.989 conn_min=7940 conn_med=7953 min_over_med=0.998 max_gap_ms=11 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=9440032 qps=314668 p50_us=2962 p99_us=4834 p999_us=7019 max_us=10715 lag_p99_us=0 lag_max_us=0 jain=0.991 conn_min=127056 conn_med=157232 min_over_med=0.808 max_gap_ms=10 errors=0 outstanding=1024
+## geario srv_cpu=1.98 mixed load=3.58 gen_cpu=0.93
+class cold conns=1000 depth=1 rate=0 mode=closed samples=10015725 qps=333858 p50_us=2974 p99_us=4126 p999_us=6535 max_us=12310 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=9967 conn_med=10038 min_over_med=0.993 max_gap_ms=12 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=10250544 qps=341685 p50_us=2976 p99_us=4126 p999_us=6587 max_us=11867 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=159376 conn_med=160512 min_over_med=0.993 max_gap_ms=11 errors=0 outstanding=1024
+## ne-lines srv_cpu=1.97 ref load=3.45 gen_cpu=0.83
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8654503 qps=288483 p50_us=3298 p99_us=6488 p999_us=9509 max_us=16514 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8616 conn_med=8689 min_over_med=0.992 max_gap_ms=16 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=553869 qps=18462 p50_us=3298 p99_us=6477 p999_us=9463 max_us=15174 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8616 conn_med=8689 min_over_med=0.992 max_gap_ms=15 errors=0 outstanding=64
+## ne-lines-strict srv_cpu=1.97 ref load=3.31 gen_cpu=0.83
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8736302 qps=291210 p50_us=3235 p99_us=6598 p999_us=9783 max_us=16735 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8708 conn_med=8712 min_over_med=1.000 max_gap_ms=16 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=559239 qps=18641 p50_us=3235 p99_us=6588 p999_us=9774 max_us=16079 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8709 conn_med=8763 min_over_med=0.994 max_gap_ms=16 errors=0 outstanding=64
+## nu-lines srv_cpu=1.96 ref load=3.40 gen_cpu=0.78
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8329078 qps=277636 p50_us=3374 p99_us=7356 p999_us=11836 max_us=19906 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8299 conn_med=8323 min_over_med=0.997 max_gap_ms=19 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=533165 qps=17772 p50_us=3373 p99_us=7354 p999_us=11863 max_us=19752 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8300 conn_med=8335 min_over_med=0.996 max_gap_ms=19 errors=0 outstanding=64
+## ne-raw srv_cpu=1.95 ref load=3.41 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=11444154 qps=381472 p50_us=2583 p99_us=3607 p999_us=5379 max_us=8301 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=11423 conn_med=11447 min_over_med=0.998 max_gap_ms=8 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=732390 qps=24413 p50_us=2584 p99_us=3604 p999_us=5494 max_us=8043 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=11423 conn_med=11447 min_over_med=0.998 max_gap_ms=8 errors=0 outstanding=64
+## geario srv_cpu=1.97 ref load=3.34 gen_cpu=0.94
+class cold conns=1000 depth=1 rate=0 mode=closed samples=10381486 qps=346050 p50_us=2833 p99_us=4420 p999_us=6018 max_us=11754 lag_p99_us=0 lag_max_us=0 jain=0.974 conn_min=8912 conn_med=9004 min_over_med=0.990 max_gap_ms=11 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=694503 qps=23150 p50_us=2522 p99_us=4314 p999_us=5986 max_us=11758 lag_p99_us=0 lag_max_us=0 jain=0.975 conn_min=8912 conn_med=12323 min_over_med=0.723 max_gap_ms=11 errors=0 outstanding=64
+# round 3
+## ne-lines srv_cpu=1.97 mixed load=3.12 gen_cpu=0.76
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7272631 qps=242421 p50_us=3842 p99_us=7402 p999_us=11252 max_us=18242 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7241 conn_med=7296 min_over_med=0.992 max_gap_ms=18 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7445568 qps=248186 p50_us=3841 p99_us=7418 p999_us=11420 max_us=18246 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=115872 conn_med=115968 min_over_med=0.999 max_gap_ms=18 errors=0 outstanding=1024
+## ne-lines-strict srv_cpu=1.97 mixed load=3.19 gen_cpu=0.75
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7305371 qps=243512 p50_us=3840 p99_us=7428 p999_us=10192 max_us=17852 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7210 conn_med=7390 min_over_med=0.976 max_gap_ms=17 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7471248 qps=249042 p50_us=3844 p99_us=7452 p999_us=10266 max_us=17767 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=115360 conn_med=115472 min_over_med=0.999 max_gap_ms=17 errors=0 outstanding=1024
+## nu-lines srv_cpu=1.96 mixed load=3.12 gen_cpu=0.75
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6487927 qps=216264 p50_us=4328 p99_us=8341 p999_us=11562 max_us=29006 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6437 conn_med=6489 min_over_med=0.992 max_gap_ms=29 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6642912 qps=221430 p50_us=4333 p99_us=8326 p999_us=11464 max_us=28985 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=102992 conn_med=103840 min_over_med=0.992 max_gap_ms=28 errors=0 outstanding=1024
+## ne-raw srv_cpu=1.95 mixed load=3.51 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8917381 qps=297246 p50_us=3047 p99_us=4734 p999_us=6975 max_us=22351 lag_p99_us=0 lag_max_us=0 jain=0.976 conn_min=7499 conn_med=10260 min_over_med=0.731 max_gap_ms=22 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=9123744 qps=304125 p50_us=3050 p99_us=4731 p999_us=7135 max_us=22360 lag_p99_us=0 lag_max_us=0 jain=0.976 conn_min=119984 conn_med=164160 min_over_med=0.731 max_gap_ms=22 errors=0 outstanding=1024
+## geario srv_cpu=1.98 mixed load=3.80 gen_cpu=0.93
+class cold conns=1000 depth=1 rate=0 mode=closed samples=10212445 qps=340415 p50_us=2900 p99_us=4340 p999_us=6520 max_us=12604 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=10186 conn_med=10213 min_over_med=0.997 max_gap_ms=12 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=10449056 qps=348302 p50_us=2902 p99_us=4334 p999_us=6529 max_us=12177 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=162848 conn_med=163296 min_over_med=0.997 max_gap_ms=12 errors=0 outstanding=1024
+## ne-lines srv_cpu=1.97 ref load=3.84 gen_cpu=0.83
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8772778 qps=292426 p50_us=3215 p99_us=6527 p999_us=9422 max_us=19328 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8760 conn_med=8781 min_over_med=0.998 max_gap_ms=19 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=561426 qps=18714 p50_us=3215 p99_us=6531 p999_us=9415 max_us=15659 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8761 conn_med=8765 min_over_med=1.000 max_gap_ms=15 errors=0 outstanding=64
+## ne-lines-strict srv_cpu=1.97 ref load=3.78 gen_cpu=0.84
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7229756 qps=240992 p50_us=3813 p99_us=8077 p999_us=10649 max_us=15118 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7172 conn_med=7275 min_over_med=0.986 max_gap_ms=15 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=462598 qps=15420 p50_us=3817 p99_us=8065 p999_us=10788 max_us=12932 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7173 conn_med=7184 min_over_med=0.998 max_gap_ms=12 errors=0 outstanding=64
+## nu-lines srv_cpu=1.96 ref load=3.39 gen_cpu=0.79
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6997581 qps=233253 p50_us=3955 p99_us=9992 p999_us=16203 max_us=35384 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6877 conn_med=7098 min_over_med=0.969 max_gap_ms=35 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=447619 qps=14921 p50_us=3957 p99_us=9963 p999_us=16170 max_us=35337 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6878 conn_med=6895 min_over_med=0.998 max_gap_ms=35 errors=0 outstanding=64
+## ne-raw srv_cpu=1.98 ref load=3.34 gen_cpu=0.97
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8916105 qps=297204 p50_us=3030 p99_us=4751 p999_us=8038 max_us=30107 lag_p99_us=0 lag_max_us=0 jain=0.975 conn_min=7449 conn_med=10294 min_over_med=0.724 max_gap_ms=30 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=567552 qps=18918 p50_us=3061 p99_us=4760 p999_us=8294 max_us=18984 lag_p99_us=0 lag_max_us=0 jain=0.975 conn_min=7449 conn_med=7509 min_over_med=0.992 max_gap_ms=18 errors=0 outstanding=64
+## geario srv_cpu=1.99 ref load=3.09 gen_cpu=0.92
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8092160 qps=269739 p50_us=3429 p99_us=5198 p999_us=7372 max_us=13915 lag_p99_us=0 lag_max_us=0 jain=0.976 conn_min=6847 conn_med=6855 min_over_med=0.999 max_gap_ms=13 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=542067 qps=18069 p50_us=3254 p99_us=5094 p999_us=7044 max_us=13111 lag_p99_us=0 lag_max_us=0 jain=0.980 conn_min=6848 conn_med=9369 min_over_med=0.731 max_gap_ms=13 errors=0 outstanding=64
+# round 4
+## ne-lines srv_cpu=1.97 mixed load=2.86 gen_cpu=0.79
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6137447 qps=204582 p50_us=4681 p99_us=9035 p999_us=15230 max_us=30430 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6091 conn_med=6169 min_over_med=0.987 max_gap_ms=30 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6283344 qps=209445 p50_us=4683 p99_us=9018 p999_us=15434 max_us=25665 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=97472 conn_med=97664 min_over_med=0.998 max_gap_ms=25 errors=0 outstanding=1024
+## ne-lines-strict srv_cpu=1.97 mixed load=2.86 gen_cpu=0.77
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6554498 qps=218483 p50_us=4060 p99_us=8721 p999_us=12605 max_us=25185 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6430 conn_med=6666 min_over_med=0.965 max_gap_ms=25 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6692208 qps=223074 p50_us=4073 p99_us=8755 p999_us=12478 max_us=25195 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=102896 conn_med=103056 min_over_med=0.998 max_gap_ms=25 errors=0 outstanding=1024
+## nu-lines srv_cpu=1.96 mixed load=3.10 gen_cpu=0.75
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6308222 qps=210274 p50_us=4519 p99_us=9132 p999_us=16851 max_us=32553 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=6148 conn_med=6459 min_over_med=0.952 max_gap_ms=32 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6422144 qps=214071 p50_us=4552 p99_us=9169 p999_us=17189 max_us=32341 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=98368 conn_med=98464 min_over_med=0.999 max_gap_ms=32 errors=0 outstanding=1024
+## ne-raw srv_cpu=1.94 mixed load=3.25 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8930877 qps=297696 p50_us=3001 p99_us=4682 p999_us=6473 max_us=13527 lag_p99_us=0 lag_max_us=0 jain=0.974 conn_min=7458 conn_med=10378 min_over_med=0.719 max_gap_ms=13 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=9145376 qps=304846 p50_us=3001 p99_us=4683 p999_us=6613 max_us=12464 lag_p99_us=0 lag_max_us=0 jain=0.974 conn_min=119360 conn_med=166064 min_over_med=0.719 max_gap_ms=12 errors=0 outstanding=1024
+## geario srv_cpu=1.99 mixed load=3.13 gen_cpu=0.94
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8261960 qps=275399 p50_us=3715 p99_us=4821 p999_us=7232 max_us=13017 lag_p99_us=0 lag_max_us=0 jain=0.993 conn_min=7541 conn_med=8851 min_over_med=0.852 max_gap_ms=13 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=8434896 qps=281163 p50_us=3726 p99_us=4834 p999_us=7223 max_us=13005 lag_p99_us=0 lag_max_us=0 jain=0.994 conn_min=120544 conn_med=141472 min_over_med=0.852 max_gap_ms=13 errors=0 outstanding=1024
+## ne-lines srv_cpu=1.97 ref load=3.30 gen_cpu=0.87
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7560256 qps=252009 p50_us=3833 p99_us=8638 p999_us=11702 max_us=21305 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7387 conn_med=7720 min_over_med=0.957 max_gap_ms=21 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=483855 qps=16128 p50_us=3831 p99_us=8658 p999_us=11652 max_us=16417 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7388 conn_med=7720 min_over_med=0.957 max_gap_ms=16 errors=0 outstanding=64
+## ne-lines-strict srv_cpu=1.98 ref load=3.33 gen_cpu=0.88
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7435971 qps=247866 p50_us=3913 p99_us=7196 p999_us=11538 max_us=18872 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=7148 conn_med=7466 min_over_med=0.957 max_gap_ms=18 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=477008 qps=15900 p50_us=3899 p99_us=7221 p999_us=11570 max_us=18742 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=7149 conn_med=7467 min_over_med=0.957 max_gap_ms=18 errors=0 outstanding=64
+## nu-lines srv_cpu=1.96 ref load=3.32 gen_cpu=0.81
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7556143 qps=251871 p50_us=3799 p99_us=9757 p999_us=14185 max_us=24841 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7463 conn_med=7603 min_over_med=0.982 max_gap_ms=24 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=483652 qps=16122 p50_us=3798 p99_us=9686 p999_us=14135 max_us=23645 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7463 conn_med=7604 min_over_med=0.981 max_gap_ms=23 errors=0 outstanding=64
+## ne-raw srv_cpu=1.95 ref load=3.57 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8551053 qps=285035 p50_us=3518 p99_us=4710 p999_us=6736 max_us=13134 lag_p99_us=0 lag_max_us=0 jain=0.997 conn_min=8051 conn_med=8989 min_over_med=0.896 max_gap_ms=13 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=546917 qps=18231 p50_us=3521 p99_us=4695 p999_us=6751 max_us=12054 lag_p99_us=0 lag_max_us=0 jain=0.997 conn_min=8052 conn_med=8989 min_over_med=0.896 max_gap_ms=12 errors=0 outstanding=64
+## geario srv_cpu=1.98 ref load=3.66 gen_cpu=0.95
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7791463 qps=259715 p50_us=3797 p99_us=5271 p999_us=7461 max_us=13197 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7770 conn_med=7798 min_over_med=0.996 max_gap_ms=13 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=498752 qps=16625 p50_us=3798 p99_us=5308 p999_us=7367 max_us=13030 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7770 conn_med=7791 min_over_med=0.997 max_gap_ms=13 errors=0 outstanding=64
+# round 5
+## ne-lines srv_cpu=1.97 mixed load=3.36 gen_cpu=0.81
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6116500 qps=203883 p50_us=4591 p99_us=8863 p999_us=14785 max_us=29563 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=5997 conn_med=6224 min_over_med=0.964 max_gap_ms=29 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6233104 qps=207770 p50_us=4620 p99_us=8856 p999_us=15327 max_us=28842 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=95968 conn_med=96096 min_over_med=0.999 max_gap_ms=28 errors=0 outstanding=1024
+## ne-lines-strict srv_cpu=1.97 mixed load=3.23 gen_cpu=0.82
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6517060 qps=217235 p50_us=4398 p99_us=7853 p999_us=11842 max_us=28996 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=6261 conn_med=6681 min_over_med=0.937 max_gap_ms=28 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6594992 qps=219833 p50_us=4467 p99_us=7953 p999_us=11714 max_us=23517 lag_p99_us=0 lag_max_us=0 jain=0.999 conn_min=100192 conn_med=101344 min_over_med=0.989 max_gap_ms=23 errors=0 outstanding=1024
+## nu-lines srv_cpu=1.96 mixed load=3.27 gen_cpu=0.76
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6371740 qps=212391 p50_us=4413 p99_us=8424 p999_us=12395 max_us=24898 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6348 conn_med=6373 min_over_med=0.996 max_gap_ms=24 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=6524896 qps=217497 p50_us=4421 p99_us=8412 p999_us=12021 max_us=18430 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=101584 conn_med=101968 min_over_med=0.996 max_gap_ms=18 errors=0 outstanding=1024
+## ne-raw srv_cpu=1.98 mixed load=3.51 gen_cpu=0.99
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7853547 qps=261785 p50_us=3782 p99_us=4868 p999_us=6902 max_us=13637 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7812 conn_med=7866 min_over_med=0.993 max_gap_ms=13 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=8039392 qps=267980 p50_us=3783 p99_us=4848 p999_us=7005 max_us=13575 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=124992 conn_med=125456 min_over_med=0.996 max_gap_ms=13 errors=0 outstanding=1024
+## geario srv_cpu=1.98 mixed load=3.46 gen_cpu=0.97
+class cold conns=1000 depth=1 rate=0 mode=closed samples=7313210 qps=243774 p50_us=4050 p99_us=5496 p999_us=8343 max_us=13418 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=7290 conn_med=7333 min_over_med=0.994 max_gap_ms=13 errors=0 outstanding=1000
+class hot conns=64 depth=16 rate=0 mode=closed samples=7482512 qps=249417 p50_us=4054 p99_us=5498 p999_us=8351 max_us=12792 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=116512 conn_med=117216 min_over_med=0.994 max_gap_ms=12 errors=0 outstanding=1024
+## ne-lines srv_cpu=1.97 ref load=3.46 gen_cpu=0.91
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6674991 qps=222500 p50_us=4340 p99_us=7576 p999_us=11553 max_us=18691 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6660 conn_med=6678 min_over_med=0.997 max_gap_ms=18 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=426968 qps=14232 p50_us=4345 p99_us=7553 p999_us=10879 max_us=17699 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6660 conn_med=6678 min_over_med=0.997 max_gap_ms=17 errors=0 outstanding=64
+## ne-lines-strict srv_cpu=1.97 ref load=3.15 gen_cpu=0.89
+class cold conns=1000 depth=1 rate=0 mode=closed samples=6733853 qps=224462 p50_us=4283 p99_us=8018 p999_us=11516 max_us=23543 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6695 conn_med=6754 min_over_med=0.991 max_gap_ms=23 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=430882 qps=14363 p50_us=4285 p99_us=8056 p999_us=11319 max_us=23419 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=6696 conn_med=6755 min_over_med=0.991 max_gap_ms=23 errors=0 outstanding=64
+## nu-lines srv_cpu=1.97 ref load=3.10 gen_cpu=0.78
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8175753 qps=272525 p50_us=3375 p99_us=7529 p999_us=11064 max_us=21539 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8140 conn_med=8162 min_over_med=0.997 max_gap_ms=21 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=523435 qps=17448 p50_us=3374 p99_us=7538 p999_us=11099 max_us=21483 lag_p99_us=0 lag_max_us=0 jain=1.000 conn_min=8141 conn_med=8193 min_over_med=0.994 max_gap_ms=21 errors=0 outstanding=64
+## ne-raw srv_cpu=1.98 ref load=3.25 gen_cpu=0.97
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8974958 qps=299165 p50_us=3031 p99_us=4888 p999_us=6666 max_us=13291 lag_p99_us=0 lag_max_us=0 jain=0.979 conn_min=7674 conn_med=7699 min_over_med=0.997 max_gap_ms=13 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=593861 qps=19795 p50_us=2946 p99_us=4783 p999_us=6470 max_us=11929 lag_p99_us=0 lag_max_us=0 jain=0.982 conn_min=7674 conn_med=10289 min_over_med=0.746 max_gap_ms=11 errors=0 outstanding=64
+## geario srv_cpu=1.98 ref load=3.00 gen_cpu=0.93
+class cold conns=1000 depth=1 rate=0 mode=closed samples=8187062 qps=272902 p50_us=3396 p99_us=5041 p999_us=7624 max_us=16644 lag_p99_us=0 lag_max_us=0 jain=0.980 conn_min=7015 conn_med=7032 min_over_med=0.998 max_gap_ms=16 errors=0 outstanding=1000
+class coldx conns=64 depth=1 rate=0 mode=closed samples=541570 qps=18052 p50_us=3258 p99_us=4999 p999_us=7712 max_us=16793 lag_p99_us=0 lag_max_us=0 jain=0.982 conn_min=7016 conn_med=9379 min_over_med=0.748 max_gap_ms=16 errors=0 outstanding=64
+L2-DONE

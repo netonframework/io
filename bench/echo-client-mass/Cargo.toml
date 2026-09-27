@@ -9,6 +9,7 @@ edition = "2024"
 [dependencies]
 mio = { version = "1.2", features = ["os-poll", "net"] }
 socket2 = "0.6"
+libc = "0.2"
 
 [profile.release]
 opt-level = 3

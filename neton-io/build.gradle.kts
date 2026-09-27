@@ -34,6 +34,8 @@ kotlin {
             // SPEC §19.2: IR inlining before codegen measured +3.2% on one core (9/12 paired rounds).
             executable("echoServer") { entryPoint = "neton.io.net.echoServerMain"; binaryOption("preCodegenInlineThreshold", "40") }
             executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
+            // SPEC §28.4 F2.
+            executable("fairnessProbe") { entryPoint = "neton.io.net.fairnessProbeMain" }
         }
     }
     (macos + linux).forEach { target ->

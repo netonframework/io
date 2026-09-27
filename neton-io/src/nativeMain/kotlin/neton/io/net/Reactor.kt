@@ -41,13 +41,24 @@ internal class ReactorStats {
     var maxEventsInPoll = 0L
     var reads = 0L; var readBytes = 0L; var readsWouldBlock = 0L
     var writes = 0L; var writeBytes = 0L; var writesWouldBlock = 0L
+    // SPEC §28.4 / §28.8: what the strict-priority budget does to ordinary tasks.
+    var plainTasksRun = 0L       // ordinary tasks (cross-thread posts, launches, withContext hops)
+    var budgetExhausted = 0L     // rounds that stopped at the task budget with work left
+    var maxResumeQueued = 0L     // peak of the three resume rings together, seen at a round's start
+    var maxPlainQueued = 0L      // peak of the ordinary task queue, seen at a round's start
+    var externalBatches = 0L     // non-empty absorptions of the cross-thread queue
+    var externalTasks = 0L
+    var maxExternalBatch = 0L
 
-    fun json(driver: String, taskBudget: Int): String =
+    fun json(driver: String, taskBudget: Int, refusedPosts: Long): String =
         "{\"driver\":\"$driver\",\"task_budget\":$taskBudget,\"rounds\":$rounds,\"tasks_run\":$tasksRun," +
         "\"max_tasks_in_round\":$maxTasksInRound,\"polls\":$polls,\"polls_zero_timeout\":$pollsZeroTimeout," +
         "\"polls_no_events\":$pollsNoEvents,\"events\":$events,\"max_events_in_poll\":$maxEventsInPoll," +
         "\"reads\":$reads,\"read_bytes\":$readBytes,\"reads_would_block\":$readsWouldBlock," +
-        "\"writes\":$writes,\"write_bytes\":$writeBytes,\"writes_would_block\":$writesWouldBlock}"
+        "\"writes\":$writes,\"write_bytes\":$writeBytes,\"writes_would_block\":$writesWouldBlock," +
+        "\"plain_tasks_run\":$plainTasksRun,\"budget_exhausted\":$budgetExhausted,\"max_resume_queued\":$maxResumeQueued," +
+        "\"max_plain_queued\":$maxPlainQueued,\"external_batches\":$externalBatches,\"external_tasks\":$externalTasks," +
+        "\"max_external_batch\":$maxExternalBatch,\"refused_posts\":$refusedPosts}"
 }
 
 /**
@@ -197,12 +208,15 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     internal fun tryDispatchExternal(block: Runnable): Boolean {
         while (true) {
             val head = external.load()
-            if (head === CLOSED_ENTRY) return false
+            if (head === CLOSED_ENTRY) { refusedPosts.addAndFetch(1L); return false }
             if (external.compareAndSet(head, ExtNode(block, head))) break
         }
         wakeup()
         return true
     }
+
+    /** Posts refused because the entry was closed (any thread; only the refusal path pays for it). */
+    private val refusedPosts = kotlin.concurrent.atomics.AtomicLong(0)
 
     /** On the owner thread: whether local work is still accepted (until the loop has exited). */
     internal fun acceptsLocalWork(): Boolean = lifecycle.load() != STOPPED
@@ -270,6 +284,9 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
      * no throughput difference between 64 and unbounded at 1 in-flight (msgtrans bench results).
      * Tasks left over make the next poll non-blocking, so nothing is delayed beyond one round.
      */
+    /** SPEC §28.4: ordinary tasks alternate with resume-ring entries; NETON_IO_RING_PRIORITY=strict restores ring-first (A/B). */
+    private val interleavePlain: Boolean = getenv("NETON_IO_RING_PRIORITY")?.toKString() != "strict"
+
     protected val taskBudget: Int = getenv("NETON_IO_TASK_BUDGET")?.toKString()?.toIntOrNull() ?: DEFAULT_TASK_BUDGET
 
     protected abstract val driverName: String
@@ -336,6 +353,10 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
         val batch = ArrayList<Runnable>()
         while (node != null) { batch.add(node.block); node = node.next }
         for (i in batch.indices.reversed()) tasks.addLast(batch[i])
+        stats?.let { st ->
+            st.externalBatches++; st.externalTasks += batch.size
+            if (batch.size > st.maxExternalBatch) st.maxExternalBatch = batch.size.toLong()
+        }
     }
 
     /** Called when the wake pipe is readable: drain it and absorb the external queue. */
@@ -398,8 +419,24 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     protected fun drainTasks() {
         var n = 0L
+        var plain = 0L
+        stats?.let { st ->
+            val r = (resumeCount + intCount + anyCount).toLong()
+            if (r > st.maxResumeQueued) st.maxResumeQueued = r
+            if (tasks.size > st.maxPlainQueued) st.maxPlainQueued = tasks.size.toLong()
+        }
+        var plainTurn = false
         while (true) {
-            if (resumeCount > 0) {
+            if (plainTurn && tasks.isNotEmpty()) {
+                // SPEC §28.4 F2: with work in both, ordinary tasks alternate with resume-ring entries,
+                // so a ring that never empties cannot starve cross-thread posts and new coroutines.
+                plainTurn = false
+                tasks.removeFirst().run()
+                plain++
+                n++
+                if (taskBudget > 0 && n >= taskBudget) break
+                continue
+            } else if (resumeCount > 0) {
                 val i = resumeHead
                 val c = resumeConts[i]!!; val e = resumeErrs[i]
                 resumeConts[i] = null; resumeErrs[i] = null
@@ -425,7 +462,12 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
                 if (e == null) c.resumeWith(Result.success(v)) else c.resumeWith(Result.failure(e))
             } else if (tasks.isNotEmpty()) {
                 tasks.removeFirst().run()
+                plain++
+                n++
+                if (taskBudget > 0 && n >= taskBudget) break
+                continue
             } else break
+            plainTurn = interleavePlain
             n++
             if (taskBudget > 0 && n >= taskBudget) break
         }
@@ -433,6 +475,8 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
             st.rounds++
             st.tasksRun += n
             if (n > st.maxTasksInRound) st.maxTasksInRound = n
+            st.plainTasksRun += plain
+            if (taskBudget > 0 && n >= taskBudget && hasTasks()) st.budgetExhausted++
         }
     }
 
@@ -449,7 +493,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     fun printStats() {
         val st = stats ?: return
-        fprintf(stderr, "NETON_IO_STATS %s\n", st.json(driverName, taskBudget))
+        fprintf(stderr, "NETON_IO_STATS %s\n", st.json(driverName, taskBudget, refusedPosts.load()))
         fflush(stderr)
     }
 

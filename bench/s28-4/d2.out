@@ -1,0 +1,58 @@
+# round 1
+## heap0 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=600007 qps=20000 p50_us=576 p99_us=5624 p999_us=9697 max_us=14767 lag_p99_us=1050 lag_max_us=3584 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=64 errors=0 outstanding=0
+gc-stats t=31s gcs=408 sampled=408 pause_sum_us=25272 pause_max_us=408 ttsp_sum_us=662485 ttsp_max_us=7226 heap_after_kib=19328
+## heap64 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600010 qps=20000 p50_us=552 p99_us=1316 p999_us=6503 max_us=11706 lag_p99_us=1052 lag_max_us=7227 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=0
+gc-stats t=31s gcs=49 sampled=49 pause_sum_us=3521 pause_max_us=411 ttsp_sum_us=75802 ttsp_max_us=6251 heap_after_kib=64768
+## heap256 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=600004 qps=20000 p50_us=549 p99_us=1235 p999_us=11185 max_us=18790 lag_p99_us=1049 lag_max_us=4011 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=68 errors=0 outstanding=0
+gc-stats t=31s gcs=12 sampled=12 pause_sum_us=1205 pause_max_us=417 ttsp_sum_us=22100 ttsp_max_us=5171 heap_after_kib=241536
+## cur gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600004 qps=20000 p50_us=576 p99_us=5202 p999_us=9041 max_us=12526 lag_p99_us=1050 lag_max_us=4337 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=0
+## nogc gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=599986 qps=20000 p50_us=551 p99_us=1208 p999_us=1878 max_us=8087 lag_p99_us=1051 lag_max_us=4033 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=57 errors=0 outstanding=11
+## markst gen_cpu=0.20
+class cold conns=1000 depth=1 rate=20 mode=open samples=600001 qps=20000 p50_us=579 p99_us=5471 p999_us=8914 max_us=11458 lag_p99_us=1050 lag_max_us=5967 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=0
+## cur-gcstats gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599999 qps=20000 p50_us=564 p99_us=4233 p999_us=8819 max_us=19318 lag_p99_us=1050 lag_max_us=9502 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=69 errors=0 outstanding=0
+gc-stats t=31s gcs=410 sampled=410 pause_sum_us=22747 pause_max_us=334 ttsp_sum_us=560302 ttsp_max_us=7058 heap_after_kib=19328
+# round 2
+## heap0 gen_cpu=0.20
+class cold conns=1000 depth=1 rate=20 mode=open samples=600004 qps=20000 p50_us=572 p99_us=4978 p999_us=8905 max_us=11753 lag_p99_us=1051 lag_max_us=4453 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=0
+gc-stats t=31s gcs=406 sampled=406 pause_sum_us=26221 pause_max_us=438 ttsp_sum_us=674039 ttsp_max_us=6998 heap_after_kib=19072
+## heap64 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=600002 qps=20000 p50_us=547 p99_us=1352 p999_us=6763 max_us=12508 lag_p99_us=1050 lag_max_us=11202 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=6
+gc-stats t=31s gcs=49 sampled=49 pause_sum_us=3075 pause_max_us=364 ttsp_sum_us=77476 ttsp_max_us=5991 heap_after_kib=64640
+## heap256 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=599988 qps=20000 p50_us=550 p99_us=1279 p999_us=12753 max_us=22633 lag_p99_us=1051 lag_max_us=5702 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=72 errors=0 outstanding=3
+gc-stats t=31s gcs=12 sampled=12 pause_sum_us=1380 pause_max_us=413 ttsp_sum_us=25132 ttsp_max_us=5995 heap_after_kib=241664
+## cur gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599998 qps=20000 p50_us=583 p99_us=5641 p999_us=9354 max_us=12789 lag_p99_us=1050 lag_max_us=5420 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=62 errors=0 outstanding=16
+## nogc gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=599990 qps=20000 p50_us=548 p99_us=1204 p999_us=1734 max_us=7453 lag_p99_us=1050 lag_max_us=5134 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=57 errors=0 outstanding=0
+## markst gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599998 qps=20000 p50_us=579 p99_us=6199 p999_us=9647 max_us=12800 lag_p99_us=1050 lag_max_us=9787 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=62 errors=0 outstanding=0
+## cur-gcstats gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600006 qps=20000 p50_us=578 p99_us=5713 p999_us=9870 max_us=17469 lag_p99_us=1050 lag_max_us=5900 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=66 errors=0 outstanding=8
+gc-stats t=31s gcs=405 sampled=405 pause_sum_us=27097 pause_max_us=399 ttsp_sum_us=734585 ttsp_max_us=9534 heap_after_kib=19456
+# round 3
+## heap0 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600001 qps=20000 p50_us=573 p99_us=4739 p999_us=8949 max_us=12161 lag_p99_us=1051 lag_max_us=6444 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=62 errors=0 outstanding=0
+gc-stats t=31s gcs=414 sampled=414 pause_sum_us=25060 pause_max_us=438 ttsp_sum_us=635200 ttsp_max_us=6957 heap_after_kib=19328
+## heap64 gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=600001 qps=20000 p50_us=558 p99_us=1305 p999_us=6773 max_us=12021 lag_p99_us=1050 lag_max_us=3139 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=61 errors=0 outstanding=0
+gc-stats t=31s gcs=49 sampled=49 pause_sum_us=3305 pause_max_us=405 ttsp_sum_us=92798 ttsp_max_us=6963 heap_after_kib=64640
+## heap256 gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600005 qps=20000 p50_us=553 p99_us=1257 p999_us=11586 max_us=18080 lag_p99_us=1051 lag_max_us=3246 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=67 errors=0 outstanding=0
+gc-stats t=31s gcs=12 sampled=12 pause_sum_us=1091 pause_max_us=361 ttsp_sum_us=31987 ttsp_max_us=6028 heap_after_kib=241792
+## cur gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599996 qps=20000 p50_us=578 p99_us=5500 p999_us=9343 max_us=14201 lag_p99_us=1051 lag_max_us=13020 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=63 errors=0 outstanding=0
+## nogc gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=599994 qps=20000 p50_us=547 p99_us=1203 p999_us=1638 max_us=5396 lag_p99_us=1050 lag_max_us=3447 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=54 errors=0 outstanding=10
+## markst gen_cpu=0.19
+class cold conns=1000 depth=1 rate=20 mode=open samples=600003 qps=20000 p50_us=581 p99_us=5599 p999_us=9019 max_us=12285 lag_p99_us=1050 lag_max_us=5706 jain=1.000 conn_min=600 conn_med=600 min_over_med=1.000 max_gap_ms=61 errors=0 outstanding=8
+## cur-gcstats gen_cpu=0.18
+class cold conns=1000 depth=1 rate=20 mode=open samples=599998 qps=20000 p50_us=577 p99_us=5361 p999_us=9313 max_us=16952 lag_p99_us=1051 lag_max_us=7344 jain=1.000 conn_min=599 conn_med=600 min_over_med=0.998 max_gap_ms=66 errors=0 outstanding=0
+gc-stats t=31s gcs=406 sampled=406 pause_sum_us=25193 pause_max_us=409 ttsp_sum_us=706713 ttsp_max_us=6471 heap_after_kib=19456
+D2-DONE
