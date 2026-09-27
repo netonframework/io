@@ -1160,6 +1160,13 @@ colima Linux arm64 io_uring / multishot / epoll 各 114/114；mingwX64、Android
 该子协程的异常；逃出的 `withTimeout` 同样返回。修正前该测试挂起（20 s 强制超时）。
 **§27.11 验证**：单独在上一提交之上：macOS 118/118，colima Linux arm64 io_uring（multishot）/ io_uring 单次 RECV / epoll 各 120/120。
 
+### 27.12 跨线程唤醒与唤醒管道关闭的竞争（2026-09-28，Linux 上偶发 SIGPIPE）
+`wakeup()` 先检查 `wakeClosed` 再写唤醒管道，两步不是原子的：投递线程检查通过后、写入之前，反应器可能已退出并关闭管道，写入落到已关闭或
+已被复用的 fd 上（复用为套接字时 `write` 触发 SIGPIPE，测试进程被杀）。`ReactorLifecycleTest` (c)（300 个反应器生命周期内的投递与关闭竞争）在
+colima Linux epoll 上 30 次中失败 7 次（退出码 141）。IOCP 同理：`PostQueuedCompletionStatus` 可能投到已关闭或复用的句柄，且原先在关闭端口之后
+才置位。修正：唤醒者先登记（`wakers` 计数），再检查 `wakeClosed`；关闭时先置位、等到没有在途的唤醒者，再关闭管道 / 端口（两者都是顺序一致的
+原子操作，必有一方看到另一方）。IOCP 改为在关闭端口之前调用。修正后同一测试 epoll / io_uring 各 30 次 0 失败。
+
 ## 28. 底座定位、契约与路线图（2026-09-27，修订 3，待整体评审；评审通过前不写代码）
 
 用户："neton-io 就仅仅是 io 和网络层的底座，类似于 geario 和 tokio，形成一些标准化的底座建设，别人可以基于 neton-io 实现 http 1.1

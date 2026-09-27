@@ -632,9 +632,10 @@ internal class IocpReactor : Reactor() {
             if (liveOps > 0) fprintf(stderr, "neton-io: %d IOCP op(s) did not complete after cancel; buffers left pinned\n", liveOps)
         }
         for (s in slots) if (s != null && !s.live) neton_op_free(s.op)
+        // Before the port closes: no cross-thread wakeup may post to a closed (or reused) handle (SPEC §27.12).
+        closeWakePipe()
         neton_iocp_close(port)
         nativeHeap.free(ops.rawValue); nativeHeap.free(bytes.rawValue); nativeHeap.free(errs.rawValue)
-        closeWakePipe()
     }
 
     private companion object {

@@ -211,7 +211,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
             if (head === CLOSED_ENTRY) { refusedPosts.addAndFetch(1L); return false }
             if (external.compareAndSet(head, ExtNode(block, head))) break
         }
-        wakeup()
+        wake()
         return true
     }
 
@@ -226,12 +226,27 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     private val wakePipe: IntArray by wakePipeLazy
     protected val wakeReadFd: Int get() = wakePipe[0]
 
-    /** Wake the loop from another thread after [dispatch] queued work. Must be thread-safe. */
-    protected open fun wakeup() { if (wakeClosed.load() == 0) signalWakePipe(wakePipe[1]) }
+    /** Signal the loop (the driver's wake mechanism). Called only through [wake]. Must be thread-safe. */
+    protected open fun wakeup() { signalWakePipe(wakePipe[1]) }
 
-    // Set before the wake pipe is closed: a late cross-thread dispatch must not write to a closed
-    // (or already reused) fd number, nor raise SIGPIPE on a pipe without a reader.
+    /**
+     * Wake the loop from another thread after [dispatch] queued work (SPEC §27.12). Checking [wakeClosed]
+     * and then writing is not atomic on its own: the loop could close the pipe in between, and the write
+     * would go to a closed or already reused fd (a socket: SIGPIPE, seen in ReactorLifecycleTest (c)). A
+     * waker therefore registers in [wakers] before the check, and [closeWakePipe] waits for none to be
+     * in flight after setting [wakeClosed] (both sequentially consistent: one of them sees the other).
+     */
+    private fun wake() {
+        wakers.addAndFetch(1)
+        try {
+            if (wakeClosed.load() == 0) wakeup()
+        } finally {
+            wakers.addAndFetch(-1)
+        }
+    }
+
     private val wakeClosed = kotlin.concurrent.atomics.AtomicInt(0)
+    private val wakers = kotlin.concurrent.atomics.AtomicInt(0)
 
     // ---- timers (min-heap by deadline, lazy cancellation)
     private class Timer(val deadlineNs: Long, val seq: Long, val block: Runnable) : DisposableHandle {
@@ -309,8 +324,11 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     fun checkOwnerPublic(what: String) = checkOwner(what)
 
+    /** Stop wakeups for good; the driver closes its wake mechanism only after this returns (SPEC §27.12). */
     protected fun closeWakePipe() {
         wakeClosed.store(1)
+        // A waker between its check and its write: a few instructions, so spin.
+        while (wakers.load() != 0) { }
         if (wakePipeLazy.isInitialized()) { closeFd(wakePipe[1]); closeFd(wakePipe[0]) }
     }
 
