@@ -956,7 +956,7 @@ internal class UringReactor : Reactor() {
             // chunks nobody read go back to the pool; the parked reader fails like any other waiter.
             while (rqCount[fd] > 0) reprovide((rqPop(fd) shr 32).toInt())
             msEof[fd] = false; msErr[fd] = 0; rqBytes[fd] = 0; msPaused[fd] = false
-            finishMsRead(fd, 0, ClosedException())
+            if (readers[fd] != null) finishMsRead(fd, 0, ClosedException())
             var i = 0
             while (i < starvedCount) { if (starved[i] == fd) starved[i] = starved[--starvedCount] else i++ }
         }

@@ -423,8 +423,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         writeWaiters[fd]?.let { writeWaiters[fd] = null; enqueueResume(it, ClosedException()) }
         // A read deferred to the next round must not recv on this fd number, which the kernel may
         // hand to a new connection: its slot is emptied here (the deferred entry then finds nothing).
-        finishRead(fd, 0, ClosedException())
-        finishWrite(fd, 0, ClosedException())
+        // Only a parked op needs the exception: building one walks the stack (SPEC §26.6), and
+        // every connection passes through here once.
+        if (readConts[fd] != null) finishRead(fd, 0, ClosedException())
+        if (writeConts[fd] != null) finishWrite(fd, 0, ClosedException())
         forgetCancellation(fd)
         servedRound[fd] = 0
         persistent[fd] = false; readyRead[fd] = false; peerClosed[fd] = false

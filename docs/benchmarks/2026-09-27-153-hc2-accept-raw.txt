@@ -1,0 +1,19 @@
+epoll conns=10000 connect 0.17 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+iouring conns=10000 connect 0.18 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+geario conns=10000 connect 0.14 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+epoll conns=50000 connect 0.53 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+iouring conns=50000 connect 3.69 s TcpRetransSegs=6 TcpExtListenOverflows=6 TcpExtListenDrops=6 TcpExtTCPTimeouts=6 TcpExtTCPReqQFullDrop=0 
+geario conns=50000 connect 0.55 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+epoll conns=10000 connect 1.18 s TcpRetransSegs=3 TcpExtListenOverflows=3 TcpExtListenDrops=3 TcpExtTCPTimeouts=3 TcpExtTCPReqQFullDrop=0 
+iouring conns=10000 connect 0.16 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+geario conns=10000 connect 0.15 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+epoll conns=50000 connect 2.69 s TcpRetransSegs=5 TcpExtListenOverflows=5 TcpExtListenDrops=5 TcpExtTCPTimeouts=5 TcpExtTCPReqQFullDrop=0 
+iouring conns=50000 connect 2.56 s TcpRetransSegs=4 TcpExtListenOverflows=4 TcpExtListenDrops=4 TcpExtTCPTimeouts=4 TcpExtTCPReqQFullDrop=0 
+geario conns=50000 connect 1.58 s TcpRetransSegs=2 TcpExtListenOverflows=2 TcpExtListenDrops=2 TcpExtTCPTimeouts=2 TcpExtTCPReqQFullDrop=0 
+epoll conns=10000 connect 1.20 s TcpRetransSegs=2 TcpExtListenOverflows=2 TcpExtListenDrops=2 TcpExtTCPTimeouts=2 TcpExtTCPReqQFullDrop=0 
+iouring conns=10000 connect 1.18 s TcpRetransSegs=2 TcpExtListenOverflows=2 TcpExtListenDrops=2 TcpExtTCPTimeouts=2 TcpExtTCPReqQFullDrop=0 
+geario conns=10000 connect 0.14 s TcpRetransSegs=0 TcpExtListenOverflows=0 TcpExtListenDrops=0 TcpExtTCPTimeouts=0 TcpExtTCPReqQFullDrop=0 
+epoll conns=50000 connect 2.63 s TcpRetransSegs=4 TcpExtListenOverflows=4 TcpExtListenDrops=4 TcpExtTCPTimeouts=4 TcpExtTCPReqQFullDrop=0 
+iouring conns=50000 connect 3.62 s TcpRetransSegs=7 TcpExtListenOverflows=7 TcpExtListenDrops=7 TcpExtTCPTimeouts=7 TcpExtTCPReqQFullDrop=0 
+geario conns=50000 connect 1.53 s TcpRetransSegs=2 TcpExtListenOverflows=2 TcpExtListenDrops=2 TcpExtTCPTimeouts=2 TcpExtTCPReqQFullDrop=0 
+# done
