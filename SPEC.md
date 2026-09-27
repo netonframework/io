@@ -944,3 +944,10 @@ io_uring / io_uring multishot / epoll 各 81/81，macOS 80/80。效果以 153 C2
 构造两个 `ClosedException`（`Throwable` 约 14 次分配、2 次栈回溯）——`closeStream` 把它们作为参数传给 `finishRead / finishWrite`，
 而这两个函数在没有挂起操作时直接返回。现在只在有挂起的读 / 写时才构造（io_uring multishot 的关闭路径同样）。
 每条连接其余的对象是一连接一协程本身：`launch` 的协程与其子 Job 节点、取消监听节点、处理函数的状态机、`ReactorStream`、`Buffer`。
+
+### 26.7 Linux 默认驱动按数据决定
+现状：Linux 默认 io_uring（不可用时 epoll），依据是早期 12 连接矩阵（§24.9：4 KB / 64 KB io_uring 略好）。§26 的高并发数据里 io_uring
+从未胜过 epoll：128 B 时 1k 连接 0.92、10k 与 50k 持平，64 活跃 + 50k 空闲 0.70–0.94。
+实验（hc8，当前 HEAD，同核分配同 §26.2）：负载 128 B / 4 KB / 64 KB × 连接 64 / 1k / 10k（64 KB 只到 1k），外加 64 活跃 + 50k 空闲；
+驱动 epoll、io_uring、io_uring multishot（参考）；4 轮，顺序轮换。默认驱动取多数格胜出且没有大幅落后格的一方；两者各有大胜时保留
+按场景选择的开关并在文档写明。
