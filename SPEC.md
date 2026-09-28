@@ -1011,6 +1011,13 @@ mt15（msgtrans §14.2）：下限 64 MiB 时 1k 连接 GC 次数与安全点等
 ## 27. 服务端补齐（2026-09-27 用户："把这 1-5 实现了"）
 对照 geario 源码（`~/projects/Neton/geario`）余下的服务端能力。原则同 §26.1：协程常规写法；性能项必须实验证明收益才进默认。
 
+
+**GC 线程优先级（2026-09-28，http SPEC §11 的测量）**：K/N 的 GC 协调者以 `sched_yield` 自旋等待各线程到达安全点。GC 线程与反应器共用一个核时，
+调度器让自旋的线程占满整个时间片（≈6 ms），反应器（它所等待的线程）无法运行：每次回收的"到达安全点"为 5,990 µs，而暂停本身只有 12–15 µs。
+新增 `GcTuning.lowerGcThreadPriority(nice)`（`NETON_IO_GC_THREAD_NICE`，Linux / Android，其他平台返回 0；与 `setMinHeap` 一样只由应用调用）：
+降低 GC 线程的调度优先级后到达安全点为 1 µs，HTTP hello world 单核 p99 7.0 → 0.94 ms；60 s 满载单核下堆稳定，回收照常进行。
+运行时的 GC 线程在单核上可能尚未启动，该调用最多等待 500 ms。
+
 ### 27.1 进程信号与平滑停机
 geario：服务端内置信号处理，SIGINT 立即停，SIGTERM 平滑停，SIGQUIT 按配置；`signal()` 让应用等待信号。
 - `suspend fun awaitSignal(vararg signals: Signal = [Int, Term, Quit]): Signal`：挂起直到收到其中一个。首次等待某个信号时才为它安装处理函数
