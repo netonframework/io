@@ -1584,3 +1584,59 @@ io_uring（multishot / 单次 RECV）/ epoll / poll 各 129/129；热路径代�
   且是其前缀，对端可能得到错误而非 EOF（取消可能发生在一条消息中间）；"取消后不可继续则关闭"检查不再先向对端写入（对端已关闭时写入本应失败）。
 - `neton.io.core.intResult(n)` 公开（原为反应器内部）：`IoStream` 实现与包装流在读写路径上 `return intResult(n)`，返回字节数不再每次装箱一个
   `Int`（-128..127 之外）。TLS 流实测每请求分配由 4 次降为 2 次。
+
+## 29. 数据报层（UDP）与计时精度审计（2026-09-28，草案，待评审）
+
+§28.9 只列了需求；QUIC 首版需要它（quic SPEC §9），本节把它定为规格。依据：`quinn-udp` 0.11（`~/projects/reference/rust/quinn-0.11.12/quinn-udp`，
+`src/unix.rs`、`windows.rs`、`lib.rs`、`tests/tests.rs`）。原则同 neton-io：零分配热路径、反应器集成、各平台差异收在 C 包装里（§28.13 的教训：
+平台结构体与宽度可变的类型不进入共享源集）。
+
+### 29.1 API（`neton.io.net`）
+- `suspend fun bindUdp(address: SocketAddress, options: UdpOptions = UdpOptions.Default): UdpSocket`（必须在反应器内调用；双栈：绑定 `::` 时接受 v4
+  映射地址）。
+- `class UdpSocket`：
+  - `suspend fun recv(batch: RecvBatch): Int`：一次最多收 `batch.capacity` 个数据报（Linux `recvmmsg`，其余平台 1 个），返回个数；无数据时挂起到可读。
+    `RecvBatch` 由调用方创建并复用：一块连续缓冲 + 每个数据报的 `RecvMeta`（来源地址、长度、GRO 步长 `stride`、ECN、目的 IP），元数据用原始字段
+    存放，**每次接收不分配**。
+  - `suspend fun send(transmit: Transmit)`：`Transmit`（目的地址、ECN、内容区间、`segmentSize`（GSO）、源 IP）由调用方复用；发送缓冲满时挂起到
+    可写。`fun trySend(transmit): Boolean` 不挂起的版本。
+  - 查询：`maxGsoSegments`（运行中可能降为 1）、`groSegments`、`mayFragment`（平台不支持禁止分片时为 true）、`localAddress`。
+  - `setSendBufferSize` / `setReceiveBufferSize` 及查询；`close()`（挂起的收发得到 `ClosedException`）。
+- 同一套接字同时至多一个 `recv`、一个 `send`（同 §28.6）；所属反应器线程使用。
+- 重绑定（换网络）：由上层（QUIC 端点）新建套接字并替换；本层不提供"原地换地址"。
+
+### 29.2 平台设施（对照 `quinn-udp`）
+| 能力 | Linux / Android | Apple | Windows |
+|---|---|---|---|
+| 批量接收 | `recvmmsg`，每次 32 | `recvmsg` 1 个（`recvmsg_x` 为后续性能项） | `WSARecvMsg` 1 个 |
+| 批量发送 / 分段 | `sendmsg` + `UDP_SEGMENT`（GSO，至多 64 段；探测失败为 1） | 无（1 段） | `UDP_SEND_MSG_SIZE`（USO，可选） |
+| 接收合并 | `UDP_GRO`（尽力开启，得到步长） | 无 | `UDP_RECV_MAX_COALESCED_SIZE`（URO，可选） |
+| ECN 读 | `IP_RECVTOS` / `IPV6_RECVTCLASS` | 同左；**双栈套接字上 v4 不支持 `IP_RECVTOS`**（参考注释） | `IP_ECN` / `IPV6_ECN` |
+| ECN 写 | `IP_TOS` / `IPV6_TCLASS` 控制消息 | 同左 | 同左 |
+| 目的 IP / 源 IP 选择 | `IP_PKTINFO` / `IPV6_RECVPKTINFO` | `IP_RECVDSTADDR`（无 `IP_SENDSRCADDR`）、`IPV6_RECVPKTINFO` | `IP_PKTINFO` / `IPV6_PKTINFO` |
+| 禁止分片（PMTU 探测） | `IP_MTU_DISCOVER = IP_PMTUDISC_PROBE`、`IPV6_MTU_DISCOVER` | `IP_DONTFRAG`、`IPV6_DONTFRAG` | `IP_DONTFRAGMENT` / `IPV6_DONTFRAG` |
+- 设置失败的选项不致命：记录为能力缺失（如 `mayFragment = true`、GRO 步长 1），与参考一致。
+
+### 29.3 错误处理（对照 `unix.rs`）
+- `EMSGSIZE`：MTU 探测时预期出现，发送视为完成（不抛出）。
+- 使用 GSO 时的 `EIO` / `EINVAL`：运行中把 `maxGsoSegments` 降为 1（驱动或网卡不支持），本次报错由上层重试。
+- 第一次 `EINVAL`（带 ECN / TOS 控制消息被拒绝的平台）：记下，之后不再附带 TOS，参考的回退。
+- `ECONNRESET` / `ECONNREFUSED`（ICMP 不可达，Windows 与 Linux 的已连接套接字）：接收侧忽略，继续收。
+- 其他错误以 `IoException` 抛出。
+
+### 29.4 反应器集成
+- 读写就绪沿用现有驱动：epoll / kqueue / poll 的就绪等待；io_uring 驱动先以 `POLL_ADD` 等就绪再做 `recvmmsg` / `sendmsg`（批量系统调用的收益保留；
+  是否改为 `IORING_OP_RECVMSG` 多次提交作为后续性能项，以 callgrind 与吞吐实测决定）；IOCP 用 `WSARecvMsg` 重叠操作。
+- 控制消息（cmsg）的组装与解析全部在 C 包装中完成，Kotlin 只看到定宽字段。
+
+### 29.5 测试（`quinn-udp` 的 8 个测试逐个对应，另加）
+`basic`、`basic_src_ip`、`ecn_v6`、`ecn_v4`、`ecn_v6_dualstack`、`ecn_v4_mapped_v6`、`gso`（Linux）、`socket_buffers`；另加：批量接收 32 个、
+GRO 步长拆分、`EMSGSIZE` 容忍、GSO 运行中降级（以故障注入模拟 `EIO`）、关闭时挂起的收发得到 `ClosedException`、每次收发零分配（callgrind）。
+
+### 29.6 计时精度审计（quic SPEC §9：QUIC 计时粒度 1 ms、pacing 需要亚毫秒）
+- 现状：`delay` / `withTimeout` 走纳秒最小堆，但等待时把截止时间向上取整到毫秒作为轮询超时（epoll_wait / poll 只收毫秒）；流超时走 10 ms 计时轮。
+- 审计内容：各驱动的轮询超时精度（epoll_wait 毫秒、`epoll_pwait2` 纳秒（Linux 5.11+）、io_uring `TIMEOUT` 纳秒、kqueue 纳秒）；实测 `delay(d)`（d 为
+  0.2 ms、1 ms、5 ms）在各驱动上的迟到分布（p50 / p99 / 最大），空载与 §28.4 L1 负载下各一次。
+- 决策规则：若 1 ms 截止时间的 p99 迟到 ≤ 1 ms，只公开单调时钟 API；否则在该驱动上改用纳秒超时（`epoll_pwait2` 或 io_uring `TIMEOUT`），以同样的
+  测量验收；不另造计时器。
+- 同时公开单调时钟（`monotonicNanos()`）与系统时间（`systemTimeMillis()`）。
