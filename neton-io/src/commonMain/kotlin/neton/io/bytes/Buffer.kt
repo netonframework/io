@@ -180,6 +180,19 @@ class Buffer private constructor(
         if (sharedOrBorrowed) leaveArray()
     }
 
+    /**
+     * Make this unpooled buffer a read-only view of [src] without copying, like [wrap], so one wrapper object can
+     * serve slice after slice (vectored writes). What it held is dropped; writing into it later moves it to a fresh
+     * array, leaving [src] untouched. Borrowing [Bytes.EMPTY] releases the last slice.
+     */
+    fun borrow(src: Bytes) {
+        require(mode and POOLED == 0) { "a pooled buffer cannot borrow" }
+        array = src.array
+        mode = BORROWED
+        readerIndex = src.offset
+        writerIndex = src.offset + src.size
+    }
+
     /** Move unread data to the front, reclaiming already-read space (into a fresh array if shared). */
     fun discardReadBytes() {
         if (readerIndex == 0) return
