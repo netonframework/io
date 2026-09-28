@@ -53,6 +53,32 @@ class TimeoutTest {
         }
     }
 
+    /**
+     * A timed read that completed leaves its deadline behind (the read is a tail call, nothing clears it): it must not
+     * time out a later read without a timeout, nor stretch or cut the timeout of a later timed read.
+     */
+    @Test
+    fun aCompletedTimedReadDoesNotAffectLaterReads() = runReactor {
+        pair(21903) { c, s ->
+            s.setReadTimeout(80)
+            c.write(text("a"))
+            s.read(Buffer())                                  // completes at once; its deadline stays behind
+            s.setReadTimeout(0)
+            val late = launch { delay(250); c.write(text("b")) }
+            val b = Buffer()
+            s.read(b)                                         // parked past the old deadline: must not time out
+            assertEquals("b", b.readAll().decodeToString())
+            late.join()
+            delay(120)                                        // the old deadline has long passed
+            s.setReadTimeout(100)
+            val start = TimeSource.Monotonic.markNow()
+            val e = runCatching { s.read(Buffer()) }.exceptionOrNull()
+            val ms = start.elapsedNow().inWholeMilliseconds
+            assertTrue(e is TimeoutException, "expected TimeoutException, got $e")
+            assertTrue(ms in 80..1500, "timed out after $ms ms for a 100 ms timeout")
+        }
+    }
+
     @Test
     fun writeTimeoutFiresWhenThePeerStopsReading() = runReactor {
         pair(21901) { c, _ ->

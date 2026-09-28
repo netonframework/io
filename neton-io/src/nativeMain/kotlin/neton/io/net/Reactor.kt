@@ -701,7 +701,15 @@ internal class ReactorStream(
     override suspend fun read(dst: Buffer): Int {
         if (closed) throw neton.io.core.ClosedException()
         reactor.checkOwnerPublic("read")
-        if (readTimeoutMs == 0L && idleTimeoutMs == 0L) return reactor.read(fd, dst, this)
+        if (idleTimeoutMs == 0L) {
+            // A read timeout alone is armed and the read is still a tail call: the deadline is left in place when the
+            // read ends (every read call replaces it, and [onWheelDue] finds no parked read to time out), so no state
+            // machine is needed to clear it — a protocol that sets a read timeout per request pays no allocation.
+            if (readTimeoutMs == 0L) { readDeadline = 0; return reactor.read(fd, dst, this) }
+            readDeadline = reactor.timeoutClockMs() + readTimeoutMs
+            reactor.wheel.schedule(this, readDeadline)
+            return reactor.read(fd, dst, this)
+        }
         return timedRead(dst)
     }
 
