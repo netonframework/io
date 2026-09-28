@@ -30,11 +30,34 @@ object GcTuning {
         if (kotlin.native.runtime.GC.targetHeapBytes < bytes) kotlin.native.runtime.GC.targetHeapBytes = bytes
     }
 
-    /** Apply `NETON_IO_GC_MIN_HEAP_MB` if it is set to a positive number; returns the value applied, or null. */
+    /**
+     * Apply `NETON_IO_GC_MIN_HEAP_MB` if it is set to a positive number, and `NETON_IO_GC_THREAD_NICE` (see
+     * [lowerGcThreadPriority]) if set; returns the heap floor applied, or null.
+     */
     fun fromEnvironment(): Long? {
+        platform.posix.getenv("NETON_IO_GC_THREAD_NICE")?.toKString()?.toIntOrNull()?.let { lowerGcThreadPriority(it) }
         val mb = platform.posix.getenv("NETON_IO_GC_MIN_HEAP_MB")?.toKString()?.toLongOrNull() ?: return null
         if (mb <= 0) return null
         setMinHeap(mb)
         return mb
     }
+
+    /**
+     * Give the runtime's GC thread a lower scheduling priority ([nice], 1..19; Linux / Android). Returns how many
+     * threads were changed (0 where unsupported).
+     *
+     * Why (http SPEC §11, measured): the GC coordinator waits for every thread to reach a safepoint by spinning in
+     * `sched_yield`. When a reactor shares its core with the GC thread, the scheduler keeps the spinning thread on the
+     * core for a whole time slice (≈6 ms) while the reactor — the thread it waits for — cannot run: every collection
+     * costs 6 ms of latency although the pause itself is ~15 µs. At a lower priority the reactor gets the core back at
+     * once (time to safepoint 1 µs; hello-world p99 7.0 → 0.94 ms on one core). The GC still keeps up: 60 s at full
+     * load on one core, heap flat, 23–26 collections/s. Call once at startup, after the runtime started its GC thread.
+     */
+    fun lowerGcThreadPriority(nice: Int = 19): Int {
+        require(nice in 1..19) { "nice must be in 1..19" }
+        return gcThreadNice(nice)
+    }
 }
+
+/** Renice the runtime's GC threads; how many changed, 0 where unsupported, -1 on error. */
+internal expect fun gcThreadNice(nice: Int): Int

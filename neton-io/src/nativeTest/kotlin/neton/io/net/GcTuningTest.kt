@@ -41,4 +41,14 @@ class GcTuningTest {
             GC.autotune = auto; GC.targetHeapBytes = target; GC.minHeapBytes = min
         }
     }
+
+    @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+    @Test
+    fun lowerGcThreadPriorityRenicesTheGcThreadOnLinux() {
+        kotlin.test.assertFailsWith<IllegalArgumentException> { GcTuning.lowerGcThreadPriority(0) }
+        val changed = GcTuning.lowerGcThreadPriority(10)
+        if (kotlin.native.Platform.osFamily == kotlin.native.OsFamily.LINUX) assertTrue(changed >= 1, "no GC thread reniced ($changed)")
+        else kotlin.test.assertEquals(0, changed)
+    }
 }
+

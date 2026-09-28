@@ -13,6 +13,7 @@ compilerOpts = -D_GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -170,6 +171,34 @@ static int neton_setsockopt_linger(int fd, int onoff, int seconds) {
 /* Clocks (neton.io.core.Clock): 64-bit results, timespec field widths differ across targets. */
 static long long neton_monotonic_nanos(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec; }
 static long long neton_realtime_millis(void) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); return (long long) ts.tv_sec * 1000LL + ts.tv_nsec / 1000000; }
+
+/* GcTuning.lowerGcThreadPriority: renice Kotlin/Native's GC threads (Linux / Android; elsewhere nothing, returns 0).
+ * Returns how many threads were changed, -1 on error. */
+#ifdef __linux__
+#include <dirent.h>
+#include <sys/resource.h>
+static int neton_gc_thread_nice(int nice) {
+    DIR *d = opendir("/proc/self/task");
+    if (!d) return -1;
+    int changed = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char path[64], comm[32] = {0};
+        snprintf(path, sizeof path, "/proc/self/task/%s/comm", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+        if (fgets(comm, sizeof comm, f) != NULL && strncmp(comm, "Main GC thread", 14) == 0) {
+            if (setpriority(PRIO_PROCESS, (id_t) atoi(e->d_name), nice) == 0) changed++;
+        }
+        fclose(f);
+    }
+    closedir(d);
+    return changed;
+}
+#else
+static int neton_gc_thread_nice(int nice) { (void) nice; return 0; }
+#endif
 
 static int neton_cpu_count(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n < 1 ? 1 : (int) n; }
 
