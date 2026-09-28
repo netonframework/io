@@ -917,6 +917,15 @@ internal class UringReactor : Reactor() {
         submit(NETON_IORING_OP_POLL_ADD, fd, 0L, 0, NETON_POLLOUT, null, isWrite = true)
     }
 
+    // SPEC §29.4: datagram sockets wait for readiness, then use recvmmsg / sendmsg.
+    override suspend fun awaitReadable(fd: Int) {
+        submit(NETON_IORING_OP_POLL_ADD, fd, 0L, 0, NETON_POLLIN, null)
+    }
+
+    override suspend fun awaitWritable(fd: Int) {
+        submit(NETON_IORING_OP_POLL_ADD, fd, 0L, 0, NETON_POLLOUT, null, isWrite = true)
+    }
+
     private var wakeUd: ULong = 0uL
 
     private fun armWake() { wakeUd = prepSqe(NETON_IORING_OP_POLL_ADD, wakeReadFd, 0L, 0, NETON_POLLIN, controlUd()) }

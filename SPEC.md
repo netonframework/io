@@ -1641,6 +1641,19 @@ GRO 步长拆分、`EMSGSIZE` 容忍、GSO 运行中降级（以故障注入模�
   测量验收；不另造计时器。
 - 同时公开单调时钟（`monotonicNanos()`）与系统时间（`systemTimeMillis()`）。
 
+**§29 首版实施（2026-09-28）**：`bindUdp` / `UdpSocket`（`recv(RecvBatch)`、`send` / `trySend(Transmit)`、`maxGsoSegments` / `groSegments` /
+`mayFragment`、缓冲大小、`close`）、`SocketAddress`（公开的 IP 地址值）、`EcnCodepoint`。`RecvBatch` / `Transmit` 由调用方复用，数组在其生命期内
+固定一次，收发不分配。套接字设置、cmsg 组装与解析、`recvmmsg`（32）/ `recvmsg`、GSO 探测（内核 ≥ 4.18 且测试套接字接受 `UDP_SEGMENT` → 64）、
+GRO、PMTU 选项全部在 `posixshim` 的 C 包装中，签名只含定宽类型与 `void *`（§28.13）。反应器增加 `awaitReadable` / `awaitWritable`（就绪驱动用
+一次性关注，io_uring 用 `POLL_ADD`）。错误按 §29.3：`EMSGSIZE` 视为已发送；GSO 下 `EIO` / `EINVAL` 把 `maxGsoSegments` 降为 1；第一次
+`EINVAL` 之后不再附带 IPv4 的 TOS；接收侧跳过 `ECONNREFUSED` / `ECONNRESET`。Windows：未实现（IOCP 与 WSAPoll 两种驱动都以
+`UnsupportedOperationException` 明确拒绝），待有 Windows 主机时实施 `WSARecvMsg` / `WSASendMsg`。
+测试（`posixTest/UdpTest`）：quinn-udp 的 8 个测试逐个移植（basic、basic_src_ip、ecn_v6、ecn_v4、ecn_v6_dualstack、ecn_v4_mapped_v6、gso、
+socket_buffers，断言同参考：分段内容、来源端口、来源 / 目的地址（v4 映射规范化）、ECN），另加一次收满 32 个、`EMSGSIZE` 不报错、关闭唤醒挂起的
+接收，共 11 个。macOS 11/11（GSO / GRO 为 1，批量 1）；colima Linux arm64 io_uring / epoll / poll 各 11/11（GSO 64、GRO 64、一次 `recvmmsg` 收到
+32 个）；全量 macOS 138/138、Linux 三种驱动配置各 140/140；9 个共享源集元数据与 12 个目标编译通过。每次收发零分配的 callgrind 验证与吞吐对照
+（quinn-udp）作为后续项。
+
 **§29.6 审计结果（2026-09-28，153，`timerProbe`，每项 2000 次，反应器绑定一个核）**：`delay(d)` 的迟到（µs）：
 | 驱动 | d | 空载 p50 / p99 / 最大 | 负载（同核有原始回显服务端在跑）p50 / p99 / 最大 |
 |---|---|---|---|

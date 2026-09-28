@@ -437,6 +437,14 @@ internal class IocpReactor : Reactor() {
         return total
     }
 
+    // SPEC §29.4: IOCP datagrams (WSARecvMsg / WSASendMsg overlapped) are not implemented yet; the readiness
+    // driver (NETON_IO_DRIVER=wsapoll) supports UDP on Windows.
+    override suspend fun awaitReadable(fd: Int): Unit =
+        throw UnsupportedOperationException("UDP on the IOCP driver is not implemented yet (SPEC §29.4); use NETON_IO_DRIVER=wsapoll")
+
+    override suspend fun awaitWritable(fd: Int): Unit =
+        throw UnsupportedOperationException("UDP on the IOCP driver is not implemented yet (SPEC §29.4); use NETON_IO_DRIVER=wsapoll")
+
     override suspend fun accept(listenFd: Int): Int {
         checkOwner("accept")
         // Fast path: a connection already queued is taken without an overlapped op.

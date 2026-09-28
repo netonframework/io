@@ -548,6 +548,10 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     /** Wait for a non-blocking connect on [fd] to complete. */
     abstract suspend fun awaitConnect(fd: Int)
 
+    /** Wait until [fd] is readable / writable (datagram sockets, SPEC §29.4). Reactor thread only; closeStream wakes it with ClosedException. */
+    abstract suspend fun awaitReadable(fd: Int)
+    abstract suspend fun awaitWritable(fd: Int)
+
     /** Drive the loop until [root] completes. */
     abstract fun runUntil(root: Job)
 

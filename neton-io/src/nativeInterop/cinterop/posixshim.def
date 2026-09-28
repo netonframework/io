@@ -6,8 +6,17 @@ compilerOpts = -D_GNU_SOURCE
 
 ---
 
+/* macOS declares the RFC 3542 IPv6 options (IPV6_RECVPKTINFO, IPV6_PKTINFO use) only with this defined first. */
+#ifdef __APPLE__
+#define __APPLE_USE_RFC_3542 1
+#endif
+#include <arpa/inet.h>
 #include <errno.h>
+#include <stdio.h>
+#include <fcntl.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -18,6 +27,7 @@ compilerOpts = -D_GNU_SOURCE
 #include <unistd.h>
 #ifdef __linux__
 #include <sched.h>
+#include <sys/utsname.h>
 #endif
 
 /*
@@ -170,3 +180,295 @@ static void neton_drain(int fd) { unsigned char buf[64]; while (read(fd, buf, si
 /* getaddrinfo helpers: zero the hints, read ai_addrlen (socklen_t). */
 static void neton_zero(void *p, int n) { memset(p, 0, (size_t) n); }
 static int neton_ai_addrlen(const void *ai) { return (int) ((const struct addrinfo *) ai)->ai_addrlen; }
+
+/* ---------------------------------------------------------------------------------------------------------
+ * SPEC §29: UDP datagram layer, after quinn-udp 0.11 (unix.rs). Addresses cross the boundary as fixed
+ * fields: family 4 or 6, ip[16] (IPv4 in the first 4 bytes), port, scope id. Control messages are built and
+ * parsed here only.
+ */
+#ifndef SOL_UDP
+#define SOL_UDP 17
+#endif
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103
+#endif
+#ifndef UDP_GRO
+#define UDP_GRO 104
+#endif
+#define NETON_UDP_BATCH 32
+#define NETON_UDP_CMSG 128
+
+/* Internal helpers take void * (cinterop exports every function here; platform structs must not appear). */
+static int neton_sa_fill(void *out, int sock_v6, int family, const unsigned char *ip, int port, unsigned int scope) {
+    struct sockaddr_storage *ss = (struct sockaddr_storage *) out;
+    memset(ss, 0, sizeof *ss);
+    if (family == 4 && !sock_v6) {
+        struct sockaddr_in *a = (struct sockaddr_in *) ss;
+        a->sin_family = AF_INET; a->sin_port = htons((unsigned short) port);
+        memcpy(&a->sin_addr, ip, 4);
+        return (int) sizeof *a;
+    } else {
+        /* An IPv4 destination on an IPv6 (dual-stack) socket goes out as a v4-mapped address. */
+        struct sockaddr_in6 *a = (struct sockaddr_in6 *) ss;
+        a->sin6_family = AF_INET6; a->sin6_port = htons((unsigned short) port);
+        if (family == 4) {
+            a->sin6_addr.s6_addr[10] = 0xff; a->sin6_addr.s6_addr[11] = 0xff;
+            memcpy(&a->sin6_addr.s6_addr[12], ip, 4);
+        } else {
+            memcpy(&a->sin6_addr, ip, 16);
+            a->sin6_scope_id = scope;
+        }
+        return (int) sizeof *a;
+    }
+}
+
+static void neton_sa_read(const void *in, int *family, unsigned char *ip, int *port, unsigned int *scope) {
+    const struct sockaddr_storage *ss = (const struct sockaddr_storage *) in;
+    if (ss->ss_family == AF_INET) {
+        const struct sockaddr_in *a = (const struct sockaddr_in *) ss;
+        *family = 4; memset(ip, 0, 16); memcpy(ip, &a->sin_addr, 4);
+        *port = ntohs(a->sin_port); *scope = 0;
+    } else {
+        const struct sockaddr_in6 *a = (const struct sockaddr_in6 *) ss;
+        *family = 6; memcpy(ip, &a->sin6_addr, 16);
+        *port = ntohs(a->sin6_port); *scope = a->sin6_scope_id;
+    }
+}
+
+static int neton_setopt_ok(int fd, int level, int name, int value) {
+    return setsockopt(fd, level, name, &value, sizeof value) == 0;
+}
+
+#ifdef __linux__
+/* quinn-udp gso::max_gso_segments: kernel >= 4.18 and UDP_SEGMENT accepted on a test socket -> 64, else 1. */
+static int neton_gso_segments(void) {
+    struct utsname u; int major = 0, minor = 0, fd, ok;
+    if (uname(&u) != 0 || sscanf(u.release, "%d.%d", &major, &minor) != 2) return 1;
+    if (major < 4 || (major == 4 && minor < 18)) return 1;
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return 1;
+    ok = neton_setopt_ok(fd, SOL_UDP, UDP_SEGMENT, 1500);
+    close(fd);
+    return ok ? 64 : 1;
+}
+#endif
+
+/* Open a non-blocking UDP socket bound to the address; an IPv6 socket is dual-stack unless v6only. -errno on failure. */
+static int neton_udp_bind(int family, const unsigned char *ip, int port, unsigned int scope, int v6only) {
+    struct sockaddr_storage ss;
+    socklen_t len;
+    int fd = socket(family == 6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -errno;
+    fcntl(fd, F_SETFD, FD_CLOEXEC);
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+    if (family == 6) (void) neton_setopt_ok(fd, IPPROTO_IPV6, IPV6_V6ONLY, v6only ? 1 : 0);
+    len = (socklen_t) neton_sa_fill(&ss, family == 6, family, ip, port, scope);
+    if (bind(fd, (struct sockaddr *) &ss, len) != 0) { int e = errno; close(fd); return -e; }
+    return fd;
+}
+
+/*
+ * Socket options as quinn-udp's UdpSocketState::new. Returns may_fragment (0/1); writes the GSO and GRO
+ * segment counts. -errno if a required option fails.
+ */
+static int neton_udp_setup(int fd, int v6, int v6only, int *gso, int *gro) {
+    int may_fragment = 0;
+    *gso = 1; *gro = 1;
+    /* mac and ios do not support IP_RECVTOS on dual-stack sockets: the error is ignored, as in the reference. */
+    if (!v6 || !v6only) (void) neton_setopt_ok(fd, IPPROTO_IP, IP_RECVTOS, 1);
+#ifdef __linux__
+    if (neton_setopt_ok(fd, SOL_UDP, UDP_GRO, 1)) *gro = 64;
+    may_fragment |= !neton_setopt_ok(fd, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_PROBE);
+    if (!v6) {
+        if (!neton_setopt_ok(fd, IPPROTO_IP, IP_PKTINFO, 1)) return -errno;
+    } else {
+        may_fragment |= !neton_setopt_ok(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_PROBE);
+    }
+    *gso = neton_gso_segments();
+#endif
+#ifdef __APPLE__
+    if (!v6) {
+        may_fragment |= !neton_setopt_ok(fd, IPPROTO_IP, IP_DONTFRAG, 1);
+        if (!neton_setopt_ok(fd, IPPROTO_IP, IP_RECVDSTADDR, 1)) return -errno;
+    }
+#endif
+    if (v6) {
+        if (!neton_setopt_ok(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, 1)) return -errno;
+        if (!neton_setopt_ok(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, 1)) return -errno;
+#ifdef IPV6_DONTFRAG
+        may_fragment |= !neton_setopt_ok(fd, IPPROTO_IPV6, IPV6_DONTFRAG, 1);
+#else
+        may_fragment |= !neton_setopt_ok(fd, IPPROTO_IPV6, 62, 1);
+#endif
+    }
+    return may_fragment;
+}
+
+static int neton_udp_local(int fd, int *family, unsigned char *ip, int *port, unsigned int *scope) {
+    struct sockaddr_storage ss; socklen_t len = sizeof ss;
+    if (getsockname(fd, (struct sockaddr *) &ss, &len) != 0) return -errno;
+    neton_sa_read(&ss, family, ip, port, scope);
+    return 0;
+}
+
+/* Get (value < 0) or set a socket buffer size; which: 0 send, 1 receive. Returns the size or -errno. */
+static int neton_udp_buffer(int fd, int which, int value) {
+    int name = which ? SO_RCVBUF : SO_SNDBUF, out = 0; socklen_t len = sizeof out;
+    if (value >= 0 && setsockopt(fd, SOL_SOCKET, name, &value, sizeof value) != 0) return -errno;
+    if (getsockopt(fd, SOL_SOCKET, name, &out, &len) != 0) return -errno;
+    return out;
+}
+
+/* quinn-udp decode_recv: control messages -> ECN bits, destination IP, GRO stride. */
+static void neton_udp_decode(void *msg, int len, int *stride, int *ecn, int *dst_family, unsigned char *dst_ip) {
+    struct msghdr *hdr = (struct msghdr *) msg;
+    struct cmsghdr *c;
+    *stride = len; *ecn = 0; *dst_family = 0;
+    for (c = CMSG_FIRSTHDR(hdr); c != NULL; c = CMSG_NXTHDR(hdr, c)) {
+        if (c->cmsg_level == IPPROTO_IP && (c->cmsg_type == IP_TOS
+#ifdef IP_RECVTOS
+            || c->cmsg_type == IP_RECVTOS
+#endif
+            )) {
+            *ecn = (*(unsigned char *) CMSG_DATA(c)) & 3;
+        } else if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS) {
+#ifdef __APPLE__
+            /* macOS ABI quirk (reference comment): a 1-byte payload on some versions. */
+            if (c->cmsg_len == CMSG_LEN(sizeof(unsigned char))) *ecn = (*(unsigned char *) CMSG_DATA(c)) & 3;
+            else
+#endif
+            { int v; memcpy(&v, CMSG_DATA(c), sizeof v); *ecn = v & 3; }
+        }
+#ifdef __linux__
+        else if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO) {
+            struct in_pktinfo pi; memcpy(&pi, CMSG_DATA(c), sizeof pi);
+            *dst_family = 4; memset(dst_ip, 0, 16); memcpy(dst_ip, &pi.ipi_addr, 4);
+        } else if (c->cmsg_level == SOL_UDP && c->cmsg_type == UDP_GRO) {
+            int v; memcpy(&v, CMSG_DATA(c), sizeof v); *stride = v;
+        }
+#endif
+#ifdef __APPLE__
+        else if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_RECVDSTADDR) {
+            *dst_family = 4; memset(dst_ip, 0, 16); memcpy(dst_ip, CMSG_DATA(c), 4);
+        }
+#endif
+        else if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_PKTINFO) {
+            struct in6_pktinfo pi; memcpy(&pi, CMSG_DATA(c), sizeof pi);
+            *dst_family = 6; memcpy(dst_ip, &pi.ipi6_addr, 16);
+        }
+    }
+}
+
+/*
+ * Receive up to count datagrams (Linux: recvmmsg, at most 32; elsewhere 1) into buf, slot i at i * slot_len.
+ * Per datagram: length, GRO stride, source (family, ip[16], port, scope), ECN bits, destination (family, ip[16]).
+ * Returns the number received, or -errno (EAGAIN when nothing is there).
+ */
+static int neton_udp_recv(int fd, unsigned char *buf, int slot_len, int count,
+                          int *lens, int *strides, int *families, unsigned char *ips, int *ports, unsigned int *scopes,
+                          int *ecns, int *dst_families, unsigned char *dst_ips) {
+    struct sockaddr_storage names[NETON_UDP_BATCH];
+    struct iovec iov[NETON_UDP_BATCH];
+    union { struct cmsghdr align; unsigned char b[NETON_UDP_CMSG]; } ctrl[NETON_UDP_BATCH];
+    int i, n;
+#ifdef __linux__
+    struct mmsghdr hdrs[NETON_UDP_BATCH];
+    if (count > NETON_UDP_BATCH) count = NETON_UDP_BATCH;
+    memset(hdrs, 0, sizeof(struct mmsghdr) * (size_t) count);
+    for (i = 0; i < count; i++) {
+        iov[i].iov_base = buf + (size_t) i * (size_t) slot_len; iov[i].iov_len = (size_t) slot_len;
+        hdrs[i].msg_hdr.msg_name = &names[i]; hdrs[i].msg_hdr.msg_namelen = sizeof names[i];
+        hdrs[i].msg_hdr.msg_iov = &iov[i]; hdrs[i].msg_hdr.msg_iovlen = 1;
+        hdrs[i].msg_hdr.msg_control = ctrl[i].b; hdrs[i].msg_hdr.msg_controllen = NETON_UDP_CMSG;
+    }
+    do { n = recvmmsg(fd, hdrs, (unsigned int) count, 0, NULL); } while (n < 0 && errno == EINTR);
+    if (n < 0) return -errno;
+    for (i = 0; i < n; i++) {
+        lens[i] = (int) hdrs[i].msg_len;
+        neton_sa_read(&names[i], &families[i], ips + 16 * i, &ports[i], &scopes[i]);
+        neton_udp_decode(&hdrs[i].msg_hdr, lens[i], &strides[i], &ecns[i], &dst_families[i], dst_ips + 16 * i);
+    }
+    return n;
+#else
+    struct msghdr hdr;
+    ssize_t r;
+    (void) count;
+    memset(&hdr, 0, sizeof hdr);
+    iov[0].iov_base = buf; iov[0].iov_len = (size_t) slot_len;
+    hdr.msg_name = &names[0]; hdr.msg_namelen = sizeof names[0];
+    hdr.msg_iov = &iov[0]; hdr.msg_iovlen = 1;
+    hdr.msg_control = ctrl[0].b; hdr.msg_controllen = NETON_UDP_CMSG;
+    do { r = recvmsg(fd, &hdr, 0); } while (r < 0 && errno == EINTR);
+    if (r < 0) return -errno;
+    lens[0] = (int) r;
+    neton_sa_read(&names[0], &families[0], ips, &ports[0], &scopes[0]);
+    neton_udp_decode(&hdr, lens[0], &strides[0], &ecns[0], &dst_families[0], dst_ips);
+    return 1;
+#endif
+}
+
+/*
+ * Send one transmit (quinn-udp prepare_msg + send): ECN as IP_TOS (IPv4 or v4-mapped; skipped once
+ * sendmsg returned EINVAL, einval_mode) or IPV6_TCLASS; UDP_SEGMENT when segment_size < len (GSO, Linux);
+ * source IP as IP_PKTINFO / IPV6_PKTINFO (Apple IPv4: IP_RECVDSTADDR as the reference does, only with
+ * encode_src_ip). Returns bytes sent or -errno.
+ */
+static int neton_udp_send(int fd, int sock_v6, const unsigned char *data, int len,
+                          int family, const unsigned char *ip, int port, unsigned int scope,
+                          int ecn, int segment_size, int src_family, const unsigned char *src_ip, int einval_mode) {
+    struct sockaddr_storage ss;
+    struct msghdr hdr;
+    struct iovec iov;
+    union { struct cmsghdr align; unsigned char b[NETON_UDP_CMSG]; } ctrl;
+    struct cmsghdr *c;
+    size_t used = 0;
+    int is_ipv4 = family == 4 || (family == 6 && ip[10] == 0xff && ip[11] == 0xff
+        && !ip[0] && !ip[1] && !ip[2] && !ip[3] && !ip[4] && !ip[5] && !ip[6] && !ip[7] && !ip[8] && !ip[9]);
+    ssize_t r;
+    memset(&hdr, 0, sizeof hdr); memset(&ctrl, 0, sizeof ctrl);
+    iov.iov_base = (void *) data; iov.iov_len = (size_t) len;
+    hdr.msg_name = &ss; hdr.msg_namelen = (socklen_t) neton_sa_fill(&ss, sock_v6, family, ip, port, scope);
+    hdr.msg_iov = &iov; hdr.msg_iovlen = 1;
+    hdr.msg_control = ctrl.b; hdr.msg_controllen = sizeof ctrl.b;
+    c = CMSG_FIRSTHDR(&hdr);
+    if (is_ipv4) {
+        if (!einval_mode) {
+            int tos = ecn;
+            c->cmsg_level = IPPROTO_IP; c->cmsg_type = IP_TOS; c->cmsg_len = CMSG_LEN(sizeof tos);
+            memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof tos); c = CMSG_NXTHDR(&hdr, c);
+        }
+    } else {
+        int tc = ecn;
+        c->cmsg_level = IPPROTO_IPV6; c->cmsg_type = IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof tc);
+        memcpy(CMSG_DATA(c), &tc, sizeof tc); used += CMSG_SPACE(sizeof tc); c = CMSG_NXTHDR(&hdr, c);
+    }
+#ifdef __linux__
+    if (segment_size > 0 && segment_size < len) {
+        unsigned short seg = (unsigned short) segment_size;
+        c->cmsg_level = SOL_UDP; c->cmsg_type = UDP_SEGMENT; c->cmsg_len = CMSG_LEN(sizeof seg);
+        memcpy(CMSG_DATA(c), &seg, sizeof seg); used += CMSG_SPACE(sizeof seg); c = CMSG_NXTHDR(&hdr, c);
+    }
+#else
+    (void) segment_size;
+#endif
+    if (src_family == 4) {
+#ifdef __linux__
+        struct in_pktinfo pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi_spec_dst, src_ip, 4);
+        c->cmsg_level = IPPROTO_IP; c->cmsg_type = IP_PKTINFO; c->cmsg_len = CMSG_LEN(sizeof pi);
+        memcpy(CMSG_DATA(c), &pi, sizeof pi); used += CMSG_SPACE(sizeof pi); c = CMSG_NXTHDR(&hdr, c);
+#endif
+#ifdef __APPLE__
+        struct in_addr a; memcpy(&a, src_ip, 4);
+        c->cmsg_level = IPPROTO_IP; c->cmsg_type = IP_RECVDSTADDR; c->cmsg_len = CMSG_LEN(sizeof a);
+        memcpy(CMSG_DATA(c), &a, sizeof a); used += CMSG_SPACE(sizeof a); c = CMSG_NXTHDR(&hdr, c);
+#endif
+    } else if (src_family == 6) {
+        struct in6_pktinfo pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi6_addr, src_ip, 16);
+        c->cmsg_level = IPPROTO_IPV6; c->cmsg_type = IPV6_PKTINFO; c->cmsg_len = CMSG_LEN(sizeof pi);
+        memcpy(CMSG_DATA(c), &pi, sizeof pi); used += CMSG_SPACE(sizeof pi);
+    }
+    hdr.msg_controllen = used;
+    if (used == 0) hdr.msg_control = NULL;
+    do { r = sendmsg(fd, &hdr, 0); } while (r < 0 && errno == EINTR);
+    return r < 0 ? -errno : (int) r;
+}

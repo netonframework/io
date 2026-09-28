@@ -380,6 +380,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
 
     override suspend fun awaitConnect(fd: Int) { ensureFd(fd); waitWritable(fd) }
 
+    override suspend fun awaitReadable(fd: Int) { ensureFd(fd); waitReadable(fd) }
+
+    override suspend fun awaitWritable(fd: Int) { ensureFd(fd); waitWritable(fd) }
+
     override fun runUntil(root: Job) {
         val wakeFd = wakeReadFd                     // read once: the property is a lazy (SPEC §23.1)
         ensureFd(wakeFd)
