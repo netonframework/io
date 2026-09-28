@@ -490,8 +490,11 @@ internal class UringReactor : Reactor() {
         watchHandleA[fd] = null; watchHandleB[fd] = null; watchJobA[fd] = null; watchJobB[fd] = null
     }
 
-    private fun ensureFd(fd: Int) {
-        if (fd < pinRefs.size) return
+    // Inline check, growth out of line (a function's frame is zeroed on entry; see ReadinessReactor.ensureFd).
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun ensureFd(fd: Int) { if (fd >= pinRefs.size) growFd(fd) }
+
+    private fun growFd(fd: Int) {
         var n = pinRefs.size
         while (n <= fd) n *= 2
         pinRefs = pinRefs.copyOf(n); wPinRefs = wPinRefs.copyOf(n)

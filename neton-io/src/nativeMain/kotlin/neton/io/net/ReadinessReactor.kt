@@ -97,8 +97,12 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private var specMissed = 0
     private var shortCount = 0
 
-    private fun ensureFd(fd: Int) {
-        if (fd < persistent.size) return
+    // Inline check, growth out of line: K/N zeroes a function's whole frame on entry, and the growth path's ~25 array
+    // temporaries made that ~43 instructions on every read and write (SPEC §24).
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun ensureFd(fd: Int) { if (fd >= persistent.size) growFd(fd) }
+
+    private fun growFd(fd: Int) {
         var n = persistent.size
         while (n <= fd) n *= 2
         readWaiters = readWaiters.copyOf(n); writeWaiters = writeWaiters.copyOf(n)
