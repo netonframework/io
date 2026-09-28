@@ -55,8 +55,12 @@ class Admission(val permits: Int, val acquireTimeoutMillis: Long) {
         return 1L shl WAIT_BUCKETS
     }
 
-    /** Take a permit, waiting at most [acquireTimeoutMillis]. The uncontended path allocates nothing. */
-    internal suspend fun acquire() {
+    /**
+     * Take a permit, waiting at most [acquireTimeoutMillis] (then [AdmissionTimeoutException]). The uncontended path
+     * allocates nothing. A caller that got a permit must [release] it exactly once (in `finally`); a cancelled or
+     * timed-out acquire holds none. Protocol servers use this with the rules in the class notes.
+     */
+    suspend fun acquire() {
         if (sem.tryAcquire()) return
         val start = TimeSource.Monotonic.markNow()
         // A cancelled acquire (timeout or connection cancellation) does not keep a permit.
@@ -74,9 +78,13 @@ class Admission(val permits: Int, val acquireTimeoutMillis: Long) {
         waitBuckets[k].addAndFetch(1L)
     }
 
-    internal fun tryAcquireForLoop(): Boolean = sem.tryAcquire()
+    /** Take a permit only if one is free now (no wait recorded). */
+    fun tryAcquire(): Boolean = sem.tryAcquire()
 
-    internal fun release() = sem.release()
+    internal fun tryAcquireForLoop(): Boolean = tryAcquire()
+
+    /** Give back a permit taken with [acquire] or [tryAcquire]. */
+    fun release() = sem.release()
 }
 
 private const val WAIT_BUCKETS = 32
