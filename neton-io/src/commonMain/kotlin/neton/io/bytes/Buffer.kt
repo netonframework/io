@@ -303,8 +303,11 @@ class Buffer private constructor(
         private const val BORROWED = 4
         private val EMPTY_ARRAY = ByteArray(0)
 
-        /** A read-only buffer over [src]'s bytes without copying (for vectored writes of slices). */
-        internal fun wrap(src: Bytes): Buffer {
+        /**
+         * A read-only buffer over [src]'s bytes without copying, for vectored writes of slices ([IoStream.writev]):
+         * reading consumes it; writing into it moves it to a fresh array first, leaving [src] untouched.
+         */
+        fun wrap(src: Bytes): Buffer {
             val b = Buffer(src.array, BORROWED, DEFAULT_CAPACITY)
             b.readerIndex = src.offset
             b.writerIndex = src.offset + src.size
