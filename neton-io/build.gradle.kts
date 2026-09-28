@@ -36,6 +36,8 @@ kotlin {
             executable("echoClient") { entryPoint = "neton.io.net.echoClientMain" }
             // SPEC §28.4 F2.
             executable("fairnessProbe") { entryPoint = "neton.io.net.fairnessProbeMain" }
+            // SPEC §29.6.
+            executable("timerProbe") { entryPoint = "neton.io.net.timerProbeMain" }
         }
     }
     (macos + linux).forEach { target ->
