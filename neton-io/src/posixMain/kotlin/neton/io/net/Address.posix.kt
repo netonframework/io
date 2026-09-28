@@ -52,7 +52,7 @@ private class Lookup(val addrs: List<SockAddr>, val gaiError: Int, val message: 
 @OptIn(ExperimentalForeignApi::class)
 private fun lookup(host: String, port: Int, passive: Boolean, numericOnly: Boolean): Lookup = memScoped {
     val hints = alloc<addrinfo>()
-    memset(hints.ptr, 0, sizeOf<addrinfo>().convert())
+    neton.io.posixshim.neton_zero(hints.ptr, sizeOf<addrinfo>().toInt())
     hints.ai_family = AF_UNSPEC
     hints.ai_socktype = SOCK_STREAM
     hints.ai_flags = (if (passive) AI_PASSIVE else 0) or (if (numericOnly) AI_NUMERICHOST else 0)
@@ -64,7 +64,7 @@ private fun lookup(host: String, port: Int, passive: Boolean, numericOnly: Boole
     while (p != null) {
         val ai = p.pointed
         val sa = ai.ai_addr
-        if (sa != null) out.add(SockAddr(ai.ai_family, ai.ai_family == AF_INET6, sa.reinterpret<ByteVar>().readBytes(ai.ai_addrlen.toInt())))
+        if (sa != null) out.add(SockAddr(ai.ai_family, ai.ai_family == AF_INET6, sa.reinterpret<ByteVar>().readBytes(neton.io.posixshim.neton_ai_addrlen(p))))
         p = ai.ai_next
     }
     freeaddrinfo(res.value)

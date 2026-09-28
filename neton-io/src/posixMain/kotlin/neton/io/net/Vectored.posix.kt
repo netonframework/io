@@ -5,7 +5,10 @@ package neton.io.net
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.COpaquePointerVar
+import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.set
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
@@ -18,27 +21,22 @@ import platform.posix.EWOULDBLOCK
 import platform.posix.SHUT_WR
 import platform.posix.errno
 import platform.posix.iovec
-import platform.posix.memset
-import platform.posix.msghdr
-import platform.posix.sendmsg
 import platform.posix.shutdown
 import kotlinx.cinterop.sizeOf
 
 internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: Int): Long = memScoped {
     // Pinning keeps each array in place for the duration of the call only (the syscall is synchronous).
+    // The iovec array is built in C (neton_sendv): its field widths differ across the POSIX targets.
     val pins = Array(count) { bufs[from + it].backingArray().pin() }
     try {
-        val iov = allocArray<iovec>(count)
+        val bases = allocArray<COpaquePointerVar>(count)
+        val lens = allocArray<IntVar>(count)
         for (i in 0 until count) {
             val b = bufs[from + i]
-            iov[i].iov_base = if (b.readableBytes == 0) null else pins[i].addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
-            iov[i].iov_len = b.readableBytes.convert()
+            bases[i] = if (b.readableBytes == 0) null else pins[i].addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
+            lens[i] = b.readableBytes
         }
-        val msg = alloc<msghdr>()
-        memset(msg.ptr, 0, sizeOf<msghdr>().convert())
-        msg.msg_iov = iov
-        msg.msg_iovlen = count.convert()
-        val n = sendmsg(fd, msg.ptr, SEND_FLAGS).toLong()
+        val n = neton.io.posixshim.neton_sendv(fd, bases, lens, count, SEND_FLAGS)
         when {
             n >= 0 -> n
             errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR -> WOULD_BLOCK.toLong()

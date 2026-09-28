@@ -7,8 +7,14 @@ compilerOpts = -D_GNU_SOURCE
 ---
 
 #include <errno.h>
+#include <netdb.h>
+#include <poll.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <sched.h>
@@ -114,3 +120,53 @@ static int neton_thread_cpu_count(void) {
     return -1;
 #endif
 }
+
+/*
+ * Fixed-width wrappers for the shared POSIX sources (SPEC §28.13, publishing): size_t, ssize_t, socklen_t
+ * and long differ in width or signedness across Android (including its 32-bit targets), Linux and Apple, so
+ * Kotlin code compiled once for all of them (posixMain metadata) cannot call these functions directly.
+ * Platform structs never appear in these signatures (void * instead) for the same reason.
+ */
+static int neton_recv(int fd, void *buf, int len) { return (int) recv(fd, buf, (size_t) len, 0); }
+static int neton_send(int fd, const void *buf, int len, int flags) { return (int) send(fd, buf, (size_t) len, flags); }
+
+/* One sendmsg over up to 64 buffers (MAX_IOV); returns bytes sent or -1 with errno set. */
+static long long neton_sendv(int fd, void *const *bases, const int *lens, int count, int flags) {
+    struct iovec iov[64];
+    struct msghdr msg;
+    int i;
+    if (count > 64) count = 64;
+    for (i = 0; i < count; i++) { iov[i].iov_base = bases[i]; iov[i].iov_len = (size_t) lens[i]; }
+    memset(&msg, 0, sizeof msg);
+    msg.msg_iov = iov;
+    msg.msg_iovlen = count;
+    return (long long) sendmsg(fd, &msg, flags);
+}
+
+static int neton_accept(int fd) { return accept(fd, NULL, NULL); }
+static int neton_getsockopt_int(int fd, int level, int opt, int *out) {
+    socklen_t len = sizeof *out;
+    return getsockopt(fd, level, opt, out, &len);
+}
+static int neton_setsockopt_int(int fd, int level, int opt, int value) {
+    return setsockopt(fd, level, opt, &value, sizeof value);
+}
+static int neton_setsockopt_linger(int fd, int onoff, int seconds) {
+    struct linger l;
+    l.l_onoff = onoff; l.l_linger = seconds;
+    return setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof l);
+}
+static int neton_cpu_count(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n < 1 ? 1 : (int) n; }
+
+static int neton_read(int fd, void *buf, int len) { return (int) read(fd, buf, (size_t) len); }
+static int neton_poll(void *fds, int count, int timeout) { return poll((struct pollfd *) fds, (nfds_t) count, timeout); }
+static unsigned long long neton_thread_id(void) { return (unsigned long long) (uintptr_t) pthread_self(); }
+
+/* Pipes: one byte (signal pipe, wake pipe) and draining. */
+static int neton_read_byte(int fd) { unsigned char b; return read(fd, &b, 1) == 1 ? b : -1; }
+static void neton_write_byte(int fd) { unsigned char b = 1; (void) write(fd, &b, 1); }
+static void neton_drain(int fd) { unsigned char buf[64]; while (read(fd, buf, sizeof buf) > 0) { } }
+
+/* getaddrinfo helpers: zero the hints, read ai_addrlen (socklen_t). */
+static void neton_zero(void *p, int n) { memset(p, 0, (size_t) n); }
+static int neton_ai_addrlen(const void *ai) { return (int) ((const struct addrinfo *) ai)->ai_addrlen; }

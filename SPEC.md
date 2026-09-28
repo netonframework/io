@@ -1569,6 +1569,15 @@ Apple `arc4random_buf`；Linux 与 Android 读 `/dev/urandom`（每进程一个�
 Windows `BCryptGenRandom`。http（HeaderMap 防碰撞密钥）、websocket（掩码与 key）、quic（连接 ID、令牌）共用。测试：只写指定范围、两次不同、1 MiB 的
 字节频率无明显偏差、范围检查；macOS 127/127，colima Linux io_uring / epoll 各 129/129。
 
+**§28.13 发布修复（2026-09-28）**：0.1.0 之后加入的代码使发布路径失效（普通目标构建不编译共享源集，因此一直没有暴露）：(1) 亲和性的
+`cpu_set_t` 全局变量被 cinterop 导出，`commonizeCInterop` 失败；(2) `posixMain` / `epollMain` 共享元数据中直接调用宽度或有无符号因平台而异的
+接口（`size_t` / `ssize_t` / `socklen_t` / `long` / `nfds_t` / `pthread_t`、`iovec` 字段），编译失败（29 + 3 处）。修正：这些调用改经 `posixshim`
+中定宽的 C 包装（`neton_recv` / `neton_send` / `neton_sendv`（在 C 中组装 iovec，至多 64 块）/ `neton_accept` / `neton_get|setsockopt_int` /
+`neton_setsockopt_linger` / `neton_cpu_count` / `neton_read` / `neton_poll` / `neton_thread_id` / 管道单字节读写）；签名中不出现平台结构体。
+验证：全部 9 个共享源集的元数据编译通过；12 个目标编译通过；`publishToMavenLocal`（io 与 io-testkit 全部目标）成功；macOS 127/127，colima Linux
+io_uring（multishot / 单次 RECV）/ epoll / poll 各 129/129；热路径代价（cachegrind，原始回显每请求指令）epoll 2391 → 2390、io_uring 3764 → 3766，
+在噪声内。
+
 **§28.6 补充（2026-09-28，接入 TLS 流时）**：
 - 一致性套件新增参数 `orderlyClose`（默认 `close()`）：`close()` 无法发出协议结束标记的流（TLS 的 close_notify 需要写入，而 `close()` 不挂起）
   以 `shutdownOutput(); close()` 作有序结束。未声明 `ResumableAfterCancel` 的流，"被取消的写"检查改为：对端收到的字节不多于 `src` 的前移量、

@@ -3,7 +3,6 @@
 package neton.io.core
 
 import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
 import platform.posix.EINTR
 import platform.posix.O_CLOEXEC
@@ -28,7 +27,7 @@ internal actual fun platformSecureRandom(dst: ByteArray, offset: Int, length: In
     dst.usePinned { pinned ->
         var done = 0
         while (done < length) {
-            val n = platform.posix.read(fd, pinned.addressOf(offset + done), (length - done).convert()).toInt()
+            val n = neton.io.posixshim.neton_read(fd, pinned.addressOf(offset + done), length - done)
             if (n < 0) { if (errno == EINTR) continue; error("reading /dev/urandom failed (errno=$errno)") }
             check(n > 0) { "/dev/urandom returned EOF" }
             done += n

@@ -70,10 +70,9 @@ internal actual fun signalRestore(signal: Signal) = SignalPipe.restore(signal)
 
 internal actual fun signalWaitBlocking(): Signal? = memScoped {
     SignalPipe.ensure()
-    val b = alloc<UByteVar>()
-    val n = read(SignalPipe.readFd, b.ptr, 1u)
-    if (n != 1L) { if (errno != EINTR) usleep(1000u); return@memScoped null }
-    when (b.value.toInt()) { SIGINT -> Signal.Int; SIGTERM -> Signal.Term; SIGQUIT -> Signal.Quit; else -> null }
+    val b = neton.io.posixshim.neton_read_byte(SignalPipe.readFd)
+    if (b < 0) { if (errno != EINTR) usleep(1000u); return@memScoped null }
+    when (b) { SIGINT -> Signal.Int; SIGTERM -> Signal.Term; SIGQUIT -> Signal.Quit; else -> null }
 }
 
 internal actual fun pinCurrentThread(n: Int): Int = neton_pin_thread_nth(n)
