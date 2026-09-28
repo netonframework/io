@@ -10,7 +10,7 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.pin
+import kotlinx.cinterop.Pinned
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
 import neton.io.bytes.Buffer
@@ -25,14 +25,13 @@ import platform.posix.shutdown
 /** SD_SEND: stop sending (winsock2.h). */
 private const val SD_SEND = 1
 
-internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: Int): Long = memScoped {
-    val pins = Array(count) { bufs[from + it].backingArray().pin() }
-    try {
+internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: Int, pins: Array<Pinned<ByteArray>?>): Long = memScoped {
+    run {
         val wsabufs = allocArray<WSABUF>(count)
         for (i in 0 until count) {
             val b = bufs[from + i]
             wsabufs[i].len = b.readableBytes.convert()
-            wsabufs[i].buf = if (b.readableBytes == 0) null else pins[i].addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
+            wsabufs[i].buf = if (b.readableBytes == 0) null else pins[i]!!.addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
         }
         val sent = alloc<UIntVar>()
         val rc = WSASend(fd.toSocket(), wsabufs, count.convert(), sent.ptr, 0u, null, null)
@@ -40,8 +39,6 @@ internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: 
             val e = WSAGetLastError()
             if (e == WSAEWOULDBLOCK || e == WSAEINTR) WOULD_BLOCK.toLong() else IO_ERROR.toLong()
         } else sent.value.toLong()
-    } finally {
-        for (p in pins) p.unpin()
     }
 }
 

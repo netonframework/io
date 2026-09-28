@@ -68,6 +68,10 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
     private var pins = arrayOfNulls<Pinned<ByteArray>>(64)
     private var wPinnedArrays = arrayOfNulls<ByteArray>(64)
     private var wPins = arrayOfNulls<Pinned<ByteArray>>(64)
+    // Vectored writes: one pin per fd and buffer position, kept while the array stays the same (a connection
+    // writes its head buffer and, often, the same body arrays every time); per call only a changed array is re-pinned.
+    private var vArrays = arrayOfNulls<Array<ByteArray?>>(64)
+    private var vPins = arrayOfNulls<Array<Pinned<ByteArray>?>>(64)
     // SPEC §24 idle sweep: the sweep epoch in which each fd's read parked. A buffer parked across a
     // whole sweep interval (or when the reactor goes idle) gives its pooled array back.
     private var parkEpoch = IntArray(64)
@@ -107,6 +111,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         persistent = persistent.copyOf(n); readyRead = readyRead.copyOf(n)
         pinnedArrays = pinnedArrays.copyOf(n); pins = pins.copyOf(n)
         wPinnedArrays = wPinnedArrays.copyOf(n); wPins = wPins.copyOf(n); parkEpoch = parkEpoch.copyOf(n)
+        vArrays = vArrays.copyOf(n); vPins = vPins.copyOf(n)
         peerClosed = peerClosed.copyOf(n); sendsFail = sendsFail.copyOf(n)
         specPending = specPending.copyOf(n)
     }
@@ -341,6 +346,28 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         enqueueResumeInt(c, total, error)
     }
 
+    /** Pins for `bufs[from until from + count]`, from the fd's cache (see [vPins]). */
+    private fun vectorPins(fd: Int, bufs: Array<Buffer>, from: Int, count: Int): Array<Pinned<ByteArray>?> {
+        var arrays = vArrays[fd]
+        var pins = vPins[fd]
+        if (arrays == null || pins == null || arrays.size < count) {
+            val n = maxOf(count, 4, arrays?.size ?: 0)
+            arrays = arrays?.copyOf(n) ?: arrayOfNulls(n)
+            pins = pins?.copyOf(n) ?: arrayOfNulls(n)
+            vArrays[fd] = arrays; vPins[fd] = pins
+        }
+        for (i in 0 until count) {
+            val a = bufs[from + i].backingArray()
+            if (arrays[i] !== a) { pins[i]?.unpin(); pins[i] = a.pin(); arrays[i] = a }
+        }
+        return pins
+    }
+
+    private fun releaseVectorPins(fd: Int) {
+        vPins[fd]?.let { ps -> for (p in ps) p?.unpin() }
+        vPins[fd] = null; vArrays[fd] = null
+    }
+
     /** One sendmsg per batch of up to [MAX_IOV] buffers; parks on would-block like [write] (SPEC §23.3). */
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
         ensureFd(fd)
@@ -351,7 +378,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         while (i < count && bufs[i].readableBytes == 0) i++
         while (i < count) {
             val batch = minOf(MAX_IOV, count - i)
-            val n = sendBuffers(fd, bufs, i, batch)
+            val n = sendBuffers(fd, bufs, i, batch, vectorPins(fd, bufs, i, batch))
             stats?.let { it.writes++; if (n >= 0) it.writeBytes += n else if (n == WOULD_BLOCK.toLong()) it.writesWouldBlock++ }
             when {
                 n >= 0 -> { total += n; i = advanceBuffers(bufs, i, count, n) }
@@ -453,6 +480,7 @@ internal class ReadinessReactor(private val poller: Poller) : Reactor() {
         specPending[fd] = false
         pins[fd]?.unpin(); pins[fd] = null; pinnedArrays[fd] = null
         wPins[fd]?.unpin(); wPins[fd] = null; wPinnedArrays[fd] = null
+        releaseVectorPins(fd)
         poller.forget(fd)
         closeFd(fd)
     }

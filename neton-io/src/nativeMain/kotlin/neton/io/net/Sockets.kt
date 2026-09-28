@@ -50,7 +50,8 @@ internal expect fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, 
  * One vectored send of `bufs[from until from + count]` (SPEC §23.3): sendmsg / WSASend. Returns the
  * bytes sent (the caller advances the buffers), or [WOULD_BLOCK] / [IO_ERROR].
  */
-internal expect fun sendBuffers(fd: Int, bufs: Array<neton.io.bytes.Buffer>, from: Int, count: Int): Long
+@OptIn(ExperimentalForeignApi::class)
+internal expect fun sendBuffers(fd: Int, bufs: Array<neton.io.bytes.Buffer>, from: Int, count: Int, pins: Array<Pinned<ByteArray>?>): Long
 
 /** shutdown(SHUT_WR) / shutdown(SD_SEND). */
 internal expect fun shutdownWrite(fd: Int)
