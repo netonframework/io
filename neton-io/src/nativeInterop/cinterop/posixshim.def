@@ -62,8 +62,14 @@ static int neton_signal_disposition(int sig) {
  * creator's mask. Returns the CPU, or -1 (not supported, or failed).
  */
 #ifdef __linux__
-static cpu_set_t neton_allowed;
-static int neton_allowed_count = -1;
+/*
+ * Storage inside a function: a file-scope `cpu_set_t` variable would be exported by cinterop as a Kotlin
+ * property of a Linux-only type, which breaks the commonization of the shared source sets (publishing).
+ */
+static void *neton_allowed_set(void) { static cpu_set_t s; return &s; }
+static int *neton_allowed_count_ptr(void) { static int n = -1; return &n; }
+#define neton_allowed (*(cpu_set_t *) neton_allowed_set())
+#define neton_allowed_count (*neton_allowed_count_ptr())
 #endif
 
 static int neton_affinity_capture(void) {
