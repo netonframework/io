@@ -33,6 +33,12 @@ class Bytes internal constructor(internal val array: ByteArray, internal val off
 
     fun copyInto(dst: ByteArray, dstOffset: Int = 0) { array.copyInto(dst, dstOffset, offset, offset + size) }
 
+    /** Copy bytes `[from, to)` of this slice into [dst] at [dstOffset], without creating a sub-slice. */
+    fun copyInto(dst: ByteArray, dstOffset: Int, from: Int, to: Int) {
+        require(from in 0..to && to <= size) { "bad range [$from, $to) of $size" }
+        array.copyInto(dst, dstOffset, offset + from, offset + to)
+    }
+
     fun decodeToString(): String = array.decodeToString(offset, offset + size)
 
     override fun equals(other: Any?): Boolean {

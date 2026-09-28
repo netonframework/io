@@ -11,7 +11,7 @@ internal suspend fun currentReactor(): Reactor = coroutineContext[ContinuationIn
 
 /** A listening TCP endpoint. */
 internal class TcpServer(
-    private val listenFd: Int,
+    internal val listenFd: Int,
     private val reactor: Reactor,
     /** Applied to every accepted connection (SPEC §23.5). */
     private val options: SocketOptions = SocketOptions.Default,
