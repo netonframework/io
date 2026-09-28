@@ -1564,6 +1564,11 @@ mingwX64（含测试编译）、iOS、Android 编译通过。Windows 上的运�
   首次 L3（回显不挂起）未形成过载、准入从未等待，结果保留在 `bench/s28-4/l3.out` 作为修订依据。
 
 
+**§28.15 加密安全随机数（2026-09-28）**：`neton.io.core.secureRandom(dst, offset, length)` / `secureRandomLong()`，取操作系统的 CSPRNG：
+Apple `arc4random_buf`；Linux 与 Android 读 `/dev/urandom`（每进程一个描述符；`getrandom` 比这些目标所用的 Linux sysroot 与 Android API 级别新）；
+Windows `BCryptGenRandom`。http（HeaderMap 防碰撞密钥）、websocket（掩码与 key）、quic（连接 ID、令牌）共用。测试：只写指定范围、两次不同、1 MiB 的
+字节频率无明显偏差、范围检查；macOS 127/127，colima Linux io_uring / epoll 各 129/129。
+
 **§28.6 补充（2026-09-28，接入 TLS 流时）**：
 - 一致性套件新增参数 `orderlyClose`（默认 `close()`）：`close()` 无法发出协议结束标记的流（TLS 的 close_notify 需要写入，而 `close()` 不挂起）
   以 `shutdownOutput(); close()` 作有序结束。未声明 `ResumableAfterCancel` 的流，"被取消的写"检查改为：对端收到的字节不多于 `src` 的前移量、

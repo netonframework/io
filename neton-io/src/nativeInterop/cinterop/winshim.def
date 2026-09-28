@@ -2,7 +2,7 @@ package = neton.io.win
 # Only the helpers below are exported; the Winsock declarations themselves come from platform.posix / platform.windows.
 headers = winsock2.h
 headerFilter = neton_winshim_none.h
-linkerOpts = -lws2_32
+linkerOpts = -lws2_32 -lbcrypt
 compilerOpts = -D_WIN32_WINNT=0x0A00
 
 ---
@@ -228,4 +228,10 @@ static int neton_pin_thread_nth(int n) {
         if (seen++ == want) return SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR) 1 << cpu) != 0 ? cpu : -1;
     }
     return -1;
+}
+
+/* SPEC §28.15: the OS CSPRNG. 0 on success. */
+#include <bcrypt.h>
+static int neton_secure_random(unsigned char *buf, unsigned long len) {
+    return BCryptGenRandom(NULL, buf, (ULONG) len, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ? 0 : -1;
 }
