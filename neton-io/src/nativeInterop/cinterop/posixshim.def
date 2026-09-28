@@ -20,6 +20,7 @@ compilerOpts = -D_GNU_SOURCE
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <time.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -166,6 +167,10 @@ static int neton_setsockopt_linger(int fd, int onoff, int seconds) {
     l.l_onoff = onoff; l.l_linger = seconds;
     return setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof l);
 }
+/* Clocks (neton.io.core.Clock): 64-bit results, timespec field widths differ across targets. */
+static long long neton_monotonic_nanos(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec; }
+static long long neton_realtime_millis(void) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); return (long long) ts.tv_sec * 1000LL + ts.tv_nsec / 1000000; }
+
 static int neton_cpu_count(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n < 1 ? 1 : (int) n; }
 
 static int neton_read(int fd, void *buf, int len) { return (int) read(fd, buf, (size_t) len); }

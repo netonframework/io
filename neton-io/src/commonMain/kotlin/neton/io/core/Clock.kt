@@ -1,14 +1,11 @@
 package neton.io.core
 
-import kotlin.time.TimeSource
-
-private val origin = TimeSource.Monotonic.markNow()
-
 /**
- * Monotonic time in nanoseconds since an arbitrary process-wide origin (SPEC §29.6). Never goes backwards;
- * only differences are meaningful. For protocol timers (QUIC loss detection, pacing) and measurements.
+ * Monotonic time in nanoseconds since an arbitrary origin (SPEC §29.6). Never goes backwards; only differences are
+ * meaningful. For protocol timers (QUIC loss detection, pacing) and measurements. A direct clock read that allocates
+ * nothing (`clock_gettime(CLOCK_MONOTONIC)`, `QueryPerformanceCounter`).
  */
-fun monotonicNanos(): Long = origin.elapsedNow().inWholeNanoseconds
+expect fun monotonicNanos(): Long
 
-/** Wall-clock time in milliseconds since the Unix epoch (can jump when the system clock is set). */
-fun systemTimeMillis(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
+/** Wall-clock time in milliseconds since the Unix epoch (can jump when the system clock is set); allocates nothing. */
+expect fun systemTimeMillis(): Long
