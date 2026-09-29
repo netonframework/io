@@ -22,7 +22,7 @@ One artifact, `com.netonstream:io` (up to 0.1.0: `com.netonstream:neton-io`), th
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.2.0") }   // 0.1.0: com.netonstream:neton-io
+dependencies { implementation("com.netonstream:io:0.1.0") }   // New short coordinate; old neton-io releases are unchanged.
 ```
 
 Targets: macOS, Linux (x64/arm64) and iOS. The artifact is a klib, so a consumer compiles with the
