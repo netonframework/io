@@ -345,6 +345,17 @@ static int neton_udp_local(int fd, int *family, unsigned char *ip, int *port, un
     return 0;
 }
 
+/* The peer (peer = 1, getpeername) or local (peer = 0, getsockname) address of a socket; -EAFNOSUPPORT for sockets
+ * that are not IPv4 / IPv6 (Unix), -errno otherwise (e.g. ENOTCONN once the peer is gone). */
+static int neton_sock_addr(int fd, int peer, int *family, unsigned char *ip, int *port, unsigned int *scope) {
+    struct sockaddr_storage ss; socklen_t len = sizeof ss;
+    int r = peer ? getpeername(fd, (struct sockaddr *) &ss, &len) : getsockname(fd, (struct sockaddr *) &ss, &len);
+    if (r != 0) return -errno;
+    if (ss.ss_family != AF_INET && ss.ss_family != AF_INET6) return -EAFNOSUPPORT;
+    neton_sa_read(&ss, family, ip, port, scope);
+    return 0;
+}
+
 /* Get (value < 0) or set a socket buffer size; which: 0 send, 1 receive. Returns the size or -errno. */
 static int neton_udp_buffer(int fd, int which, int value) {
     int name = which ? SO_RCVBUF : SO_SNDBUF, out = 0; socklen_t len = sizeof out;

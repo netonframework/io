@@ -628,6 +628,7 @@ internal class ReactorStream(
     override val capabilities: Set<neton.io.core.StreamCapability> get() = SOCKET_STREAM_CAPABILITIES
 
     private var closed = false
+    internal val isClosed: Boolean get() = closed
 
     // SPEC §23.2 timeouts (ms, 0 = off) and the deadlines they produce, in reactor-clock ms.
     private var readTimeoutMs = 0L

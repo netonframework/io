@@ -315,6 +315,9 @@ internal expect fun udpBind(family: Int, ip: ByteArray, port: Int, scope: Int, v
 internal expect fun udpSetup(fd: Int, v6: Boolean, v6only: Boolean, caps: IntArray): Int
 /** 0 with out[0] family, out[1] port, out[2] scope and [ip]; or -errno. */
 internal expect fun udpLocal(fd: Int, out: IntArray, ip: ByteArray): Int
+
+/** The peer ([peer] true, getpeername) or local address of socket [fd]; null for non-IP sockets or on failure. */
+internal expect fun socketAddress(fd: Int, peer: Boolean): SocketAddress?
 internal expect fun udpBuffer(fd: Int, which: Int, value: Int): Int
 /** Datagrams received (> 0), or a UDP_* code (a negative errno for other failures, below -1000). */
 internal expect fun udpRecv(fd: Int, batch: RecvBatch): Int

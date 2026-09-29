@@ -1671,3 +1671,17 @@ socket_buffers，断言同参考：分段内容、来源端口、来源 / 目的
 | poll | 1 ms | 72 / 98 / 785 | — |
 没有提前触发。按决策规则（1 ms 截止时间 p99 迟到 ≤ 1 ms）：各驱动都满足，不改用纳秒等待；公开 `monotonicNanos()` / `systemTimeMillis()`
 （`neton.io.core`）。负载下偶见 3 ms 的最大值来自与服务端共用一个核。参考栈的对照：quinn 运行其上的 tokio 计时轮精度为 1 ms。
+
+## 30. TCP 连接的地址（2026-09-29，Neton 框架引擎适配器提出的缺口）
+
+需求：框架的请求对象带 `remoteAddress`（按 IP 限流、访问日志），而底座没有取 TCP 流对端地址的办法，适配器只能把所有客户端记为 "unknown"。
+对照：tokio `TcpStream::peer_addr` / `local_addr`。
+
+- API（`neton.io.net`）：`val IoStream.peerAddress: SocketAddress?`、`val IoStream.localAddress: SocketAddress?`（getpeername / getsockname）。
+  返回 null 的情形：不是套接字的流（内存流）、包装流（TLS 流等，应在包装之前从原始套接字取）、Unix 套接字、流已关闭（先查关闭标志，
+  避免 fd 被复用后返回另一条连接的地址）、对端已不在（`ENOTCONN`）。每次调用做一次系统调用、分配一个 `SocketAddress`，调用方在 `accept`
+  之后取一次保存。双栈监听上的 IPv4 客户端报告为 v4 映射地址，`toCanonical()` 取回 IPv4。
+- 实现：POSIX 在 `posixshim` 的 `neton_sock_addr`（复用 `neton_sa_read`）；Windows 解析 Winsock 的 `sockaddr` 字节（族小端在 0，端口大端在 2，
+  IPv4 在 4..8，IPv6 在 8..24，scope 在 24..28）。
+- 测试（`nativeTest/PeerAddressTest`，5 个）：IPv4 与 IPv6 两端互为对端 / 本端、双栈监听的映射地址、内存流为 null、关闭后为 null。
+  macOS 全量 152/152；153 epoll 与 io_uring 各 154/154；mingwX64 编译通过，Windows 实跑待 `ci/windows-validation`。

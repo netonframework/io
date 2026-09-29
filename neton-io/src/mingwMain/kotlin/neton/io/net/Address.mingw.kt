@@ -43,6 +43,7 @@ import platform.posix.WSAEWOULDBLOCK
 import platform.posix.WSAGetLastError
 import platform.posix.bind
 import platform.posix.connect
+import platform.posix.getpeername
 import platform.posix.getsockname
 import platform.posix.listen
 import platform.posix.memset
@@ -99,6 +100,32 @@ internal fun boundAddress(fd: Int): SockAddr = memScoped {
     val bytes = buf.readBytes(len.value)
     val family = (bytes[0].toInt() and 0xFF) or ((bytes[1].toInt() and 0xFF) shl 8)   // sockaddr.sa_family, little-endian
     SockAddr(family, family == AF_INET6, bytes)
+}
+
+/**
+ * The peer (getpeername) or local (getsockname) address of socket [fd], parsed from the Winsock sockaddr layout
+ * (family little-endian at 0; port big-endian at 2; IPv4 address at 4; IPv6 flow info at 4, address at 8, scope id
+ * little-endian at 24). Null for other families or when the call fails.
+ */
+internal actual fun socketAddress(fd: Int, peer: Boolean): SocketAddress? = memScoped {
+    val buf = allocArray<ByteVar>(128)
+    val len = alloc<IntVar>(); len.value = 128
+    val r = if (peer) getpeername(fd.toSocket(), buf.reinterpret(), len.ptr) else getsockname(fd.toSocket(), buf.reinterpret(), len.ptr)
+    if (r != 0) return@memScoped null
+    val b = buf.readBytes(len.value)
+    fun u8(i: Int) = b[i].toInt() and 0xFF
+    val family = u8(0) or (u8(1) shl 8)
+    val port = (u8(2) shl 8) or u8(3)
+    val ip = ByteArray(16)
+    when (family) {
+        AF_INET -> { b.copyInto(ip, 0, 4, 8); SocketAddress.fromFields(4, ip, 0, port, 0) }
+        AF_INET6 -> {
+            b.copyInto(ip, 0, 8, 24)
+            val scope = u8(24) or (u8(25) shl 8) or (u8(26) shl 16) or (u8(27) shl 24)
+            SocketAddress.fromFields(6, ip, 0, port, scope)
+        }
+        else -> null
+    }
 }
 
 internal actual fun tcpListenAddr(addr: SockAddr, display: String, options: SocketOptions): Int {

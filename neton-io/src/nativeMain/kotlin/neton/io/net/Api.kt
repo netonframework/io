@@ -29,6 +29,18 @@ class TcpListener internal constructor(private val server: TcpServer) {
 }
 
 /**
+ * The remote address of a TCP connection (getpeername), or null: for streams that are not sockets (memory streams,
+ * wrappers such as a TLS stream — take the address from the socket before wrapping it), for Unix sockets, and once the
+ * stream is closed or the peer is gone (ENOTCONN). A server reads it right after `accept`.
+ */
+val neton.io.core.IoStream.peerAddress: SocketAddress?
+    get() = (this as? ReactorStream)?.takeUnless { it.isClosed }?.let { socketAddress(it.fd, peer = true) }
+
+/** The local address of a TCP connection (getsockname), or null as for [peerAddress]. */
+val neton.io.core.IoStream.localAddress: SocketAddress?
+    get() = (this as? ReactorStream)?.takeUnless { it.isClosed }?.let { socketAddress(it.fd, peer = false) }
+
+/**
  * The peer reset the connection (ECONNRESET / WSAECONNRESET): after a close handshake a protocol may treat this as a
  * normal end (tungstenite `check_connection_reset`).
  */

@@ -7,6 +7,7 @@ import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
+import neton.io.posixshim.neton_sock_addr
 import neton.io.posixshim.neton_udp_bind
 import neton.io.posixshim.neton_udp_buffer
 import neton.io.posixshim.neton_udp_local
@@ -36,6 +37,14 @@ internal actual fun udpSetup(fd: Int, v6: Boolean, v6only: Boolean, caps: IntArr
 internal actual fun udpLocal(fd: Int, out: IntArray, ip: ByteArray): Int = out.usePinned { o -> ip.usePinned { p ->
     neton_udp_local(fd, o.addressOf(0), p.addressOf(0).reinterpret(), o.addressOf(1), o.addressOf(2).reinterpret<UIntVar>())
 } }
+
+internal actual fun socketAddress(fd: Int, peer: Boolean): SocketAddress? {
+    val f = IntArray(3); val ip = ByteArray(16)
+    val r = f.usePinned { o -> ip.usePinned { p ->
+        neton_sock_addr(fd, if (peer) 1 else 0, o.addressOf(0), p.addressOf(0).reinterpret(), o.addressOf(1), o.addressOf(2).reinterpret<UIntVar>())
+    } }
+    return if (r == 0) SocketAddress.fromFields(f[0], ip, 0, f[1], f[2]) else null
+}
 
 internal actual fun udpBuffer(fd: Int, which: Int, value: Int): Int = neton_udp_buffer(fd, which, value)
 
