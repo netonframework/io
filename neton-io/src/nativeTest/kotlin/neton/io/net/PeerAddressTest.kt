@@ -60,6 +60,23 @@ class PeerAddressTest {
         c.close(); s.close(); server.close()
     }
 
+    /** The cases of Rust std's `Ipv6Addr` display tests (RFC 5952). */
+    @Test
+    fun ipStringMatchesRustDisplay() {
+        fun v6(vararg g: Int, scope: Int = 0) =
+            SocketAddress.of(ByteArray(16) { i -> (g[i / 2] shr (if (i % 2 == 0) 8 else 0)).toByte() }, 0, scope).ipString()
+        assertEquals("127.0.0.1", SocketAddress.ipv4(127, 0, 0, 1, 80).ipString())
+        assertEquals("::", v6(0, 0, 0, 0, 0, 0, 0, 0))
+        assertEquals("::1", v6(0, 0, 0, 0, 0, 0, 0, 1))
+        assertEquals("1::", v6(1, 0, 0, 0, 0, 0, 0, 0))
+        assertEquals("1:0:0:4::8", v6(1, 0, 0, 4, 0, 0, 0, 8))          // the longer run
+        assertEquals("1::4:5:0:0:8", v6(1, 0, 0, 4, 5, 0, 0, 8))        // a tie: the first
+        assertEquals("1:0:2:3:4:5:6:7", v6(1, 0, 2, 3, 4, 5, 6, 7))     // one zero group stays
+        assertEquals("2001:db8::ff00:42:8329", v6(0x2001, 0xdb8, 0, 0, 0, 0xff00, 0x42, 0x8329))
+        assertEquals("::ffff:192.0.2.128", v6(0, 0, 0, 0, 0, 0xffff, 0xc000, 0x280))
+        assertEquals("fe80::1%3", v6(0xfe80, 0, 0, 0, 0, 0, 0, 1, scope = 3))
+    }
+
     @Test
     fun nonSocketStreamsHaveNoAddress() {
         val (a, b) = memoryStreamPair()

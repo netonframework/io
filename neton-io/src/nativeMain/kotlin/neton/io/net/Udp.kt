@@ -54,6 +54,29 @@ class SocketAddress private constructor(
         return h * 31 + scopeId
     }
 
+    /**
+     * The IP address alone as text, as Rust's `IpAddr` displays it: dotted IPv4; IPv6 in RFC 5952 form (lower-case hex,
+     * the longest run of two or more zero groups, the first on a tie, as `::`), `::ffff:a.b.c.d` for a v4-mapped
+     * address, and `%scope` when there is a scope id.
+     */
+    fun ipString(): String {
+        if (family == 4) return "${ip[0].toInt() and 0xff}.${ip[1].toInt() and 0xff}.${ip[2].toInt() and 0xff}.${ip[3].toInt() and 0xff}"
+        val scope = if (scopeId != 0) "%$scopeId" else ""
+        if (isIpv4Mapped) return "::ffff:${ip[12].toInt() and 0xff}.${ip[13].toInt() and 0xff}.${ip[14].toInt() and 0xff}.${ip[15].toInt() and 0xff}$scope"
+        val g = IntArray(8) { ((ip[2 * it].toInt() and 0xff) shl 8) or (ip[2 * it + 1].toInt() and 0xff) }
+        var bestStart = -1; var bestLen = 0; var i = 0
+        while (i < 8) {
+            if (g[i] != 0) { i++; continue }
+            val start = i
+            while (i < 8 && g[i] == 0) i++
+            if (i - start > bestLen) { bestStart = start; bestLen = i - start }
+        }
+        if (bestLen < 2) return g.joinToString(":") { it.toString(16) } + scope
+        val head = (0 until bestStart).joinToString(":") { g[it].toString(16) }
+        val tail = (bestStart + bestLen until 8).joinToString(":") { g[it].toString(16) }
+        return "$head::$tail$scope"
+    }
+
     override fun toString(): String = if (family == 4) {
         "${ip[0].toInt() and 0xff}.${ip[1].toInt() and 0xff}.${ip[2].toInt() and 0xff}.${ip[3].toInt() and 0xff}:$port"
     } else {

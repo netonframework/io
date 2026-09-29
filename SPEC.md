@@ -1683,5 +1683,8 @@ socket_buffers，断言同参考：分段内容、来源端口、来源 / 目的
   之后取一次保存。双栈监听上的 IPv4 客户端报告为 v4 映射地址，`toCanonical()` 取回 IPv4。
 - 实现：POSIX 在 `posixshim` 的 `neton_sock_addr`（复用 `neton_sa_read`）；Windows 解析 Winsock 的 `sockaddr` 字节（族小端在 0，端口大端在 2，
   IPv4 在 4..8，IPv6 在 8..24，scope 在 24..28）。
-- 测试（`nativeTest/PeerAddressTest`，5 个）：IPv4 与 IPv6 两端互为对端 / 本端、双栈监听的映射地址、内存流为 null、关闭后为 null。
+- `SocketAddress.ipString()`：只取 IP 的文本，同 Rust `IpAddr` 的 Display（IPv6 按 RFC 5952 压缩最长的零组、相同长度取第一段，v4 映射写成
+  `::ffff:a.b.c.d`，有 scope 时带 `%scope`）；框架的 `remoteAddress` 只要 IP。`toString()` 不变。
+- 测试（`nativeTest/PeerAddressTest`，6 个）：IPv4 与 IPv6 两端互为对端 / 本端、双栈监听的映射地址、内存流为 null、关闭后为 null、
+  `ipString` 对照 Rust std 的 `Ipv6Addr` 显示测试。
   macOS 全量 152/152；153 epoll 与 io_uring 各 154/154；mingwX64 编译通过，Windows 实跑待 `ci/windows-validation`。
