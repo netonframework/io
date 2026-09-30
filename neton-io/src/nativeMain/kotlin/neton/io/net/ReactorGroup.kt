@@ -27,7 +27,12 @@ import kotlin.native.concurrent.Worker
 @OptIn(ExperimentalAtomicApi::class)
 internal val failWorkerStartForTest = AtomicInt(-1)
 
-/** Online CPU count, at least 1. */
+/**
+ * Default reactor count, at least 1. Linux/Android count CPUs allowed by the calling thread's
+ * affinity (including container cpusets); other platforms use their platform CPU count.
+ * Not a CPU-bandwidth quota estimate. Set `reactors` explicitly for quota-only containers.
+ * Call before pinning the calling thread if the group should use the original CPU set.
+ */
 expect fun cpuCount(): Int
 
 /** Whether SO_REUSEPORT spreads connections across the sockets bound to a port (Linux/Android only). */
@@ -527,4 +532,3 @@ internal fun reportConnectionFault(t: Throwable) {
     platform.posix.fprintf(platform.posix.stderr, "neton-io: connection closed after error: %s\n", t.message ?: t.toString())
     platform.posix.fflush(platform.posix.stderr)
 }
-

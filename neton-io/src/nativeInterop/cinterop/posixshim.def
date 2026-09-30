@@ -200,7 +200,39 @@ static int neton_gc_thread_nice(int nice) {
 static int neton_gc_thread_nice(int nice) { (void) nice; return 0; }
 #endif
 
-static int neton_cpu_count(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n < 1 ? 1 : (int) n; }
+/* Default reactor sizing must respect taskset/container cpusets, not the host's online count.
+ * Query each time: affinity can change, and child threads inherit their creator's mask.
+ * This is a CPU-mask count, not a cgroup CPU-bandwidth (quota/period) estimate. */
+static int neton_cpu_count(void) {
+#ifdef __linux__
+    unsigned long local[16];
+    void *mask = local;
+    size_t bytes = sizeof local;
+    for (;;) {
+        memset(mask, 0, bytes);
+        if (sched_getaffinity(0, bytes, (cpu_set_t *) mask) == 0) {
+            int count = 0;
+            const unsigned char *p = (const unsigned char *) mask;
+            for (size_t i = 0; i < bytes; ++i) {
+                unsigned char bits = p[i];
+                while (bits) { bits &= (unsigned char) (bits - 1); ++count; }
+            }
+            if (mask != local) free(mask);
+            if (count > 0) return count;
+            break;
+        }
+        int error = errno;
+        if (mask != local) free(mask);
+        /* Linux returns EINVAL when the kernel CPU mask is larger than the supplied buffer. */
+        if (error != EINVAL || bytes >= 1024 * 1024) break;
+        bytes *= 2;
+        mask = malloc(bytes);
+        if (!mask) break;
+    }
+#endif
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n < 1 ? 1 : (int) n;
+}
 
 static int neton_read(int fd, void *buf, int len) { return (int) read(fd, buf, (size_t) len); }
 static int neton_poll(void *fds, int count, int timeout) { return poll((struct pollfd *) fds, (nfds_t) count, timeout); }

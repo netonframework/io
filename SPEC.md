@@ -1688,3 +1688,67 @@ socket_buffers，断言同参考：分段内容、来源端口、来源 / 目的
 - 测试（`nativeTest/PeerAddressTest`，6 个）：IPv4 与 IPv6 两端互为对端 / 本端、双栈监听的映射地址、内存流为 null、关闭后为 null、
   `ipString` 对照 Rust std 的 `Ipv6Addr` 显示测试。
   macOS 全量 152/152；153 epoll 与 io_uring 各 154/154；mingwX64 编译通过，Windows 实跑待 `ci/windows-validation`。
+
+## 31. 容器 CPU 亲和性与默认 reactor 数（2026-09-30）
+
+状态：本地实现，功能测试通过；对 Arena 的性能收益未测。未发布。
+
+- Linux / Android 上 `cpuCount()` 数调用线程 `sched_getaffinity` 掩码中的 CPU，不再用宿主机的 `_SC_NPROCESSORS_ONLN`。
+  不连续的掩码按置位数计，不按最大 CPU 编号。
+- 每次调用都重新读掩码（不缓存）。需要沿用原始可用 CPU 集时，在给线程绑核之前查询。显式给出的 `reactors` 始终优先。
+- 内核 CPU 数超过初始缓冲区时 `EINVAL`，缓冲区加倍重试；查询失败时退回在线 CPU 数，至少为 1。
+- 不推算 cgroup v1 / v2 的 CPU 带宽配额：只有配额限制的容器仍须显式设置。要支持配额，须解析进程实际的 cgroup 挂载与路径以及
+  祖先层级的限制，只读 `/sys/fs/cgroup/cpu.max` 不够。
+- 不涉及监听组共享、GC 设置、准入、取消或 HTTP 语义。
+- `bench/test-cpu-count.py` 编译生产用的 shim，测试限制、继承、首尾 CPU 掩码与恢复；`--source-ref` 编译旧 shim 作反向对照。
+  Linux 的 `CpuCountTest` 覆盖公开的 Kotlin 入口，包括在 taskset 下运行。
+- 发布门槛：I/O 测试，加上在 Linux 上用 Arena 的压测端对完整 Neton 业务路径做不改其他条件的 A/B，记录压测端、原始请求、
+  驱动、cpuset 与连接数。只有功能测试不能说明吞吐有提升，也不能把它称作已确认的 Arena 回归修复。
+
+验证（2026-09-30）：macOS arm64 153/153；Linux arm64（Colima，2 CPU）epoll、io_uring、multishot 各 156/156。公开的 Kotlin
+`CpuCountTest` 在 `taskset -c 0` 下也通过。C 测试覆盖真实的限制 / 继承 / 恢复，以及注入的稀疏掩码、CPU 编号 2048、`EINVAL`
+扩容与系统调用失败时的回退。用修复前 HEAD 的 shim，同一测试在单 CPU 断言处中止。未回滚任何源码。
+
+### 31.1 Arena 证据与后续性能门槛
+
+来源：https://github.com/MDA2AV/HttpArena/actions/runs/36611334152（PR 1517）。runner 报告 128 个可用 CPU；baseline 声明的服务端
+cpuset 有 64 个逻辑 CPU。日志没有直接列出服务端的 reactor 线程或 GC 暂停。
+
+| 引擎 | 最好 RPS | 最好一轮的 CPU 百分比 | 三轮的 p99 |
+| --- | ---: | ---: | --- |
+| NetonStream | 372848 | 3386.0 | 138.30–142.40 ms |
+| Hyper4k | 1034982 | 5282.7 | 6.04–8.66 ms |
+
+这些是性能症状，不能证明根因是 GC、竞争或驱动。用 CPU / RPS 估算的每请求成本不是恒定值。诊断构建的 malloc 次数与 GC 清扫
+对象数不能混用来推断或排除 GC 饱和。NetonStream 最好一轮中第一种请求模板约占完成数的 22.8%，Hyper4k 为 32.9%；本地三种模板
+等量的测试有参考价值，但复现不了这种完成比例，也复现不了 Arena 压测端的调度。
+
+后续受控步骤（保持相同的框架 / 业务路径，以已发布的 Hyper4k 作对照）：
+1. 在 Linux 上对比修复前与只含亲和性修复的构建。记录实际可用 CPU 列表、每个监听组的 reactor 线程数、内核 / 驱动、产物哈希、
+   错误以及全部轮次（不只是最好的一轮）。
+2. 在相同 reactor 数下，对比显式的 `NETON_IO_DRIVER=epoll` 与 `iouring`。macOS kqueue 的测量隔离不出 Linux 驱动的行为；
+   自动回退不得悄悄改变这项实验。GC 与准入设置保持不变。
+3. 在单独的诊断轮次里采集逐线程 CPU、调度等待与 GC 安全点 / 暂停数据。只有这些观测支持时，才测试监听组共享或 GC 调优。
+4. HTTP 断连监视与头部 Map 的分配优化分开测量，保留取消、半关闭、流水线、背压与流式的一致性测试。
+
+按当前粗略的每请求 CPU 成本，仅仅用满 64 个 CPU，NetonStream 约为 0.70M RPS，Hyper4k 约为 1.25M（推算，未测）。在这个 CPU 预算下
+要达到 3M，还须把每请求 CPU 降到约 21 µs；只调 reactor 数不够。
+
+### 31.2 第一轮本地完整 Neton 测试（2026-09-30）
+
+作为 CPU 数量的正确性修复保留，**不是**已证明的吞吐提升。本轮没有发布 Maven，也没有改 Arena PR。
+
+- 未改动的 Arena beta21 条目的普通 Linux arm64 release 构建：修复前用已发布的依赖；修复后只把 io 换成带此亲和性补丁的版本。
+  io-v0.1.0 标签到本地基线之间只改了文档 / POM 链接。HTTP 仍是已发布的 0.1.0。
+- Mac 上共享的 Colima，两个虚拟 CPU，服务端绑 CPU 0，wrk 绑 CPU 1，显式 io_uring，两个非 TLS 监听端口，GET / Content-Length
+  POST / chunked POST 混合。三组交替、每轮 10 秒的测量，另有带响应校验的预热。复现不了 Arena 的独立压测端、硬件、64 CPU 掩码
+  与四个监听端口。
+- 256 连接时六轮都没有 socket / 状态 / 超时错误。RPS 中位数修复前 79245、修复后 75705（约 −4.5%），范围重叠。进程每请求 CPU
+  中位数 12.58 对 13.22 µs。这些观测不能说明有提速。进程线程数 9 对 7，与两个监听组都不再多开 reactor 一致。
+- 第一次 4096 连接的尝试继承了 1024 的 fd 软上限而失败。压测工具现在把自身及子进程的软上限提到 65536（不超过硬上限），并记录
+  两个上限。失败的输出保留，不覆盖。
+- fd 上限修正后，六轮 4096 连接仍全部有请求超时（修复前 680 / 654 / 698；修复后 674 / 675 / 685）。不得把它们的 RPS 当作通过的
+  性能结果，不得推断超时原因，也不得把本地失败等同于 Arena 的回归。没有放宽任何超时。高连接数下的准入 / 调度另行调查（结果见 §32）。
+- 两个独立的 HTTP 延迟监视原型因 io_uring 下倒退被否决，协议源码中都未保留。见 http SPEC 的否决实验记录。
+- 复现与原始证据：同级目录 `bench-arena/linux-watch-ab.py`、`affinity-ab-builds.json` 与 `results/affinity-iouring-*`。每一轮都带
+  产物哈希、请求数、错误数、CPU 测量窗口与客户端 CPU 占用。新旧两个二进制都保留。仍需多核 Linux / Arena 验证。
