@@ -1752,3 +1752,30 @@ cpuset 有 64 个逻辑 CPU。日志没有直接列出服务端的 reactor 线�
 - 两个独立的 HTTP 延迟监视原型因 io_uring 下倒退被否决，协议源码中都未保留。见 http SPEC 的否决实验记录。
 - 复现与原始证据：同级目录 `bench-arena/linux-watch-ab.py`、`affinity-ab-builds.json` 与 `results/affinity-iouring-*`。每一轮都带
   产物哈希、请求数、错误数、CPU 测量窗口与客户端 CPU 占用。新旧两个二进制都保留。仍需多核 Linux / Arena 验证。
+
+## 32. io_uring 下 accept 每轮只取一个连接（2026-10-01，缺陷，已修复）
+
+现象（§31.2 的 4096 连接超时）：本地 Linux（Colima，服务端 1 CPU，wrk 1 线程）先用 4096 连接预热 3 秒，再用 4096 个新连接测量，
+io_uring 下每轮 600–900 个请求超时，epoll 下为 0；预热后等 10 秒再测也为 0。内核计数器（ListenOverflows、ListenDrops、
+SyncookiesSent 等）全为 0，不是监听队列溢出。
+
+定位：测量中每秒读监听 socket 的 Recv-Q（accept 队列长度）：第 1 秒 3494–3686，之后每秒只少约 100；t=4 s 与 t=7 s 两次快照之间
+`bytes_received` 不变的连接有 2764–2836 个，它们的 Recv-Q 恰好是一个请求的字节数（60 / 82 / 101）——握手已完成、还在 accept 队列里，
+第一个请求从未被读。原因：`UringReactor.accept` 每次都提交一个 ACCEPT SQE 并挂起，恢复要等下一轮循环的 enter 与收割，所以
+**每轮循环最多取走一个连接**；有负载时每轮要处理几百个请求，accept 速率被压到每秒约 100。就绪型 reactor 的 `accept` 一直是先直接
+`accept()`，EAGAIN 才等可读，一次能取空队列。不预热时连接是在服务端空闲时建立的，很快被取完，所以看不出来；Arena 的压测端同样
+在开局一次建立 4096 个连接。
+
+修复：`UringReactor.accept` 先对非阻塞的监听 socket 直接 `accept()`；队列空（或出错）时才提交 ACCEPT SQE 等待，错误仍由 SQE 的
+结果报告。Handoff 与 ReusePort 两种接受方式都经过这里。
+
+测试（`nativeTest/AcceptBacklogTest`）：100 个连接完成握手、排在 accept 队列里（不超过 macOS `kern.ipc.somaxconn` 的 128），一个只做
+`yield()` 的协程计数；取走这 100 个连接期间它运行的次数必须少于 10。每轮循环最多运行它 256 次（任务预算），旧实现每个连接一轮：
+修复前 io_uring 为 25,498 次（300 个连接时 76,498）而失败，epoll 通过；修复后两者都通过。全量：macOS 154/154；Linux arm64（Colima）
+io_uring、io_uring multishot、epoll 各 157/157；mingwX64、linuxX64、androidNativeArm64 编译通过。
+
+效果（同上环境，完整 Arena neton 条目，只把 io 换成本修复，预热后 4096 连接，各 2 轮）：accept 队列在第 1 / 5 / 9 秒都是 0（修复前约
+3500 → 2700）；3 秒无进展的连接 0（修复前约 2800）；超时 0（修复前 683 / 883）。RPS 在同一范围（服务端只有 1 CPU）；p50 从约 16 ms
+升到约 57 ms，因为现在 4096 个连接全都在接受服务（4096 / 55k ≈ 74 ms 的平均排队），而修复前卡在 accept 队列里的连接不计入延迟。
+对 Arena 的收益仍须在多核 Linux 上测。探测脚本：`bench-arena/probe-4096.sh`（`WARM=1 SNAP=1`）。
+

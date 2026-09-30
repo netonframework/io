@@ -872,7 +872,12 @@ internal class UringReactor : Reactor() {
     }
 
     override suspend fun accept(listenFd: Int): Int {
-        val res = submit(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0, null)
+        // SPEC §32: take what the backlog already holds with a plain accept, as the readiness reactors do. An ACCEPT
+        // SQE yields one connection per trip round the loop, so a burst of 4096 connections arriving under load was
+        // accepted at about 100 per second. The SQE is only for waiting on an empty backlog (the listening socket is
+        // non-blocking), and it also reports any error the direct accept met.
+        val direct = acceptOne(listenFd)
+        val res = if (direct >= 0) direct else submit(NETON_IORING_OP_ACCEPT, listenFd, 0L, 0, 0, null)
         setNonBlocking(res); suppressSigpipe(res)
         return res
     }
