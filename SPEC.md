@@ -1437,7 +1437,7 @@ GSO / GRO、ECN 位、`IP_PKTINFO` / `IPV6_RECVPKTINFO`、双栈、PMTU 相关�
 | msgtrans | `com.netonstream:msgtrans`（不变） | `msgtrans.*`（不变） |
 - **仓库**：底座仍名 `neton-io`，不随坐标缩短；协议库仓库与坐标同名：`http`、`websocket`、`quic`（本地在 `~/projects/PulseKit/` 下与 `neton-io` 并列；
   GitHub 远程仓库待用户确认组织与可见性后再建）。
-- **发布**：`com.netonstream:neton-io:0.1.0` 保持不动；自 0.2.0 起用新坐标，旧坐标发布一次 Maven 重定位（relocation）POM 指向新坐标。
+- **发布**：`com.netonstream:neton-io:0.1.0` 保持不动；~~自 0.2.0 起用新坐标~~ 新坐标 `com.netonstream:io` 是全新的版本线，从 0.1.0 起（2026-09-29 发布，用户确认）；旧坐标发布一次 Maven 重定位（relocation）POM 指向新坐标（未做）。
 - **包的划分按职责**：通用 HTTP API 放在 `neton.http`，使用者切换协议版本不必更换整套类型；只有协议专属的实现与扩展放进 `h1` / `h2` / `h3`。
 - **与现有 Neton 框架并行，集成延期**：`io` / `http` / `quic` / `websocket` 是独立建设的协议栈，按自身职责设计 API，**不为现有框架（`com.netonstream:neton-http`，
   `neton.http.*`）避让包名或类型名**，也不要求与它同时链接。等这套协议栈经过验证、性能达到目标后，再由框架调整去接入（届时处理两者的包与类型关系）。

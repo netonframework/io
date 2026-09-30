@@ -40,7 +40,7 @@ subprojects {
             pom {
                 name.set(sub.name)
                 description.set(pomDescriptions[sub.name] ?: "neton-io - ${sub.name}")
-                url.set("https://github.com/netonframework/neton-io")
+                url.set("https://github.com/netonframework/io")
                 licenses { license { name.set("Apache-2.0"); url.set("https://opensource.org/licenses/Apache-2.0") } }
                 developers {
                     developer {
@@ -52,9 +52,9 @@ subprojects {
                     }
                 }
                 scm {
-                    url.set("https://github.com/netonframework/neton-io")
-                    connection.set("scm:git:git://github.com/netonframework/neton-io.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/netonframework/neton-io.git")
+                    url.set("https://github.com/netonframework/io")
+                    connection.set("scm:git:git://github.com/netonframework/io.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/netonframework/io.git")
                 }
             }
         }

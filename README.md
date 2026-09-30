@@ -14,7 +14,8 @@ See [`SPEC.md`](./SPEC.md) for the full design.
 
 ## Artifact
 
-One artifact, `com.netonstream:io` (up to 0.1.0: `com.netonstream:neton-io`), the way tokio is one crate. Packages keep the layering:
+One artifact, `com.netonstream:io`, the way tokio is one crate. It is a new coordinate with its own version line
+starting at 0.1.0; the older `com.netonstream:neton-io:0.1.0` is a different, earlier artifact. Packages keep the layering:
 
 - `neton.io.bytes` — growable byte buffer (moves to native/pinned memory later)
 - `neton.io.codec` — `Decoder`/`Encoder` and `LineCodec`
@@ -22,12 +23,11 @@ One artifact, `com.netonstream:io` (up to 0.1.0: `com.netonstream:neton-io`), th
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.1.0") }   // New short coordinate; old neton-io releases are unchanged.
+dependencies { implementation("com.netonstream:io:0.1.0") }
 ```
 
-Targets: macOS, Linux (x64/arm64) and iOS. The artifact is a klib, so a consumer compiles with the
-release's Kotlin version (2.4.0). Windows returns with the IOCP driver; a Windows build with
-buffers and codecs but no reactor would be an I/O library in name only.
+Targets: macOS, iOS, Linux (x64/arm64), Android native and Windows (mingwX64, IOCP and WSAPoll drivers). The
+artifact is a klib, so a consumer compiles with the release's Kotlin version (2.4.0).
 
 ## Design
 
