@@ -23,7 +23,7 @@ starting at 0.1.0; the older `com.netonstream:neton-io:0.1.0` is a different, ea
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.1.0") }
+dependencies { implementation("com.netonstream:io:0.1.1") }
 ```
 
 Targets: macOS, iOS, Linux (x64/arm64), Android native and Windows (mingwX64, IOCP and WSAPoll drivers). The
