@@ -1,4 +1,4 @@
-@file:OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class, kotlinx.coroutines.InternalCoroutinesApi::class)
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class, kotlinx.coroutines.InternalCoroutinesApi::class)
 
 package neton.io.net
 
@@ -9,14 +9,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import neton.io.bytes.Buffer
-import kotlin.concurrent.AtomicInt
-import kotlin.concurrent.AtomicReference
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -28,25 +26,25 @@ class ReactorLifecycleTest {
     @Test
     fun drainingDeliversWhatChildrenWaitFor() {
         val got = AtomicInt(-1); val resolved = AtomicInt(0); val cancelled = AtomicInt(0)
-        val helper = Worker.start(name = "lifecycle-a")
+        val helper = startTestWorker("lifecycle-a")
         runReactor {
             val result = CompletableDeferred<Int>()
-            launch { got.value = result.await() }
-            launch { if (resolve("localhost", 80, passive = false).isNotEmpty()) resolved.value = 1 }
+            launch { got.store(result.await()) }
+            launch { if (resolve("localhost", 80, passive = false).isNotEmpty()) resolved.store(1) }
             val server = listenTcpServer("127.0.0.1", 21990, SocketOptions.Default)
             val client = connect("127.0.0.1", 21990)
             val fd = server.acceptFd()
             val stream = ReactorStream(fd, currentReactor())
             val reader = launch {
-                try { stream.read(Buffer()) } catch (e: CancellationException) { cancelled.value = 1; throw e } finally { stream.close(); client.close() }
+                try { stream.read(Buffer()) } catch (e: CancellationException) { cancelled.store(1); throw e } finally { stream.close(); client.close() }
             }
             server.close()
             yield()
             // Both arrive from another thread after this block has returned (the root is draining).
-            helper.executeAfter(100_000L) { result.complete(7); reader.cancel() }
+            helper.submitAfter(100_000L) { result.complete(7); reader.cancel() }
         }
-        helper.requestTermination().result
-        assertEquals(7, got.value); assertEquals(1, resolved.value); assertEquals(1, cancelled.value)
+        helper.stop()
+        assertEquals(7, got.load()); assertEquals(1, resolved.load()); assertEquals(1, cancelled.load())
     }
 
     /** (b) The loop reaches CLOSING only once no kernel op is in flight. */
@@ -54,7 +52,7 @@ class ReactorLifecycleTest {
     fun closingWaitsForKernelOps() {
         val reactorRef = AtomicReference<Reactor?>(null)
         runReactor {
-            reactorRef.value = currentReactor()
+            reactorRef.store(currentReactor())
             val server = listenTcpServer("127.0.0.1", 21991, SocketOptions.Default)
             val client = connect("127.0.0.1", 21991)
             val stream = ReactorStream(server.acceptFd(), currentReactor())
@@ -63,7 +61,7 @@ class ReactorLifecycleTest {
             stream.close()                          // the read (an io_uring RECV) may still be in the kernel
             reader.join(); client.close(); server.close()
         }
-        val r = reactorRef.value!!
+        val r = reactorRef.load()!!
         assertEquals(0, r.inFlightAtClosing, "kernel ops in flight when CLOSING was entered")
         assertEquals(Reactor.STOPPED, r.lifecycleState)
     }
@@ -71,25 +69,29 @@ class ReactorLifecycleTest {
     /** (c) Posts racing the close of the entry: each is either run exactly once or refused. */
     @Test
     fun externalPostsRacingCloseAreRunOrRefused() {
-        val poster = Worker.start(name = "lifecycle-c")
+        val poster = startTestWorker("lifecycle-c")
         var total = 0
         repeat(300) {
             val ref = AtomicReference<Reactor?>(null)
             val accepted = AtomicInt(0); val ran = AtomicInt(0); val attempts = AtomicInt(0)
-            val done = poster.execute(TransferMode.SAFE, { Triple(ref, accepted, Pair(ran, attempts)) }) { (r, acc, p) ->
-                val (runCount, tries) = p
+            val done = poster.submit {
+                val r = ref; val acc = accepted; val runCount = ran; val tries = attempts
                 while (true) {
-                    val reactor = r.value ?: continue
-                    tries.incrementAndGet()
-                    if (reactor.tryDispatchExternal(kotlinx.coroutines.Runnable { runCount.incrementAndGet() })) acc.incrementAndGet() else break
+                    val reactor = r.load() ?: continue
+                    // Bounded backlog: a starved reactor thread (a loaded machine) must not let an unthrottled
+                    // poster queue posts until the heap runs out. Accepted posts are always run, so the
+                    // backlog drains while the reactor runs and when it closes; the race with close is intact.
+                    if (acc.load() - runCount.load() > MAX_BACKLOG) continue
+                    tries.addAndFetch(1)
+                    if (reactor.tryDispatchExternal(kotlinx.coroutines.Runnable { runCount.addAndFetch(1) })) acc.addAndFetch(1) else break
                 }
             }
-            runReactor { ref.value = currentReactor(); delay(1) }
-            done.result
-            assertEquals(accepted.value, ran.value, "an accepted post was lost or run twice")
-            total += attempts.value
+            runReactor { ref.store(currentReactor()); delay(1) }
+            done()
+            assertEquals(accepted.load(), ran.load(), "an accepted post was lost or run twice")
+            total += attempts.load()
         }
-        poster.requestTermination().result
+        poster.stop()
         println("ReactorLifecycleTest.externalPostsRacingCloseAreRunOrRefused: $total posts")
         assertTrue(total >= 300)
     }
@@ -101,19 +103,19 @@ class ReactorLifecycleTest {
         val slot = AtomicReference<Continuation<Int>?>(null)
         val afterCall = AtomicInt(0)
         val parked = async {
-            val v = suspendCoroutineUninterceptedOrReturn<Int> { c -> slot.value = c; COROUTINE_SUSPENDED }
-            v * 10 + afterCall.value
+            val v = suspendCoroutineUninterceptedOrReturn<Int> { c -> slot.store(c); COROUTINE_SUSPENDED }
+            v * 10 + afterCall.load()
         }
-        while (slot.value == null) yield()
-        assertTrue(resumer.resume(slot.value!!, 4))
-        afterCall.value = 1
+        while (slot.load() == null) yield()
+        assertTrue(resumer.resume(slot.load()!!, 4))
+        afterCall.store(1)
         assertEquals(41, parked.await())
     }
 
     /** (e) With the slot convention, a cancel from another thread racing a resume resumes exactly once. */
     @Test
     fun slotConventionResumesExactlyOnce() {
-        val canceller = Worker.start(name = "lifecycle-e")
+        val canceller = startTestWorker("lifecycle-e")
         val n = 10_000
         val resumes = AtomicInt(0)
         runReactor {
@@ -122,24 +124,24 @@ class ReactorLifecycleTest {
             repeat(n) {
                 val slot = AtomicReference<Continuation<Unit>?>(null)
                 val job = launch {
-                    suspendCoroutineUninterceptedOrReturn<Unit> { c -> slot.value = c; COROUTINE_SUSPENDED }
+                    suspendCoroutineUninterceptedOrReturn<Unit> { c -> slot.store(c); COROUTINE_SUSPENDED }
                 }
-                while (slot.value == null) yield()
+                while (slot.load() == null) yield()
                 // The cancellation path posts to the reactor before touching the slot.
                 job.invokeOnCompletion(onCancelling = true) { cause ->
                     if (cause != null) reactor.postToReactor {
-                        slot.value?.let { c -> slot.value = null; resumer.resumeWithException(c, CancellationException("cancelled")); resumes.incrementAndGet() }
+                        slot.load()?.let { c -> slot.store(null); resumer.resumeWithException(c, CancellationException("cancelled")); resumes.addAndFetch(1) }
                     }
                 }
-                canceller.execute(TransferMode.SAFE, { job }) { it.cancel() }
+                canceller.submit { job.cancel() }
                 // The normal path, racing it.
-                slot.value?.let { c -> slot.value = null; resumer.resume(c, Unit); resumes.incrementAndGet() }
+                slot.load()?.let { c -> slot.store(null); resumer.resume(c, Unit); resumes.addAndFetch(1) }
                 job.join()
-                assertEquals(it + 1, resumes.value, "iteration $it resumed ${resumes.value - it} times")
+                assertEquals(it + 1, resumes.load(), "iteration $it resumed ${resumes.load() - it} times")
             }
         }
-        canceller.requestTermination().result
-        assertEquals(n, resumes.value)
+        canceller.stop()
+        assertEquals(n, resumes.load())
     }
 
     /**
@@ -155,14 +157,14 @@ class ReactorLifecycleTest {
                 val l = listenTcpServer("127.0.0.1", 21992, SocketOptions.Default)
                 val c = connect("127.0.0.1", 21992)
                 val s = ReactorStream(l.acceptFd(), currentReactor())
-                launch { try { while (true) l.acceptFd() } catch (x: CancellationException) { cancelledChildren.incrementAndGet(); throw x } }
-                launch { try { s.read(Buffer()) } catch (x: CancellationException) { cancelledChildren.incrementAndGet(); throw x } finally { s.close(); c.close() } }
+                launch { try { while (true) l.acceptFd() } catch (x: CancellationException) { cancelledChildren.addAndFetch(1); throw x } }
+                launch { try { s.read(Buffer()) } catch (x: CancellationException) { cancelledChildren.addAndFetch(1); throw x } finally { s.close(); c.close() } }
                 delay(20)
                 error("boom")
             }
         }
         assertEquals("boom", e.message)
-        assertEquals(2, cancelledChildren.value)
+        assertEquals(2, cancelledChildren.load())
         // A child that fails fails the whole scope: runReactor rethrows the child's own exception
         // (it used to reach the uncaught-exception handler and abort the process).
         val childFailure = kotlin.test.assertFailsWith<IllegalArgumentException> {
@@ -182,5 +184,10 @@ class ReactorLifecycleTest {
                 kotlinx.coroutines.withTimeout(50) { delay(1_000) }
             }
         }
+    }
+
+    private companion object {
+        /** Posts accepted but not yet run that the poster in (c) lets accumulate before waiting. */
+        const val MAX_BACKLOG = 10_000
     }
 }

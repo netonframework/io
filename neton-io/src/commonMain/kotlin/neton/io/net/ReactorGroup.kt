@@ -1,8 +1,5 @@
-@file:OptIn(ExperimentalForeignApi::class)
-
 package neton.io.net
 
-import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -20,8 +17,6 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.coroutineContext
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 
 /** Tests (SPEC §27.8): the worker reactor with this index fails to start; -1 = none. */
 @OptIn(ExperimentalAtomicApi::class)
@@ -49,7 +44,7 @@ enum class AcceptMode { Handoff, ReusePort }
 
 /**
  * One reactor per core (SPEC §16). Reactor 0 runs on the calling thread; reactors 1..n-1 each run
- * on their own [Worker] thread. Share-nothing: each reactor owns its connections for life.
+ * on their own thread. Share-nothing: each reactor owns its connections for life.
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class ReactorGroup(private val count: Int) {
@@ -57,7 +52,8 @@ internal class ReactorGroup(private val count: Int) {
 
     private val members = arrayOfNulls<Member>(count)
     private val stop = CompletableDeferred<Unit>()
-    private val workers = ArrayList<Worker>()
+    /** Each worker thread's stop request (see [startReactorThread]). */
+    private val workers = ArrayList<() -> Unit>()
     /** Completed by each worker thread after its reactor has shut down (SPEC §18.1). */
     private val exited = ArrayList<CompletableDeferred<Unit>>()
     private var stopped = false
@@ -79,32 +75,29 @@ internal class ReactorGroup(private val count: Int) {
             val ready = CompletableDeferred<Member>()
             val done = CompletableDeferred<Unit>()
             readies.add(ready); exited.add(done)
-            val w = Worker.start(name = "neton-reactor-$i")
-            workers.add(w)
             val stopRef = stop
-            val pinTo = if (pinThreads) i else -1
-            w.execute(TransferMode.SAFE, { Pair(Triple(ready, stopRef, done), Pair(pinTo, i)) }) { (t, p) ->
-                val (r, s, d) = t
-                val (pin, index) = p
+            val pin = if (pinThreads) i else -1
+            val index = i
+            workers.add(startReactorThread("neton-reactor-$i") {
                 try {
                     if (pin >= 0) pinCurrentThread(pin)
                     if (failWorkerStartForTest.load() == index) error("test: reactor $index failed to start")
-                    Reactor.runServing(s) { reactor, scope -> r.complete(Member(reactor, scope)) }
+                    Reactor.runServing(stopRef) { reactor, scope -> ready.complete(Member(reactor, scope)) }
                 } catch (e: Throwable) {
                     // Before `ready` was published (driver setup failed, ...): the starter must learn
                     // of it instead of waiting forever (SPEC §27.8). After it, nothing waits on `ready`.
-                    r.completeExceptionally(e)
+                    ready.completeExceptionally(e)
                 } finally {
-                    d.complete(Unit)
+                    done.complete(Unit)
                 }
-            }
+            })
         }
         // Workers complete `ready` from their own threads; wait here (blocking on the acceptor
         // thread only during startup, before any connection exists). Every worker reports, success
         // or failure; if one failed, the others are told to exit and the failure is thrown.
         var failure: Throwable? = null
         for ((i, ready) in readies.withIndex()) {
-            while (!ready.isCompleted) platform.posix.usleep(200u)
+            while (!ready.isCompleted) sleepMicros(200)
             @Suppress("OPT_IN_USAGE")
             val e = ready.getCompletionExceptionOrNull()
             @Suppress("OPT_IN_USAGE")
@@ -152,7 +145,7 @@ internal class ReactorGroup(private val count: Int) {
         // Only a nudge to wake the loop; a worker that is already closing refuses it and needs none (SPEC §28.3).
         for (i in 1 until count) members[i]?.reactor?.tryDispatchExternal(Runnable { })
         // Queued behind the running reactor job: each thread ends when its reactor has.
-        for (w in workers) w.requestTermination(processScheduledJobs = true)
+        for (requestStop in workers) requestStop()
     }
 
     /** Another server group shares these reactors (SPEC §27.5). */
@@ -420,35 +413,11 @@ suspend fun listenGroup(
 }
 
 /**
- * Wait for a termination signal, then stop this server (SPEC §27.1, §27.7, as geario does):
- * [Signal.Int] stops at once (open connections are cancelled); [Signal.Term] and [Signal.Quit] stop
- * gracefully, letting connections finish for up to [gracefulTimeoutMillis], and any second one of
- * these signals meanwhile cancels the rest at once. The signals are handled only while this runs;
- * their previous actions are restored when it returns (or is cancelled). Call on reactor 0.
- */
-suspend fun TcpServerGroup.shutdownOnSignal(gracefulTimeoutMillis: Long = 30_000): Signal =
-    stopOnSignal(gracefulTimeoutMillis) {}
-
-internal suspend fun TcpServerGroup.stopOnSignal(gracefulTimeoutMillis: Long, onSignal: () -> Unit): Signal =
-    // One subscription for the whole stop: the second signal is queued even if it arrives before
-    // the force wait starts (SPEC §27.8).
-    withSignals(Signal.Int, Signal.Term, Signal.Quit) { sub ->
-        val s = sub.receive()
-        onSignal()
-        if (s == Signal.Int) {
-            shutdown(0)
-        } else coroutineScope {
-            val force = launch { sub.receive(); cancelConnections() }
-            try { shutdown(gracefulTimeoutMillis) } finally { force.cancel() }
-        }
-        s
-    }
-
-/**
  * Serve [host]:[port] on [reactors] reactors (default one per core). Blocks the calling thread
  * until the server stops: when [until] completes, or — with [shutdownOnSignals], for an
- * application's entry point — on a termination signal (see [shutdownOnSignal] and
- * [shutdownTimeoutMillis]). Signals are left alone by default: a library must not change how its
+ * application's entry point — on a termination signal (SIGINT/SIGTERM/SIGQUIT, see
+ * `shutdownOnSignal`; native targets only, on the JVM signals belong to the VM and asking for this
+ * throws) and [shutdownTimeoutMillis]. Signals are left alone by default: a library must not change how its
  * host process reacts to them (SPEC §27.7). Each accepted connection runs [handler] on the reactor
  * it is pinned to. Returns after the worker reactors exit. [maxConnections] > 0 caps open connections
  * (see [listenGroup]; SPEC §28.12: it is what bounds the waiters of an [neton.io.core.Admission]).
@@ -473,7 +442,7 @@ fun serveTcp(
         // All of these coroutines run on this reactor, so the flags need no synchronisation.
         var signalled = false
         val signalJob = if (shutdownOnSignals) launch {
-            group.stopOnSignal(shutdownTimeoutMillis) { signalled = true }
+            group.stopOnShutdownSignal(shutdownTimeoutMillis) { signalled = true }
         } else null
         val untilJob = until?.let { u -> launch { u.await(); if (!signalled) group.close() } }
         serveJob.join()
@@ -484,6 +453,12 @@ fun serveTcp(
         group.awaitWorkers()
     }
 }
+
+/**
+ * Stop [this] server on a termination signal: SIGINT at once, SIGTERM / SIGQUIT gracefully within
+ * [gracefulTimeoutMillis]; [onSignal] runs when the first one arrives. Native targets only.
+ */
+internal expect suspend fun TcpServerGroup.stopOnShutdownSignal(gracefulTimeoutMillis: Long, onSignal: () -> Unit)
 
 /**
  * Start the coroutine serving one accepted connection [fd] on [reactor]; call on that reactor's thread
@@ -527,8 +502,6 @@ internal fun startConnection(
 }
 
 /** One line on stderr for a connection that ended with an error; the server keeps running. */
-@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 internal fun reportConnectionFault(t: Throwable) {
-    platform.posix.fprintf(platform.posix.stderr, "neton-io: connection closed after error: %s\n", t.message ?: t.toString())
-    platform.posix.fflush(platform.posix.stderr)
+    writeStderrLine("neton-io: connection closed after error: " + (t.message ?: t.toString()))
 }

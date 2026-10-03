@@ -12,9 +12,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import neton.io.bytes.Buffer
 import kotlin.coroutines.coroutineContext
-import kotlin.native.concurrent.ObsoleteWorkersApi
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -25,7 +22,6 @@ import kotlin.test.assertTrue
  * cancellation from the same thread and from another thread, an already-cancelled coroutine does
  * not park at all, and one coroutine parking many times on the same stream keeps working.
  */
-@OptIn(ObsoleteWorkersApi::class)
 class ParkCancellationTest {
 
     @Test
@@ -53,10 +49,10 @@ class ParkCancellationTest {
         var outcome: Throwable? = null
         val reader = launch { try { conn.read(Buffer(16)) } catch (t: Throwable) { outcome = t; throw t } }
         delay(20)
-        val w = Worker.start(name = "canceller")
-        w.execute(TransferMode.SAFE, { reader }) { it.cancel() }
+        val w = startTestWorker("canceller")
+        w.submit { reader.cancel() }
         withTimeout(2_000) { reader.join() }
-        w.requestTermination().result
+        w.stop()
         assertTrue(outcome is CancellationException, "expected CancellationException, got $outcome")
         conn.close(); client.close(); server.close()
     }

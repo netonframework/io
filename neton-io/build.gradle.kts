@@ -5,7 +5,7 @@ repositories { mavenCentral() }
 // the reactor ship together. The packages (neton.io.bytes / codec / core / net) keep the layering
 // readable; the artifact boundary does not need to.
 //
-// Targets (SPEC §20, final): macOS, Linux, Windows, iOS, Android. neton-io is I/O and networking
+// Targets (SPEC §20, final): macOS, Linux, Windows, iOS, Android, and the JVM. neton-io is I/O and networking
 // only (no TLS). Drivers: io_uring/epoll/poll on Linux, epoll/poll on Android, kqueue/poll on Apple,
 // IOCP on Windows (WSAPoll first, for correctness).
 kotlin {
@@ -14,6 +14,21 @@ kotlin {
     val windows = listOf(mingwX64())
     iosArm64(); iosSimulatorArm64(); iosX64()
     androidNativeArm64(); androidNativeArm32(); androidNativeX64(); androidNativeX86()
+    // JVM (and Android apps, through it): the same reactor core and public API over java.nio — a
+    // Selector-driven driver (NioReactor) in place of kqueue/epoll/io_uring/IOCP, no native code.
+    // Bytecode 1.8 and only APIs Android has had since API 21, so an Android library can depend on it.
+    // The JVM artifact must work in Android apps built with an older Kotlin (KuiklyUI pins hosts to
+    // 2.1). Such a host never compiles against these classes, but Gradle aligns its whole classpath
+    // to the highest kotlin-stdlib anything asks for, and its compiler reads stdlib metadata at most
+    // one version ahead. So the JVM build asks for stdlib 2.2.21 and uses no stdlib API newer than
+    // 2.2 (API 2.1 is deprecated); native klibs are unaffected (they follow the compiler version).
+    coreLibrariesVersion = "2.2.21"
+    jvm {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+            apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+        }
+    }
 
     // POSIX sockets are shared by Linux, Android and Apple; epoll by Linux and Android. io_uring
     // stays in linuxMain; Winsock in mingwMain.

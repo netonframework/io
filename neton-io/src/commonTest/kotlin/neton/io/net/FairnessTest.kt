@@ -1,5 +1,3 @@
-@file:OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)
-
 package neton.io.net
 
 import kotlinx.coroutines.CompletableDeferred
@@ -22,7 +20,6 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
-import kotlin.native.concurrent.Worker
 import kotlin.time.TimeSource
 
 // Test ports are deliberately below 32768, outside the kernel's ephemeral range
@@ -74,7 +71,7 @@ class FairnessTest {
      */
     @Test
     fun resumeRingHandoffsDoNotStarveOrdinaryTasks() {
-        val helper = Worker.start(name = "fairness-f2")
+        val helper = startTestWorker("fairness-f2")
         runReactor {
             val resumer = reactorResumer(coroutineContext)!!
             class Pair { var parked: Continuation<Unit>? = null }
@@ -99,7 +96,7 @@ class FairnessTest {
             val cross = CompletableDeferred<Unit>()
             var crossRan = false
             launch(start = CoroutineStart.UNDISPATCHED) { cross.await(); crossRan = true }
-            helper.executeAfter(0L) { cross.complete(Unit) }
+            helper.submitAfter(0L) { cross.complete(Unit) }
             // delay() resumes from the timer path, which runs whatever the task queues hold.
             val t0 = TimeSource.Monotonic.markNow()
             while (!(launched && crossRan) && t0.elapsedNow().inWholeMilliseconds < 2_000) delay(10)
@@ -112,6 +109,6 @@ class FairnessTest {
             assertTrue(crossInTime, "a cross-thread resume never ran while the resume ring stayed busy")
             println("FairnessTest.resumeRingHandoffsDoNotStarveOrdinaryTasks: both ran within $waited ms")
         }
-        helper.requestTermination().result
+        helper.stop()
     }
 }

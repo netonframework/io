@@ -13,8 +13,6 @@ import neton.io.bytes.Buffer
 import neton.io.core.ClosedException
 import neton.io.core.IoException
 import neton.io.core.IoStream
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -100,11 +98,11 @@ class TcpFailureTest {
         val client = connect("127.0.0.1", port)
         val framed = Framed(Io(client), LineCodec, LineCodec)
 
-        val worker = Worker.start()
-        val result = worker.execute(TransferMode.SAFE, { client }) { c ->
-            try { c.close(); "closed" } catch (t: IllegalStateException) { "rejected" }
-        }.result
-        worker.requestTermination().result
+        val worker = startTestWorker()
+        val result = worker.submit {
+            try { client.close(); "closed" } catch (t: IllegalStateException) { "rejected" }
+        }()
+        worker.stop()
 
         // The server job is cancelled in `finally`: without it an assertion failure here would
         // leave `serve()` parked on the reactor and the test would hang instead of reporting.

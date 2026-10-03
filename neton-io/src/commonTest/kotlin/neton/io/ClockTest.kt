@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)   // kotlin.time.Clock is experimental at the JVM API level (2.2)
+
 package neton.io
 
 import neton.io.core.monotonicNanos

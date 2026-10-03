@@ -102,5 +102,9 @@ class BufferPool internal constructor() {
 
 }
 
-@kotlin.native.concurrent.ThreadLocal
-private val threadPool = BufferPool()
+/**
+ * This thread's pool. Per platform because "per thread" has to be real: in common code
+ * `kotlin.native.concurrent.ThreadLocal` is an optional annotation that the JVM ignores, which
+ * would make one unsynchronised pool shared by every thread.
+ */
+internal expect val threadPool: BufferPool

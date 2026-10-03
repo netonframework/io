@@ -8,8 +8,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import neton.io.bytes.Buffer
 import neton.io.core.IoStream
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -27,17 +25,17 @@ class ThreadingTest {
     fun resumeFromAnotherThreadWakesTheReactor() = runReactor {
         val owner = currentThreadId()
         val gate = CompletableDeferred<String>()
-        val worker = Worker.start()
-        worker.execute(TransferMode.SAFE, { gate }) { g ->
-            platform.posix.usleep(50_000u)
-            g.complete("from-worker") // resumes the awaiter: dispatch() from a foreign thread
+        val worker = startTestWorker()
+        worker.submit {
+            sleepMicros(50_000)
+            gate.complete("from-worker") // resumes the awaiter: dispatch() from a foreign thread
         }
         val t0 = TimeSource.Monotonic.markNow()
         val v = gate.await() // the loop is parked in the poller; the self-pipe must wake it
         assertEquals("from-worker", v)
         assertEquals(owner, currentThreadId(), "continuation must run on the reactor thread")
         assertTrue(t0.elapsedNow().inWholeMilliseconds < 5_000, "reactor was not woken promptly")
-        worker.requestTermination().result
+        worker.stop()
     }
 
     @Test
@@ -69,11 +67,11 @@ class ThreadingTest {
         val accepted = launch { serverConn = server.accept() }
         val client = connect("127.0.0.1", port)
         accepted.join()
-        val worker = Worker.start()
-        val outcome = worker.execute(TransferMode.SAFE, { client }) { c ->
-            runBlocking { try { c.read(Buffer(16)); "read" } catch (t: IllegalStateException) { "rejected" } }
-        }.result
-        worker.requestTermination().result
+        val worker = startTestWorker()
+        val outcome = worker.submit {
+            runBlocking { try { client.read(Buffer(16)); "read" } catch (t: IllegalStateException) { "rejected" } }
+        }()
+        worker.stop()
         assertEquals("rejected", outcome)
         client.close(); serverConn!!.close(); server.close()
     }

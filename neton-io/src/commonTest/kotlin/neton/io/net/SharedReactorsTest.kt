@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package neton.io.net
 
 import kotlinx.coroutines.async
@@ -9,7 +11,7 @@ import neton.io.codec.LineCodec
 import neton.io.core.Framed
 import neton.io.core.Io
 import neton.io.core.IoStream
-import kotlin.concurrent.AtomicReference
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -19,7 +21,7 @@ import kotlin.test.assertTrue
 class SharedReactorsTest {
     private fun prefixEcho(prefix: String, threads: AtomicReference<Set<ULong>>): suspend (IoStream) -> Unit = { conn ->
         val t = currentThreadId()
-        while (true) { val cur = threads.value; if (threads.compareAndSet(cur, cur + t)) break }
+        while (true) { val cur = threads.load(); if (threads.compareAndSet(cur, cur + t)) break }
         try {
             val f = Framed(Io(conn), LineCodec, LineCodec)
             f.incoming().collect { f.send("$prefix$it") }
@@ -45,7 +47,7 @@ class SharedReactorsTest {
         val sb = launch { b.serve(prefixEcho("b:", tb)) }
         val res = (1..16).map { i -> async { roundTrip(if (i % 2 == 0) 21960 else 21961, "m$i") } }.awaitAll()
         for ((k, r) in res.withIndex()) { val i = k + 1; assertEquals((if (i % 2 == 0) "a:" else "b:") + "m$i", r) }
-        assertTrue(tb.value.size >= 2, "the second port must use both reactors, saw ${tb.value.size} thread(s)")
+        assertTrue(tb.load().size >= 2, "the second port must use both reactors, saw ${tb.load().size} thread(s)")
         a.shutdown(1_000); sa.join()
         assertEquals("b:still", withTimeout(2_000) { roundTrip(21961, "still") })   // b keeps its reactors
         b.shutdown(1_000); sb.join()

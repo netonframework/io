@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package neton.io.net
 
 import kotlinx.coroutines.CompletableDeferred
@@ -7,8 +9,6 @@ import neton.io.codec.LineCodec
 import neton.io.core.Framed
 import neton.io.core.Io
 import neton.io.core.IoStream
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -20,13 +20,13 @@ class MultiReactorTest {
     fun connectionsAreServedAcrossReactorsAndEchoCorrectly() {
         val port = 21830
         val stop = CompletableDeferred<Unit>()
-        val threadsSeen = kotlin.concurrent.AtomicReference<Set<ULong>>(emptySet())
+        val threadsSeen = kotlin.concurrent.atomics.AtomicReference<Set<ULong>>(emptySet())
         // Server on its own thread (serveTcp blocks): 2 reactors, line echo, records handler thread.
-        val server = Worker.start(name = "srv")
-        server.executeAfter(0L) {
+        val server = startTestWorker("srv")
+        server.submitAfter(0L) {
             serveTcp("127.0.0.1", port, reactors = 2, until = stop) { conn: IoStream ->
                 val t = currentThreadId()
-                while (true) { val cur = threadsSeen.value; if (threadsSeen.compareAndSet(cur, cur + t)) break }
+                while (true) { val cur = threadsSeen.load(); if (threadsSeen.compareAndSet(cur, cur + t)) break }
                 try {
                     val framed = Framed(Io(conn), LineCodec, LineCodec)
                     framed.incoming().collect { framed.send(it) }
@@ -46,8 +46,8 @@ class MultiReactorTest {
             jobs.forEach { it.join() }
         }
         stop.complete(Unit)
-        server.requestTermination(processScheduledJobs = true).result
-        assertTrue(threadsSeen.value.size >= 2, "expected connections on >=2 reactor threads, saw ${threadsSeen.value.size}")
+        server.stop()
+        assertTrue(threadsSeen.load().size >= 2, "expected connections on >=2 reactor threads, saw ${threadsSeen.load().size}")
     }
 
     /**
@@ -57,13 +57,13 @@ class MultiReactorTest {
      */
     @Test
     fun listenGroupServesInsideARunningReactorAndReturnsOnClose() = runReactor {
-        val threads = kotlin.concurrent.AtomicReference<Set<ULong>>(emptySet())
+        val threads = kotlin.concurrent.atomics.AtomicReference<Set<ULong>>(emptySet())
         val group = listenGroup("127.0.0.1", 21832, reactors = 2)
         assertEquals(2, group.reactors)
         val serveJob = launch {
             group.serve { conn ->
                 val t = currentThreadId()
-                while (true) { val cur = threads.value; if (threads.compareAndSet(cur, cur + t)) break }
+                while (true) { val cur = threads.load(); if (threads.compareAndSet(cur, cur + t)) break }
                 try {
                     val framed = Framed(Io(conn), LineCodec, LineCodec)
                     framed.incoming().collect { framed.send(it) }
@@ -81,7 +81,7 @@ class MultiReactorTest {
         group.close()
         serveJob.join()          // serve returned after close
         group.awaitWorkers()     // and the worker reactor exited once its connections ended
-        assertTrue(threads.value.size >= 2, "expected handlers on >=2 threads, saw ${threads.value.size}")
+        assertTrue(threads.load().size >= 2, "expected handlers on >=2 threads, saw ${threads.load().size}")
     }
 
     /** SPEC §18.1: with one reactor there are no worker threads and handlers run on the caller's reactor. */

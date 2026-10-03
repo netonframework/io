@@ -16,13 +16,7 @@ import kotlinx.coroutines.launch
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.TimeSource
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.toKString
 import neton.io.bytes.Buffer
-import platform.posix.fflush
-import platform.posix.fprintf
-import platform.posix.getenv
-import platform.posix.stderr
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -84,7 +78,7 @@ internal class ReactorStats {
  * rejected with IllegalStateException rather than silently corrupting state. Timers are part
  * of the loop ([Delay]), so `delay` / `withTimeout` never leave the reactor thread.
  */
-@OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class, InternalCoroutinesApi::class)
+@OptIn(ExperimentalAtomicApi::class, InternalCoroutinesApi::class)
 internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     private val tasks = ArrayDeque<Runnable>()
@@ -290,7 +284,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     internal abstract fun timeoutParked(fd: Int, reads: Boolean, writes: Boolean, cause: Throwable)
 
     /** Null unless NETON_IO_STATS=1. Subclasses count only when non-null. */
-    protected val stats: ReactorStats? = if (getenv("NETON_IO_STATS")?.toKString() == "1") ReactorStats() else null
+    protected val stats: ReactorStats? = if (envVar("NETON_IO_STATS") == "1") ReactorStats() else null
 
     /**
      * Max dispatched tasks to run per loop round before the poller and the timers get a turn
@@ -302,9 +296,9 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
      * Tasks left over make the next poll non-blocking, so nothing is delayed beyond one round.
      */
     /** SPEC §28.4: ordinary tasks alternate with resume-ring entries; NETON_IO_RING_PRIORITY=strict restores ring-first (A/B). */
-    private val interleavePlain: Boolean = getenv("NETON_IO_RING_PRIORITY")?.toKString() != "strict"
+    private val interleavePlain: Boolean = envVar("NETON_IO_RING_PRIORITY") != "strict"
 
-    protected val taskBudget: Int = getenv("NETON_IO_TASK_BUDGET")?.toKString()?.toIntOrNull() ?: DEFAULT_TASK_BUDGET
+    protected val taskBudget: Int = envVar("NETON_IO_TASK_BUDGET")?.toIntOrNull() ?: DEFAULT_TASK_BUDGET
 
     protected abstract val driverName: String
 
@@ -513,8 +507,7 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
 
     fun printStats() {
         val st = stats ?: return
-        fprintf(stderr, "NETON_IO_STATS %s\n", st.json(driverName, taskBudget, refusedPosts.load()))
-        fflush(stderr)
+        writeStderrLine("NETON_IO_STATS " + st.json(driverName, taskBudget, refusedPosts.load()))
     }
 
     protected fun hasTasks(): Boolean = resumeCount > 0 || intCount > 0 || anyCount > 0 || tasks.isNotEmpty()

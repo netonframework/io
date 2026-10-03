@@ -123,8 +123,3 @@ internal suspend fun <T> withSignals(vararg signals: Signal, block: suspend (Sig
 /** Waiters currently registered (tests: a signal sent before the waiter exists is dropped). */
 internal fun signalWaiterCount(): Int = SignalHub.count()
 
-/** Pin the calling thread to the [n]-th CPU (modulo) of the captured set; the CPU, or -1 (SPEC §27.2). */
-internal expect fun pinCurrentThread(n: Int): Int
-
-/** Capture the process's allowed CPU set before any thread is pinned; its size, or -1 where unsupported. */
-internal expect fun captureAffinity(): Int
