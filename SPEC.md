@@ -1672,6 +1672,32 @@ socket_buffers，断言同参考：分段内容、来源端口、来源 / 目的
 没有提前触发。按决策规则（1 ms 截止时间 p99 迟到 ≤ 1 ms）：各驱动都满足，不改用纳秒等待；公开 `monotonicNanos()` / `systemTimeMillis()`
 （`neton.io.core`）。负载下偶见 3 ms 的最大值来自与服务端共用一个核。参考栈的对照：quinn 运行其上的 tokio 计时轮精度为 1 ms。
 
+### 29.7 Windows（2026-10-08，补全 §29.2 的 Windows 列）
+此前 `Udp.mingw.kt` 的每个函数都抛 `UnsupportedOperationException`（IOCP 的注释称 WSAPoll 驱动支持 UDP，并不属实），quic 与 http3 因此不能在
+Windows 上运行。按 `quinn-udp` 0.11 `windows.rs` 补全，C 部分在 `winshim.def`，边界与 `posixshim` 相同（定宽字段，错误在调用内取得，§33.5）。
+- **套接字**：`socket(…, SOCK_DGRAM, IPPROTO_UDP)`、非阻塞、`IPV6_V6ONLY` 按选项、绑定。设置（参考的 `UdpSocketState::new`，每项必需）：经
+  `SIO_GET_EXTENSION_FUNCTION_POINTER` 取 `WSARecvMsg`；承载 IPv4 时 `IP_DONTFRAGMENT`、`IP_PKTINFO`、`IP_RECVECN`；IPv6 套接字 `IPV6_DONTFRAG`、
+  `IPV6_PKTINFO`、`IPV6_RECVECN`。`mayFragment` 为 false。
+- ⚖️ **双栈与 IPv4 选项**：参考以"v4 套接字或非 v6only"判断是否承载 IPv4；Rust 标准库在 Windows 上保留 `IPV6_V6ONLY` 开启（系统默认），而本库默认
+  双栈，于是绑定 `::1` 的套接字也被设 IPv4 选项，Windows 以 WSAEINVAL 拒绝（CI：`ecnV6`、`ecnV6Dualstack`）。改为：只有绑定在 `::` 或 v4 映射
+  地址上的双栈套接字才承载 IPv4。
+- **接收**：`WSARecvMsg` 一次一个数据报；控制消息 `IP_PKTINFO` / `IPV6_PKTINFO`（目的 IP）、`IP_ECN` / `IPV6_ECN`（C int）、`UDP_COALESCED_INFO`
+  （URO 步长）。URO 与参考一样默认不开（quinn issue 2041），`groSegments` 仍报 64（参考的 `gro_segments`，用作接收缓冲倍数）。
+- **发送**：`WSASendMsg`；源 IP 以 `IP_PKTINFO` / `IPV6_PKTINFO`，ECN 以 `IP_ECN`（IPv4 或 v4 映射目的）/ `IPV6_ECN`，`segmentSize < length` 时附
+  `UDP_SEND_MSG_SIZE`（USO）。USO 能力在另一个测试套接字上探测（作为套接字选项会让每次发送都分段）：接受则 512 段（参考："empirically found on
+  Windows 11 x64"），否则 1。⚖️ 第一次 WSAEINVAL 后不再附带 ECN（与 §29.3 的 EINVAL 回退一致；参考在不支持发送 ECN 的系统上每次发送都失败）。
+- **错误码**：WSAEWOULDBLOCK → 挂起；WSAEMSGSIZE → 视为已发送（§29.3）；WSAEINVAL → §29.3 的回退；WSAECONNRESET / WSAENETRESET（ICMP 端口
+  不可达在下一次接收时报告）→ 忽略、继续收。
+- **mingw-w64 头文件**缺 `IP_ECN`、`IP_RECVECN`、`IPV6_ECN`、`IPV6_RECVECN`（50）、`UDP_SEND_MSG_SIZE`（2）、`UDP_COALESCED_INFO`（3）：按 Windows SDK
+  的值定义（与 windows-sys 0.60 核对）。
+- **WSAPoll 驱动**：就绪等待沿用现有 `awaitReadable` / `awaitWritable`。
+- **IOCP 驱动**：数据报的收发仍是上面的非阻塞调用；可读等待用 0 字节、`MSG_PEEK` 的重叠 `WSARecv`——有数据报排队时完成且不取走数据（libuv
+  对 UDP 的 zero read）；该操作以 WSAEMSGSIZE（数据报放不进 0 字节）或 WSAECONNRESET / WSAENETRESET 结束同样表示"接收不会阻塞"。可写等待：
+  UDP 发送只在发送缓冲满时阻塞，极少见，以 WSAPoll 零超时检查加短退避（同 `awaitConnect`）。关闭时，被 `closeStream` 结束的操作一律报
+  `ClosedException`：`closesocket` 可能先于取消完成，完成包这时带 WSAENOTSOCK（CI：`closeWakesParkedRecv`），此前被报成 IoException。
+- **测试**：`UdpTest` 由 posixTest 移到 nativeTest，两个 Windows 驱动都运行 11 个（GSO 测试的 `Transmit` 按内容分配：128 × 512 字节比默认容量多
+  1 字节）。Windows 上 `UdpTest.gso` 为 maxGsoSegments = 512、groSegments = 64。
+
 ## 30. TCP 连接的地址（2026-09-29，Neton 框架引擎适配器提出的缺口）
 
 需求：框架的请求对象带 `remoteAddress`（按 IP 限流、访问日志），而底座没有取 TCP 流对端地址的办法，适配器只能把所有客户端记为 "unknown"。
