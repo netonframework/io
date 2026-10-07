@@ -1779,3 +1779,62 @@ io_uring、io_uring multishot、epoll 各 157/157；mingwX64、linuxX64、androi
 升到约 57 ms，因为现在 4096 个连接全都在接受服务（4096 / 55k ≈ 74 ms 的平均排队），而修复前卡在 accept 队列里的连接不计入延迟。
 对 Arena 的收益仍须在多核 Linux 上测。探测脚本：`bench-arena/probe-4096.sh`（`WARM=1 SNAP=1`）。
 
+## 33. 让 CI 在全部平台通过（2026-10-07 / 08，缺陷，已修复）
+
+背景：io 的 GitHub CI（编译 + macOS kqueue / poll、Linux epoll / poll / io_uring、Windows IOCP / WSAPoll）此前从未全部通过，0.1.1 与 0.2.0
+都是在 CI 失败的状态下发布的；JVM 目标的测试不在 CI 中。本节逐项记录原因与修正。每项都由 CI 的失败或本机的对照实验确认，修正后在 CI 上复验。
+
+### 33.1 IOCP：按 fd 取下标前先扩容
+`arr[ix(fd)]` 先读出数组字段、再调用会扩容替换该数组的 `ix()`，第一个超出初始容量（256 / 4）的 socket 在 accept 中抛
+ArrayIndexOutOfBoundsException 并使进程退出（CI 第 64 个测试后崩溃）。9 处改为 `ix(fd).let { arr[it] }`。
+
+### 33.2 测试与小缺陷
+- `TcpListener.localAddress` 改走 TCP 路径的 `getsockname`（原用的 UDP 辅助函数在 Windows 上抛异常）；JVM 的监听器也报告本地地址。
+- IOCP accept：监听 socket 在挂起的 AcceptEx 下被关闭（WSAENOTSOCK / WSAEINVAL）报 ClosedException（与非重叠 accept 一致）；连接在 AcceptEx
+  完成前被客户端重置或中止（ERROR_NETNAME_DELETED、ERROR_CONNECTION_ABORTED、WSAECONNRESET、WSAECONNABORTED）只丢弃该连接、继续 accept，
+  不再让监听器失败。
+- IOCP 公平轮转：关闭流时，被推迟到下一轮的读者以 ClosedException 失败（与就绪型 reactor 一致）；此前它会在已关闭、可能被内核复用的 fd 号上
+  recv。推迟的读者改为按 fd 记录。
+- `io_uring_setup` 对 ENOMEM / EAGAIN 以退避重试（最多 2 s）：ring 的内存在关闭后异步释放，连续创建 reactor 时会短暂失败（CI）；只有 EINVAL
+  才退回普通 ring，并报告原始 errno。
+- 测试：Windows 上对已关闭的 Unix socket 对端写一次可能先成功；400 连接测试改为依次建立（macOS 监听队列上限 128）再全部并发使用；
+  `BufferPoolTest.parkedReadHoldsNoPooledArray` 对 IOCP 与 io_uring 一样豁免（重叠读在挂起期间拥有数组）。
+- CI 新增 `test-jvm`（ubuntu-latest、macos-14、windows-latest 上运行 `:io:jvmTest`）。
+
+### 33.3 Windows 的写：背压与取消
+- **整块接收**：缓冲区未满时，Windows 的非阻塞 `send()` 和重叠 `WSASend` 都会一次接收整块数据（32 MiB 也一次完成），写永远不挂起，写超时与
+  取消无从发生，慢对端的内核内存没有上限。修正：每次调用最多交出 `MAX_SEND_CHUNK`（256 KiB），WSAPoll 的 `send` / `WSASend`（向量）与 IOCP
+  都如此；缓冲区满后下一次调用得到 WSAEWOULDBLOCK（或挂起），写者停住。
+- **取消不精确**（IOCP）：限块后 `cancelledWriteAccountsExactlyWhatWasSent` 失败：对端在第 786432 字节（3 × 256 KiB）处与源数据不同。CI 诊断
+  打印：前 2 块已完成（sent = 524288），第 3 块的 WSASend 被取消后完成包报告 n = 0、err = 995（ERROR_OPERATION_ABORTED），而对端共收到
+  33,816,576 字节——比 32 MiB 多整一块：被"取消"的 256 KiB 实际已全部发出，接手的写者又发了一遍。Windows 无法精确取消挂起的 TCP 发送，
+  所以 IOCP 不能按完成包里的字节数实现 §28.6 的"取消的写准确计算已发送字节"。
+- **修正（暂存发送）**：IOCP 的写先做非阻塞 `send()`（缓冲区有空间时直接进入内核，不额外复制，这是常见路径）；返回 WSAEWOULDBLOCK 时，
+  把下一块（不超过 256 KiB）复制进 reactor 拥有的内存（malloc），同时从调用者的缓冲区消费掉——交给内核即计为已发送——再从这份副本发起
+  重叠 WSASend 并等待。这个发送从不为写者取消：写者被取消或超时时立即恢复，发送自行完成或随 socket 关闭结束（关闭时取消，完成包到达后
+  释放副本）。每个 socket 至多一个：下一次写先等它完成，保证顺序、内存上限为一块。复制只发生在背压时（此时吞吐受对端限制）。
+  `writev` 相同（非阻塞 WSASend 不超过 256 KiB，阻塞时把各缓冲区的前 256 KiB 复制进一块）。
+
+### 33.4 reactor 的活性：根作业结束后外部投递不能让它停不下来
+- **现象**：CI 上 IOCP 在 `ReactorLifecycleTest.externalPostsRacingCloseAreRunOrRefused` 挂住 25 分钟（逐测试日志定位）。
+- **原因**：根作业结束后，`readyToStop` 要等本地队列为空才进入 CLOSING；而每轮循环开头都会吸收外部队列。测试的投递线程把积压保持在 10,000
+  左右，每轮只执行任务预算（256）个，本地队列永远不空，reactor 永远不停。POSIX 上每次投递都写一次唤醒管道（一次系统调用），投递者被拖慢；
+  IOCP 的唤醒有 `wakePending` 的 CAS 挡住多余的投递包，投递几乎无成本。
+- **对照实验**（本机 macOS，同一测试各 2 次）：原版通过（0.3 s）；只把唤醒改成同样的 CAS 保护，两次都在 120 s 超时——与 IOCP 相同的挂起；
+  再加上修正，3 次均通过（每次约 455 万次投递）。
+- **修正**：根作业结束后，只在本地队列为空时才吸收外部队列（`absorbExternal`）。本地队列在有限轮内排空，`readyToStop` 看到空队列即关闭入口，
+  其间已接受的投递在 CLOSING 时恰好执行一次（语义不变：已接受的必执行，入口关闭后拒绝）。全量：macOS kqueue、poll 各 154 / 154。
+
+### 33.5 Windows：错误码必须在调用内取得
+- **现象**：服务端打印 `read failed: Winsock error 0` 并关闭连接，客户端读回显时得到 WSAECONNABORTED（WSAPoll，`MultiReactorTest`）；
+  非阻塞 connect 报 `connect ... failed: Winsock error 0`（IOCP，`TcpEchoTest.manyConcurrentConnections`）。
+- **原因**：`recv` / `send` / `connect` 等失败后，在 Kotlin 里再调用 `WSAGetLastError()` 时线程的最后错误可能已被清零：从外部调用返回时，运行时
+  会做自己的 Win32 调用（例如成功的 `TlsGetValue` 会把最后错误置 0）。connect 的 WSAEWOULDBLOCK 因此被读成 0，被当作失败；accept 只需等待时
+  同样会让监听器失败。此前（2ba9fcd）把读取提前到失败处仍在 Kotlin 侧，不够。
+- **修正**：`winshim.def` 中的 `neton_recv_nb`、`neton_send_nb`、`neton_sendv_nb`（非重叠 WSASend）、`neton_accept_nb`、`neton_connect_err`、
+  `neton_bind_err`、`neton_listen_err` 在 C 中调用后立即读取 `WSAGetLastError()` 并返回（读写返回 −错误码）；IOCP 的重叠操作本来就在 C 中
+  读取（`neton_start_result`）。只用于报错信息的 `socket()` / `getsockname` 未改。
+
+### 33.6 结果
+运行 37653522928（815f593）：编译 + 链接全部目标、macOS kqueue / poll、Linux epoll / poll / io_uring、Windows IOCP / WSAPoll、JVM（Linux、macOS、
+Windows）共 11 项全部通过，是 io 的 CI 第一次全部通过。提交本节后的运行作为第二次确认（结果见提交说明）。
