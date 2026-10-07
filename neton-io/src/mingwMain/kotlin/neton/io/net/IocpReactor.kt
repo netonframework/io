@@ -577,7 +577,9 @@ internal class IocpReactor : Reactor() {
             // SPEC §28.6: the op keeps its awaiter until its completion packet says the kernel is done
             // with the buffer; a read or send ends with ClosedException (or the cause it already had),
             // other ops with ClosedException from the aborted completion.
-            if (slot.cont != null && slot.readBuf != null && slot.abort == null) slot.abort = ClosedException()
+            // Every op it closes ends with ClosedException, whatever error its packet carries: closesocket can win
+            // the race with the cancel, and the packet then says WSAENOTSOCK (a UDP peek, CI).
+            if (slot.cont != null && slot.abort == null) slot.abort = ClosedException()
         }
         if (any) neton_cancel(fd.toSocket(), null)   // their packets arrive (aborted) and free the slots
         forgetWatches(fd)
@@ -644,6 +646,7 @@ internal class IocpReactor : Reactor() {
         } else if (err != 0) {
             if (slot.kind == KIND_ACCEPT) neton_accept_discard(slot.op)
             failure = when {
+                slot.abort != null -> slot.abort
                 err == ERROR_OPERATION_ABORTED -> ClosedException()
                 // A zero-byte peek: the datagram does not fit zero bytes, or ICMP reported a reset; either way a
                 // receive will not block now (it reports the reset itself).
@@ -693,10 +696,11 @@ internal class IocpReactor : Reactor() {
         val w = ix(slot.fd)
         if (staged[w] == idx + 1) staged[w] = 0
         val cont = slot.cont
+        val closed = slot.abort
         releaseSlot(idx, slot)
         if (cont == null) return                              // its writer gave up, or the socket closed
         if (e == 0) enqueueResumeInt(cont, 0)
-        else enqueueResumeInt(cont, 0, if (e == ERROR_OPERATION_ABORTED) ClosedException() else IoException("WSASend failed: ${errnoMessage(e)}", e))
+        else enqueueResumeInt(cont, 0, closed ?: if (e == ERROR_OPERATION_ABORTED) ClosedException() else IoException("WSASend failed: ${errnoMessage(e)}", e))
     }
 
     /**
