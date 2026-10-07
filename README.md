@@ -23,11 +23,17 @@ starting at 0.1.0; the older `com.netonstream:neton-io:0.1.0` is a different, ea
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux), java.nio `Selector` (JVM). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.2.0") }
+dependencies { implementation("com.netonstream:io:0.3.0") }
 ```
 
 Targets: macOS, iOS, Linux (x64/arm64), Android native, Windows (mingwX64, IOCP and WSAPoll drivers) and the
-JVM. The native artifacts are klibs, so a consumer compiles with the release's Kotlin version (2.4.0).
+JVM.
+
+**0.3.0** (2026-10-08). UDP on Windows on both drivers (quinn-udp's `windows.rs`: `WSARecvMsg` / `WSASendMsg`, ECN,
+PKTINFO, USO; SPEC §29.7) and 1 ms timer resolution while a Windows reactor runs (SPEC §29.8). CI passes on every
+platform for the first time (SPEC §33): IOCP index and accept fixes, bounded Windows sends with exact accounting of
+cancelled writes, a reactor that a fast external poster could keep from stopping, Winsock errors taken inside each
+call, and io_uring setup retries. The native artifacts are klibs, so a consumer compiles with the release's Kotlin version (2.4.0).
 
 **JVM** (2026-10-03). The reactor core, timers, cross-thread dispatch, lifecycle, TCP layer, `ReactorGroup`,
 `serveTcp` and the public API are the same code as on native; only the driver differs: `NioReactor`, a
