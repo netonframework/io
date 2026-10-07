@@ -102,6 +102,7 @@ internal class IocpReactor : Reactor() {
             watchJobA = watchJobA.copyOf(n); watchHandleA = watchHandleA.copyOf(n)
             watchJobB = watchJobB.copyOf(n); watchHandleB = watchHandleB.copyOf(n)
             readBusy = readBusy.copyOf(n); readDeferred = readDeferred.copyOf(n); writeBusy = writeBusy.copyOf(n)
+            deferredReader = deferredReader.copyOf(n)
         }
         return i
     }
@@ -110,6 +111,7 @@ internal class IocpReactor : Reactor() {
     // next-round wait), cleared when its slot is released or the wait ends; writev clears on return.
     private var readBusy = BooleanArray(256)
     private var readDeferred = BooleanArray(256)
+    private var deferredReader = arrayOfNulls<Continuation<Unit>>(256)   // the reader deferred to the next round, per fd
     private var writeBusy = BooleanArray(256)
 
     /** Associate [fd] with the port once; returns whether skip-on-success is active for it. */
@@ -296,11 +298,17 @@ internal class IocpReactor : Reactor() {
 
     // ---- fairness: reads that completed at once, parked until the next round.
     private var round = 1L                                // servedRound starts at 0: never "this round"
-    private var deferred = ArrayList<Continuation<Unit>>()
-    private var deferredNext = ArrayList<Continuation<Unit>>()
+    // As in the readiness reactors: the lists hold fds, the parked reader is per fd, so closing the stream can fail
+    // its deferred reader (ClosedException) and the next round then finds nothing to resume for that fd.
+    private var deferred = ArrayList<Int>()
+    private var deferredNext = ArrayList<Int>()
 
-    private suspend fun waitNextRound() {
-        suspendCoroutineUninterceptedOrReturn<Unit> { cont -> deferred.add(cont); COROUTINE_SUSPENDED }
+    private suspend fun waitNextRound(fd: Int) {
+        suspendCoroutineUninterceptedOrReturn<Unit> { cont ->
+            ix(fd).let { deferredReader[it] = cont }
+            deferred.add(fd)
+            COROUTINE_SUSPENDED
+        }
         kotlin.coroutines.coroutineContext[Job]?.let { if (!it.isActive) throw it.getCancellationException() }
     }
 
@@ -318,7 +326,7 @@ internal class IocpReactor : Reactor() {
     private suspend fun readNextRound(fd: Int, dst: Buffer, sizer: ReadSizer): Int {
         val i = ix(fd)
         readDeferred[i] = true
-        try { waitNextRound() } finally { readDeferred[i] = false }
+        try { waitNextRound(fd) } finally { readDeferred[i] = false }
         return readNow(fd, dst, sizer)
     }
 
@@ -509,6 +517,8 @@ internal class IocpReactor : Reactor() {
         forgetWatches(fd)
         retirePin(fd)
         val i = ix(fd)
+        // A reader deferred to the next round must not recv on this fd number (the kernel may reuse it): fail it now.
+        deferredReader[i]?.let { deferredReader[i] = null; enqueueResume(it, ClosedException()) }
         associated[i] = false; skipOn[i] = false; servedRound[i] = -1; pollAccept[i] = false
         closeFd(fd)
     }
@@ -541,7 +551,12 @@ internal class IocpReactor : Reactor() {
             round++
             // Reads deferred for fairness resume in the next round, after this round's completions.
             val d = deferred; deferred = deferredNext; deferredNext = d
-            for (c in deferredNext) enqueueResume(c)
+            for (fd in deferredNext) {
+                val i = ix(fd)
+                val c = deferredReader[i] ?: continue             // its stream was closed meanwhile: already failed
+                deferredReader[i] = null
+                enqueueResume(c)
+            }
             deferredNext.clear()
         }
     }
