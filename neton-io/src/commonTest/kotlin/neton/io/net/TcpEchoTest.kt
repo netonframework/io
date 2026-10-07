@@ -55,9 +55,12 @@ class TcpEchoTest {
         }
 
         val n = 400
+        // Connected one after another, then all in flight at once: 400 parked reads is what overflowed the ring. 400
+        // simultaneous handshakes would instead test the platform's listen queue (macOS caps it at 128 and resets the rest).
+        val connections = (1..n).map { connect("127.0.0.1", port) }
         val clients = (1..n).map { i ->
             launch {
-                val client = connect("127.0.0.1", port)
+                val client = connections[i - 1]
                 val framed = Framed(Io(client), LineCodec, LineCodec)
                 framed.send("m$i")
                 assertEquals("m$i", framed.incoming().first())

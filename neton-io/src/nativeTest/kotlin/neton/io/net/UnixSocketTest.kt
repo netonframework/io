@@ -100,7 +100,13 @@ class UnixSocketTest {
         assertEquals(4, s.read(b))
         assertEquals("req\n", b.readBytes(4).decodeToString())
         assertEquals(-1, s.read(b))
-        val e = runCatching { val w = neton.io.bytes.Buffer(); w.writeBytes("x".encodeToByteArray()); s.write(w) }.exceptionOrNull()
+        // POSIX fails the first write (EPIPE); Windows AF_UNIX, like TCP, may take one and fail a later one.
+        var e: Throwable? = null
+        for (attempt in 1..10) {
+            e = runCatching { val w = neton.io.bytes.Buffer(); w.writeBytes("x".encodeToByteArray()); s.write(w) }.exceptionOrNull()
+            if (e != null) break
+            kotlinx.coroutines.delay(20)
+        }
         assertTrue(e is neton.io.core.IoException, "a write to a gone peer must fail with IoException, got $e")
         s.close(); l.close()
     }
