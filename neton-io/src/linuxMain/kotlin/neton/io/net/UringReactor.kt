@@ -86,6 +86,10 @@ import platform.posix.malloc
 import platform.posix.free
 import platform.posix.ENOBUFS
 import platform.posix.ECANCELED
+import platform.posix.EAGAIN
+import platform.posix.EINVAL
+import platform.posix.ENOMEM
+import platform.posix.usleep
 import platform.posix.mmap
 import platform.posix.munmap
 import kotlin.coroutines.resume
@@ -528,6 +532,27 @@ internal class UringReactor : Reactor() {
         wPinRefs[fd]?.let { it.retired = true; it.release(); wPinRefs[fd] = null }
     }
 
+    /**
+     * io_uring_setup with [flags]; the ring fd, or -errno. ENOMEM / EAGAIN are retried with a backoff of up to 2 s in
+     * total: a ring's memory is released asynchronously after its fd is closed, so creating rings soon after closing
+     * others (a restarted server, reactors created in a loop) can fail for a moment only (seen in CI, SPEC §33).
+     */
+    private fun setupRing(depth: UInt, params: kotlinx.cinterop.CPointer<neton_io_uring_params>, flags: UInt): Int {
+        var waitUs = 1_000u
+        var waited = 0u
+        while (true) {
+            memset(params, 0, sizeOf<neton_io_uring_params>().convert())
+            params.pointed.flags = flags
+            val fd = neton_uring_setup(depth, params)
+            if (fd >= 0) return fd
+            val e = platform.posix.errno
+            if ((e != ENOMEM && e != EAGAIN) || waited >= 2_000_000u) return -e
+            usleep(waitUs)
+            waited += waitUs
+            waitUs = minOf(waitUs * 2u, 200_000u)
+        }
+    }
+
     init {
         val depth = getenv("NETON_IO_URING_DEPTH")?.toKString()?.toUIntOrNull() ?: DEFAULT_DEPTH
         val params = nativeHeap.alloc<neton_io_uring_params>()
@@ -538,17 +563,19 @@ internal class UringReactor : Reactor() {
         // forces the plain ring (A/B).
         val wantModern = getenv("NETON_IO_URING_SETUP")?.toKString() != "legacy"
         var fd = -1
+        var error = 0
         if (wantModern) {
-            params.flags = (NETON_IORING_SETUP_COOP_TASKRUN or NETON_IORING_SETUP_SINGLE_ISSUER or NETON_IORING_SETUP_DEFER_TASKRUN).toUInt()
-            fd = neton_uring_setup(depth, params.ptr)
+            fd = setupRing(depth, params.ptr, (NETON_IORING_SETUP_COOP_TASKRUN or NETON_IORING_SETUP_SINGLE_ISSUER or NETON_IORING_SETUP_DEFER_TASKRUN).toUInt())
+            if (fd < 0) error = -fd
         }
-        if (fd < 0) {
-            memset(params.ptr, 0, sizeOf<neton_io_uring_params>().convert())
-            fd = neton_uring_setup(depth, params.ptr)
+        // Only a kernel that does not know the flags (EINVAL) gets the plain ring; any other error is reported as is.
+        if (!wantModern || error == EINVAL) {
+            fd = setupRing(depth, params.ptr, 0u)
+            error = if (fd < 0) -fd else 0
             modernSetup = false
-        } else modernSetup = true
+        } else modernSetup = fd >= 0
         ringFd = fd
-        check(ringFd >= 0) { val e = platform.posix.errno; "io_uring_setup failed: ${errnoMessage(e)} (errno $e)" }
+        check(ringFd >= 0) { "io_uring_setup failed: ${errnoMessage(error)} (errno $error)" }
 
         val prot = PROT_READ or PROT_WRITE
         val flags = MAP_SHARED or MAP_POPULATE
