@@ -1698,6 +1698,18 @@ Windows 上运行。按 `quinn-udp` 0.11 `windows.rs` 补全，C 部分在 `wins
 - **测试**：`UdpTest` 由 posixTest 移到 nativeTest，两个 Windows 驱动都运行 11 个（GSO 测试的 `Transmit` 按内容分配：128 × 512 字节比默认容量多
   1 字节）。Windows 上 `UdpTest.gso` 为 maxGsoSegments = 512、groSegments = 64。
 
+### 29.8 Windows 的计时精度（2026-10-08，缺陷，已修复）
+- **现象**：quic 在 Windows CI 上的吞吐约为 Linux / macOS 的五分之一（`FairnessTest` 重连接 5 MiB/s 对 23–24 MiB），发送预算几乎从不用满（让出 0–2
+  次，Linux 145 次）：发送端大部分时间在等计时器。§29.6 的审计只在 Linux 上做过。
+- **测量**（新测试 `TimerPrecisionTest`：`delay(1)` 200 次，按中位数断言迟到 < 4 ms，同时打印 p99 / 最大）：Windows IOCP 迟到 p50 12,887 µs、
+  p99 15,768 µs；WSAPoll p50 14,857 µs、p99 15,393 µs——Windows 默认 15.6 ms 的系统时钟周期，`GetQueuedCompletionStatusEx` 与 `WSAPoll` 的毫秒超时
+  都按它取整。同一轮 Linux epoll p50 72 µs、io_uring 34 µs，macOS kqueue 303 µs。
+- **修正**：每个 reactor 运行期间以 `timeBeginPeriod(1)` 把计时精度提到 1 ms，关闭时 `timeEndPeriod(1)`（Windows 对调用计数；Windows 10 2004 起
+  只影响本进程）；两个驱动都如此（`winshim.def`，链接 winmm）。
+- **结果**：Windows IOCP 迟到 p50 1,051 µs、p99 2,050 µs；WSAPoll p50 999 µs、p99 2,013 µs；CI 11 项全部通过。剩下的约 1 ms 来自截止时间先向上
+  取整到毫秒、再加 1 ms 的系统精度，与 tokio 计时轮的 1 ms 同级；若要亚毫秒，后续可改用高精度可等待计时器（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`）
+  接入完成端口，以同一测试验收。
+
 ## 30. TCP 连接的地址（2026-09-29，Neton 框架引擎适配器提出的缺口）
 
 需求：框架的请求对象带 `remoteAddress`（按 IP 限流、访问日志），而底座没有取 TCP 流对端地址的办法，适配器只能把所有客户端记为 "unknown"。
