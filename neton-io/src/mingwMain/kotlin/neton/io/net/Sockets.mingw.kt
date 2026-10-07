@@ -84,8 +84,16 @@ internal actual fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, 
     }
 }
 
+/**
+ * The most one non-blocking send() hands to Winsock. While the send buffer is not full Windows accepts a whole send
+ * however large (buffering it in the kernel), so a 32 MiB write to a peer that does not read completed at once: no
+ * backpressure, no write timeout, unbounded kernel memory per slow peer. Capping each call bounds that to one chunk
+ * beyond the socket buffer; the next call then sees WSAEWOULDBLOCK and the writer parks, as on POSIX (SPEC §33).
+ */
+internal const val MAX_SEND_CHUNK = 256 * 1024
+
 internal actual fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
-    val n = send(fd.toSocket(), pinned.addressOf(offset), len, 0)
+    val n = send(fd.toSocket(), pinned.addressOf(offset), minOf(len, MAX_SEND_CHUNK), 0)
     if (n > 0) return n
     val e = WSAGetLastError()
     return if (e == WSAEWOULDBLOCK || e == WSAEINTR) WOULD_BLOCK else IO_ERROR

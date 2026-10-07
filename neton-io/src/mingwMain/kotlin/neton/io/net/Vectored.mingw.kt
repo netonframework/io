@@ -28,13 +28,20 @@ private const val SD_SEND = 1
 internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: Int, pins: Array<Pinned<ByteArray>?>): Long = memScoped {
     run {
         val wsabufs = allocArray<WSABUF>(count)
+        // At most MAX_SEND_CHUNK in one call, as in sendPinned: Windows would otherwise take every buffer at once.
+        var budget = MAX_SEND_CHUNK
+        var used = 0
         for (i in 0 until count) {
             val b = bufs[from + i]
-            wsabufs[i].len = b.readableBytes.convert()
-            wsabufs[i].buf = if (b.readableBytes == 0) null else pins[i]!!.addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
+            val len = minOf(b.readableBytes, budget)
+            wsabufs[i].len = len.convert()
+            wsabufs[i].buf = if (len == 0) null else pins[i]!!.addressOf(b.readerIndex())   // an empty pooled buffer holds a 0-length array
+            used = i + 1
+            budget -= len
+            if (budget == 0) break
         }
         val sent = alloc<UIntVar>()
-        val rc = WSASend(fd.toSocket(), wsabufs, count.convert(), sent.ptr, 0u, null, null)
+        val rc = WSASend(fd.toSocket(), wsabufs, used.convert(), sent.ptr, 0u, null, null)
         if (rc == SOCKET_ERROR) {
             val e = WSAGetLastError()
             if (e == WSAEWOULDBLOCK || e == WSAEINTR) WOULD_BLOCK.toLong() else IO_ERROR.toLong()
