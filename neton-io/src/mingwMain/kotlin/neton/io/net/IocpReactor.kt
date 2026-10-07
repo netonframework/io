@@ -447,27 +447,35 @@ internal class IocpReactor : Reactor() {
 
     override suspend fun accept(listenFd: Int): Int {
         checkOwner("accept")
-        // Fast path: a connection already queued is taken without an overlapped op.
-        acceptNow(listenFd)?.let { return it }
-        if (ix(listenFd).let { pollAccept[it] }) return pollingAccept(listenFd)
-        return try {
-            submit(listenFd, KIND_ACCEPT, null, cancelOnAbort = true, isWrite = false) { op, skip ->
-                neton_accept(listenFd.toSocket(), op, skip)
-            }.also { setNonBlocking(it) }
-        } catch (e: IoException) {
-            // AcceptEx is not offered for every address family (AF_UNIX): fall back to polling accept().
-            if (e.errno != WSAEOPNOTSUPP && e.errno != WSAEINVAL) throw e
-            ix(listenFd).let { pollAccept[it] = true }
-            pollingAccept(listenFd)
+        while (true) {
+            // Fast path: a connection already queued is taken without an overlapped op.
+            acceptNow(listenFd)?.let { return it }
+            if (ix(listenFd).let { pollAccept[it] }) return pollingAccept(listenFd)
+            try {
+                return submit(listenFd, KIND_ACCEPT, null, cancelOnAbort = true, isWrite = false) { op, skip ->
+                    neton_accept(listenFd.toSocket(), op, skip)
+                }.also { setNonBlocking(it) }
+            } catch (_: PendingConnectionGone) {
+                continue                                      // that client reset before it was accepted: take the next
+            } catch (e: IoException) {
+                // AcceptEx is not offered for every address family (AF_UNIX): fall back to polling accept().
+                if (e.errno != WSAEOPNOTSUPP && e.errno != WSAEINVAL) throw e
+                ix(listenFd).let { pollAccept[it] = true }
+                return pollingAccept(listenFd)
+            }
         }
     }
+
+    /** An AcceptEx whose connection was reset or aborted before it completed: the listener is fine, accept again. */
+    private class PendingConnectionGone : Exception()
 
     /** Non-blocking accept(): the new fd, null if none is queued; throws if the listener is gone or failed. */
     private fun acceptNow(listenFd: Int): Int? {
         val fd = acceptOne(listenFd)
         if (fd >= 0) { setNonBlocking(fd); return fd }
         val e = lastSocketError()
-        if (e == WSAEWOULDBLOCK_CODE || e == WSAEINTR_CODE) return null
+        // A queued connection the client reset before it was taken: none for now, the listener is fine.
+        if (e == WSAEWOULDBLOCK_CODE || e == WSAEINTR_CODE || e == WSAECONNRESET_CODE) return null
         if (e == WSAENOTSOCK || e == WSAEINVAL) throw ClosedException("listener closed")
         throw IoException("accept failed: ${errnoMessage(e)}", e)
     }
@@ -553,8 +561,15 @@ internal class IocpReactor : Reactor() {
             // Cancelled (e.g. the stream was closed) after bytes moved: they count (SPEC §28.6).
         } else if (err != 0) {
             if (slot.kind == KIND_ACCEPT) neton_accept_discard(slot.op)
-            failure = if (err == ERROR_OPERATION_ABORTED) ClosedException()
-                      else IoException("${KIND_NAMES[slot.kind]} failed: ${errnoMessage(err)}", err)
+            failure = when {
+                err == ERROR_OPERATION_ABORTED -> ClosedException()
+                // The listener was closed under the pending AcceptEx (shutdown): as acceptNow reports it.
+                slot.kind == KIND_ACCEPT && (err == WSAENOTSOCK || err == WSAEINVAL) -> ClosedException("listener closed")
+                // Only that connection is gone (reset before the accept completed).
+                slot.kind == KIND_ACCEPT && (err == ERROR_NETNAME_DELETED || err == ERROR_CONNECTION_ABORTED ||
+                    err == WSAECONNRESET_CODE || err == WSAECONNABORTED_CODE) -> PendingConnectionGone()
+                else -> IoException("${KIND_NAMES[slot.kind]} failed: ${errnoMessage(err)}", err)
+            }
         } else if (slot.kind == KIND_ACCEPT) {
             if (cont == null) neton_accept_discard(slot.op)       // nobody wants it any more
             else try { value = finishAccept(fd, slot) } catch (t: Throwable) { failure = t }
@@ -660,5 +675,9 @@ internal class IocpReactor : Reactor() {
         const val WSAENOTSOCK = 10038
         const val WSAEOPNOTSUPP = 10045
         const val WSAEINVAL = 10022
+        const val WSAECONNRESET_CODE = 10054
+        const val WSAECONNABORTED_CODE = 10053
+        const val ERROR_NETNAME_DELETED = 64
+        const val ERROR_CONNECTION_ABORTED = 1236
     }
 }
