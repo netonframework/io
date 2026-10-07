@@ -363,6 +363,9 @@ internal abstract class Reactor : CoroutineDispatcher(), Delay {
     /** Move externally posted tasks (if any) onto the local queue, oldest first. */
     protected fun absorbExternal() {
         if (lifecycle.load() >= CLOSING) return          // the entry holds CLOSED_ENTRY now
+        // Root done: take more only once the local queue is empty, or a poster that keeps it above the task budget
+        // keeps the loop from ever seeing it empty and closing (SPEC §33.4). What waits here runs at CLOSING.
+        if (rootEndHandled && hasTasks()) return
         var node: ExtNode? = external.exchange(null) ?: return
         val batch = ArrayList<Runnable>()
         while (node != null) { batch.add(node.block); node = node.next }
