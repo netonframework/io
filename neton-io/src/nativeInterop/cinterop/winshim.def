@@ -22,6 +22,23 @@ static long long neton_realtime_millis(void) {
     return t / 10000 - 11644473600000LL;
 }
 
+/* Non-blocking recv / send / WSASend with the Winsock error taken in the same call: the count, or -(the error).
+   WSAGetLastError() called afterwards from Kotlin can already read 0: returning from a foreign call, the runtime may
+   make Win32 calls (TlsGetValue clears the last error on success) before the next one. */
+static int neton_recv_nb(unsigned long long s, char* buf, int len) {
+    int n = recv((SOCKET) s, buf, len, 0);
+    return n == SOCKET_ERROR ? -WSAGetLastError() : n;
+}
+static int neton_send_nb(unsigned long long s, char* buf, int len) {
+    int n = send((SOCKET) s, buf, len, 0);
+    return n == SOCKET_ERROR ? -WSAGetLastError() : n;
+}
+static long long neton_sendv_nb(unsigned long long s, void* bufs, unsigned int n) {
+    DWORD sent = 0;
+    if (WSASend((SOCKET) s, (WSABUF*) bufs, n, &sent, 0, NULL, NULL) == 0) return (long long) sent;
+    return -(long long) WSAGetLastError();
+}
+
 /* Integer socket options: setsockopt takes `const char*` on Windows, which cinterop maps to a String. */
 static int neton_setsockopt_int(unsigned long long s, int level, int opt, int value) {
     return setsockopt((SOCKET) s, level, opt, (const char*) &value, (int) sizeof value);

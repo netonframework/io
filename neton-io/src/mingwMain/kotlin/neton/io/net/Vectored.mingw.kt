@@ -3,23 +3,15 @@
 package neton.io.net
 
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.Pinned
-import kotlinx.cinterop.ptr
-import kotlinx.cinterop.value
 import neton.io.bytes.Buffer
-import platform.posix.SOCKET_ERROR
+import neton.io.win.neton_sendv_nb
 import platform.posix.WSABUF
-import platform.posix.WSAEINTR
-import platform.posix.WSAEWOULDBLOCK
-import platform.posix.WSAGetLastError
-import platform.posix.WSASend
 import platform.posix.shutdown
 
 /** SD_SEND: stop sending (winsock2.h). */
@@ -40,9 +32,8 @@ internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: 
             budget -= len
             if (budget == 0) break
         }
-        val sent = alloc<UIntVar>()
-        val rc = WSASend(fd.toSocket(), wsabufs, used.convert(), sent.ptr, 0u, null, null)
-        if (rc == SOCKET_ERROR) failedIo().toLong() else sent.value.toLong()
+        val rc = neton_sendv_nb(fd.toSocket(), wsabufs, used.convert())
+        if (rc < 0) failedIo((-rc).toInt()).toLong() else rc
     }
 }
 

@@ -14,6 +14,8 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
 import kotlinx.cinterop.value
+import neton.io.win.neton_recv_nb
+import neton.io.win.neton_send_nb
 import neton.io.win.neton_getsockopt_int
 import neton.io.win.neton_wsa_startup
 import platform.posix.FIONBIO
@@ -69,16 +71,15 @@ internal actual fun socketError(fd: Int): Int = memScoped {
 }
 
 /**
- * The Winsock error of the last failed recv / send on this thread, taken right at the failure. WSAGetLastError() is the
- * thread's last error of any call, so reading it later (after the runtime made other Win32 calls, e.g. allocating)
- * reported "Winsock error 0" for a failed read (CI, ParkCancellationTest).
+ * The Winsock error of the last failed recv / send on this thread, as the call itself reported it (the neton_*_nb shims
+ * read WSAGetLastError() inside the call). Read from Kotlin after the call returned, the thread's last error could
+ * already be 0 ("read failed: Winsock error 0", CI: ParkCancellationTest, MultiReactorTest; SPEC §33.5).
  */
 @kotlin.native.concurrent.ThreadLocal
 private var savedSocketError = 0
 
-/** A failed recv / send's result: WOULD_BLOCK, or IO_ERROR with its error saved for [lastSocketError]. */
-internal fun failedIo(): Int {
-    val e = WSAGetLastError()
+/** A failed recv / send's result for its Winsock error [e]: WOULD_BLOCK, or IO_ERROR with [e] saved for [lastSocketError]. */
+internal fun failedIo(e: Int): Int {
     if (e == WSAEWOULDBLOCK || e == WSAEINTR) return WOULD_BLOCK
     savedSocketError = e
     return IO_ERROR
@@ -96,11 +97,11 @@ internal actual fun errnoMessage(code: Int): String = "Winsock error $code"
 internal actual fun suppressSigpipe(fd: Int): Boolean = true
 
 internal actual fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
-    val n = recv(fd.toSocket(), pinned.addressOf(offset), len, 0)
+    val n = neton_recv_nb(fd.toSocket(), pinned.addressOf(offset), len)
     return when {
         n > 0 -> n
         n == 0 -> EOF_RESULT
-        else -> failedIo()
+        else -> failedIo(-n)
     }
 }
 
@@ -113,9 +114,9 @@ internal actual fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, 
 internal const val MAX_SEND_CHUNK = 256 * 1024
 
 internal actual fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
-    val n = send(fd.toSocket(), pinned.addressOf(offset), minOf(len, MAX_SEND_CHUNK), 0)
+    val n = neton_send_nb(fd.toSocket(), pinned.addressOf(offset), minOf(len, MAX_SEND_CHUNK))
     if (n > 0) return n
-    return failedIo()
+    return failedIo(-n)
 }
 
 /**
