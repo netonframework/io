@@ -381,11 +381,25 @@ static int neton_wudp_probe_gso(void) {
     return ok ? 512 : 1;
 }
 
+/* A dual-stack IPv6 socket carries IPv4 only when bound to :: or a v4-mapped address; Windows rejects the IPv4 options
+   (WSAEINVAL) on one bound to another IPv6 address such as ::1. The reference never meets this: Rust's std leaves
+   IPV6_V6ONLY on (the Windows default), and quinn-udp reads it back. */
+static int neton_wudp_carries_ipv4(SOCKET s) {
+    struct sockaddr_in6 a;
+    int len = (int) sizeof a, i;
+    if (getsockname(s, (struct sockaddr*) &a, &len) != 0 || a.sin6_family != AF_INET6) return 1;
+    for (i = 0; i < 10; i++) if (a.sin6_addr.s6_addr[i]) return 0;
+    if (a.sin6_addr.s6_addr[10] == 0xff && a.sin6_addr.s6_addr[11] == 0xff) return 1;   /* v4-mapped */
+    if (a.sin6_addr.s6_addr[10] || a.sin6_addr.s6_addr[11]) return 0;
+    for (i = 12; i < 16; i++) if (a.sin6_addr.s6_addr[i]) return 0;
+    return 1;                                                                          /* :: */
+}
+
 /* Socket options as quinn-udp's UdpSocketState::new; every one is required, as there. Writes the GSO and GRO
    segment counts; returns may_fragment (always 0: don't-fragment is set) or -error. */
 static int neton_wudp_setup(unsigned long long sock, int v6, int v6only, int* gso, int* gro) {
     SOCKET s = (SOCKET) sock;
-    int is_ipv4 = !v6 || !v6only;
+    int is_ipv4 = !v6 || (!v6only && neton_wudp_carries_ipv4(s));
     *gso = 1; *gro = 64;   /* quinn-udp gro_segments: 64, a buffer factor even with URO off (its default) */
     if (neton_wsarecvmsg == NULL) {
         GUID guid = WSAID_WSARECVMSG;

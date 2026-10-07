@@ -178,6 +178,7 @@ class UdpTest {
         val parked = async { RecvBatch(1, 64).use { b -> runCatching { s.recv(b) }.exceptionOrNull() } }
         delay(50)
         s.close()
-        assertTrue(parked.await() is ClosedException)
+        val e = parked.await()
+        assertTrue(e is ClosedException, "a parked recv ended with $e")
     }
 }
