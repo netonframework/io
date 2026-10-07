@@ -2,7 +2,7 @@ package = neton.io.win
 # Only the helpers below are exported; the Winsock declarations themselves come from platform.posix / platform.windows.
 headers = winsock2.h
 headerFilter = neton_winshim_none.h
-linkerOpts = -lws2_32 -lbcrypt
+linkerOpts = -lws2_32 -lbcrypt -lwinmm
 compilerOpts = -D_WIN32_WINNT=0x0A00
 
 ---
@@ -555,4 +555,14 @@ static int neton_poll_writable(unsigned long long s) {
     f.fd = (SOCKET) s; f.events = POLLWRNORM; f.revents = 0;
     return WSAPoll(&f, 1, 0) != 0 ? 1 : 0;
 }
+
+/*
+ * SPEC §29.8: the system timer period. Windows ticks every 15.6 ms by default, so a 1 ms wait in
+ * GetQueuedCompletionStatusEx or WSAPoll woke 13-15 ms late (CI) and QUIC's pacing and loss timers ran at a fifth of
+ * their rate. Each reactor raises the resolution to 1 ms while it runs (Windows counts the calls; since Windows 10 2004
+ * the setting is per process). 1 when the period was set (then end it once), 0 otherwise.
+ */
+#include <mmsystem.h>
+static int neton_timer_period_begin(void) { return timeBeginPeriod(1) == TIMERR_NOERROR ? 1 : 0; }
+static void neton_timer_period_end(void) { timeEndPeriod(1); }
 

@@ -23,6 +23,9 @@ import platform.posix.pollfd
 internal class WsaPollPoller : Poller {
     override val name: String get() = "wsapoll"
 
+    // 1 ms timer resolution while this reactor runs (SPEC §29.8): its WSAPoll timeouts are otherwise 15.6 ms ticks.
+    private val timerPeriodSet = neton.io.win.neton_timer_period_begin() == 1
+
     private val readFds = HashSet<Int>()
     private val writeFds = HashSet<Int>()
 
@@ -76,5 +79,7 @@ internal class WsaPollPoller : Poller {
         }
     }
 
-    override fun close() {}
+    override fun close() {
+        if (timerPeriodSet) neton.io.win.neton_timer_period_end()
+    }
 }

@@ -89,6 +89,8 @@ internal class IocpReactor : Reactor() {
 
     private val port: COpaquePointer = neton_iocp_create() ?: error("CreateIoCompletionPort failed")
     private val useSkip: Boolean = getenv("NETON_IO_IOCP_SKIP")?.toKString() != "0"
+    // 1 ms timer resolution while this reactor runs (SPEC §29.8): its port waits are otherwise 15.6 ms ticks.
+    private val timerPeriodSet = neton.io.win.neton_timer_period_begin() == 1
 
     // ---- per-socket state, indexed by handle / 4 (SOCKET values are multiples of 4).
     private var associated = BooleanArray(256)
@@ -736,6 +738,7 @@ internal class IocpReactor : Reactor() {
         // Before the port closes: no cross-thread wakeup may post to a closed (or reused) handle (SPEC §27.12).
         closeWakePipe()
         neton_iocp_close(port)
+        if (timerPeriodSet) neton.io.win.neton_timer_period_end()
         nativeHeap.free(ops.rawValue); nativeHeap.free(bytes.rawValue); nativeHeap.free(errs.rawValue)
     }
 
