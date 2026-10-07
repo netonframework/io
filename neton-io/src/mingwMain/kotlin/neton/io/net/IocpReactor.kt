@@ -189,8 +189,8 @@ internal class IocpReactor : Reactor() {
     }
 
     private fun releaseSlot(idx: Int, slot: Slot) {
-        if (slot.readBuf != null) readBusy[ix(slot.fd)] = false
-        if (slot.sendBuf != null) writeBusy[ix(slot.fd)] = false
+        if (slot.readBuf != null) ix(slot.fd).let { readBusy[it] = false }
+        if (slot.sendBuf != null) ix(slot.fd).let { writeBusy[it] = false }
         slot.live = false; slot.cont = null; slot.fd = -1; slot.kind = 0; slot.isWrite = false
         slot.readBuf = null; slot.readSizer = null; slot.sendBuf = null; slot.sendTotal = 0; slot.abort = null
         slot.pin?.let { it.refs--; it.release() }; slot.pin = null
@@ -332,7 +332,7 @@ internal class IocpReactor : Reactor() {
         slot.fd = fd; slot.kind = KIND_RECV; slot.cancelOnAbort = true; slot.isWrite = false
         slot.pin = pin; pin.refs++
         slot.readBuf = dst; slot.readSizer = sizer
-        readBusy[ix(fd)] = true
+        ix(fd).let { readBusy[it] = true }
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
             when (val rc = neton_recv(fd.toSocket(), slot.op, pin.pinned.addressOf(at), cap.toUInt(), skip)) {
@@ -353,13 +353,13 @@ internal class IocpReactor : Reactor() {
         dst.commitWrite(n)
         sizer.onRead(n)
         stats?.let { it.reads++; it.readBytes += n }
-        if (sync) servedRound[ix(fd)] = round
+        if (sync) ix(fd).let { servedRound[it] = round }
         return n
     }
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         checkOwner("write")
-        if (writeBusy[ix(fd)]) throw IllegalStateException("concurrent write on socket $fd")
+        if (ix(fd).let { writeBusy[it] }) throw IllegalStateException("concurrent write on socket $fd")
         if (src.readableBytes == 0) return 0
         return sendAll(fd, src)
     }
@@ -373,7 +373,7 @@ internal class IocpReactor : Reactor() {
         slot.fd = fd; slot.kind = KIND_SEND; slot.cancelOnAbort = false; slot.isWrite = true
         slot.pin = pin; pin.refs++
         slot.sendBuf = src; slot.sendTotal = 0
-        writeBusy[ix(fd)] = true
+        ix(fd).let { writeBusy[it] = true }
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
             while (true) {
@@ -449,7 +449,7 @@ internal class IocpReactor : Reactor() {
         checkOwner("accept")
         // Fast path: a connection already queued is taken without an overlapped op.
         acceptNow(listenFd)?.let { return it }
-        if (pollAccept[ix(listenFd)]) return pollingAccept(listenFd)
+        if (ix(listenFd).let { pollAccept[it] }) return pollingAccept(listenFd)
         return try {
             submit(listenFd, KIND_ACCEPT, null, cancelOnAbort = true, isWrite = false) { op, skip ->
                 neton_accept(listenFd.toSocket(), op, skip)
@@ -457,7 +457,7 @@ internal class IocpReactor : Reactor() {
         } catch (e: IoException) {
             // AcceptEx is not offered for every address family (AF_UNIX): fall back to polling accept().
             if (e.errno != WSAEOPNOTSUPP && e.errno != WSAEINVAL) throw e
-            pollAccept[ix(listenFd)] = true
+            ix(listenFd).let { pollAccept[it] = true }
             pollingAccept(listenFd)
         }
     }
@@ -596,7 +596,7 @@ internal class IocpReactor : Reactor() {
             return
         }
         val fd = slot.fd
-        val skip = if (skipOn[ix(fd)]) 1 else 0
+        val skip = if (ix(fd).let { skipOn[it] }) 1 else 0
         val pin = slot.pin!!
         while (src.readableBytes > 0) {
             val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), src.readableBytes.toUInt(), skip)
