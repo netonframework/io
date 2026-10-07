@@ -32,6 +32,8 @@ import kotlinx.coroutines.Job
 import neton.io.bytes.Buffer
 import neton.io.core.ClosedException
 import neton.io.core.IoException
+import neton.io.win.neton_poll_writable
+import neton.io.win.neton_udp_peek
 import neton.io.win.neton_accept
 import neton.io.win.neton_accept_discard
 import neton.io.win.neton_accept_finish
@@ -501,13 +503,21 @@ internal class IocpReactor : Reactor() {
         neton_cancel(slot.fd.toSocket(), slot.op)
     }
 
-    // SPEC §29.4: IOCP datagrams (WSARecvMsg / WSASendMsg overlapped) are not implemented yet; the readiness
-    // driver (NETON_IO_DRIVER=wsapoll) supports UDP on Windows.
-    override suspend fun awaitReadable(fd: Int): Unit =
-        throw UnsupportedOperationException("UDP on the IOCP driver is not implemented yet (SPEC §29.4); use NETON_IO_DRIVER=wsapoll")
+    // SPEC §29.7: UDP readiness on the port. The datagram I/O itself is the non-blocking WSARecvMsg / WSASendMsg of
+    // Udp.mingw.kt, as on the readiness drivers. Readable: a zero-byte overlapped WSARecv with MSG_PEEK completes
+    // when a datagram is queued and takes nothing (libuv's zero read for UDP).
+    override suspend fun awaitReadable(fd: Int) {
+        checkOwner("recv")
+        submit(fd, KIND_PEEK, null, cancelOnAbort = true, isWrite = false) { op, skip -> neton_udp_peek(fd.toSocket(), op, skip) }
+    }
 
-    override suspend fun awaitWritable(fd: Int): Unit =
-        throw UnsupportedOperationException("UDP on the IOCP driver is not implemented yet (SPEC §29.4); use NETON_IO_DRIVER=wsapoll")
+    // Writable: a UDP send waits only while the send buffer is full, rarely; a WSAPoll check on a short backoff, as
+    // awaitConnect.
+    override suspend fun awaitWritable(fd: Int) {
+        checkOwner("send")
+        var backoff = 1L
+        while (neton_poll_writable(fd.toSocket()) == 0) { kotlinx.coroutines.delay(backoff); backoff = minOf(backoff * 2, 10L) }
+    }
 
     override suspend fun accept(listenFd: Int): Int {
         checkOwner("accept")
@@ -635,6 +645,9 @@ internal class IocpReactor : Reactor() {
             if (slot.kind == KIND_ACCEPT) neton_accept_discard(slot.op)
             failure = when {
                 err == ERROR_OPERATION_ABORTED -> ClosedException()
+                // A zero-byte peek: the datagram does not fit zero bytes, or ICMP reported a reset; either way a
+                // receive will not block now (it reports the reset itself).
+                slot.kind == KIND_PEEK && (err == WSAEMSGSIZE_CODE || err == WSAECONNRESET_CODE || err == WSAENETRESET_CODE) -> null
                 // The listener was closed under the pending AcceptEx (shutdown): as acceptNow reports it.
                 slot.kind == KIND_ACCEPT && (err == WSAENOTSOCK || err == WSAEINVAL) -> ClosedException("listener closed")
                 // Only that connection is gone (reset before the accept completed).
@@ -726,7 +739,8 @@ internal class IocpReactor : Reactor() {
         const val KIND_RECV = 1
         const val KIND_SEND = 2
         const val KIND_ACCEPT = 3
-        val KIND_NAMES = arrayOf("", "WSARecv", "WSASend", "AcceptEx")
+        const val KIND_PEEK = 4
+        val KIND_NAMES = arrayOf("", "WSARecv", "WSASend", "AcceptEx", "WSARecv (peek)")
         const val INFINITE: UInt = 0xFFFF_FFFFu
         const val DRAIN_ROUNDS = 300
         const val ERROR_OPERATION_ABORTED = 995
@@ -736,6 +750,8 @@ internal class IocpReactor : Reactor() {
         const val WSAEOPNOTSUPP = 10045
         const val WSAEINVAL = 10022
         const val WSAECONNRESET_CODE = 10054
+        const val WSAEMSGSIZE_CODE = 10040
+        const val WSAENETRESET_CODE = 10052
         const val WSAECONNABORTED_CODE = 10053
         const val ERROR_NETNAME_DELETED = 64
         const val ERROR_CONNECTION_ABORTED = 1236

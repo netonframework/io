@@ -17,7 +17,8 @@ class UdpTest {
 
     /** quinn-udp `test_send_recv`. */
     private suspend fun testSendRecv(send: UdpSocket, recv: UdpSocket, tx: Tx) {
-        Transmit().use { t ->
+        // Windows allows 512 GSO segments: 128 x 512 bytes is one more than the default capacity.
+        Transmit(maxOf(65535, tx.contents.size)).use { t ->
             tx.contents.copyInto(t.buffer); t.length = tx.contents.size
             t.setDestination(tx.destination); t.ecn = tx.ecn; t.segmentSize = tx.segmentSize; t.setSource(tx.srcIp)
             assertTrue(send.trySend(t))
@@ -107,7 +108,7 @@ class UdpTest {
         send.close(); recv.close()
     }
 
-    /** Linux / Android only in the reference (`#[cfg_attr(not(linux, windows, android), ignore)]`); elsewhere max segments is 1. */
+    /** Linux, Android and Windows in the reference (`#[cfg_attr(not(linux, windows, android), ignore)]`); elsewhere max segments is 1. */
     @Test
     fun gso() = runReactor {
         val send = bindLocal(); val recv = bindLocal()
@@ -121,7 +122,7 @@ class UdpTest {
     @Test
     fun socketBuffers() = runReactor {
         val size = 123456
-        val factor = if (udpPlatformBatch > 1) 2 else 1        // Linux / Android double the requested size
+        val factor = if (BATCH_SIZE > 1) 2 else 1               // Linux / Android double the requested size
         val send = bindUdp(SocketAddress.IPV4_LOCALHOST_ANY_PORT); val recv = bindUdp(SocketAddress.IPV4_LOCALHOST_ANY_PORT)
         for (s in listOf(send, recv)) {
             val before = s.sendBufferSize()

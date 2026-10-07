@@ -282,3 +282,263 @@ static int neton_pin_thread_nth(int n) {
 static int neton_secure_random(unsigned char *buf, unsigned long len) {
     return BCryptGenRandom(NULL, buf, (ULONG) len, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ? 0 : -1;
 }
+
+/* ---------------------------------------------------------------------------------------------------------
+ * SPEC §29.7: UDP on Windows, after quinn-udp 0.11 windows.rs: WSARecvMsg / WSASendMsg with PKTINFO and ECN control
+ * messages, USO (UDP_SEND_MSG_SIZE) when the stack accepts it. The boundary is posixshim's: family 4 or 6, ip[16]
+ * (IPv4 in the first 4 bytes), port, scope id. Results are a count or -(Winsock error), taken inside the call.
+ * mingw-w64's headers lack the ECN and USO / URO constants: the values are the Windows SDK's (ws2ipdef.h).
+ */
+#include <ws2tcpip.h>
+#ifndef IP_ECN
+#define IP_ECN 50
+#endif
+#ifndef IP_RECVECN
+#define IP_RECVECN 50
+#endif
+#ifndef IPV6_ECN
+#define IPV6_ECN 50
+#endif
+#ifndef IPV6_RECVECN
+#define IPV6_RECVECN 50
+#endif
+#ifndef UDP_SEND_MSG_SIZE
+#define UDP_SEND_MSG_SIZE 2
+#endif
+#ifndef UDP_COALESCED_INFO
+#define UDP_COALESCED_INFO 3
+#endif
+#define NETON_WUDP_CMSG 128
+
+static LPFN_WSARECVMSG neton_wsarecvmsg = NULL;   /* the same for every socket; written once, races are benign */
+static int neton_wudp_gso = 0;                     /* 0 = not probed yet */
+
+static int neton_wudp_opt(SOCKET s, int level, int name, DWORD value) {
+    return setsockopt(s, level, name, (const char*) &value, (int) sizeof value) == 0;
+}
+
+static int neton_wudp_fill(void* out, int sock_v6, int family, const unsigned char* ip, int port, unsigned int scope) {
+    SOCKADDR_STORAGE* ss = (SOCKADDR_STORAGE*) out;
+    memset(ss, 0, sizeof *ss);
+    if (family == 4 && !sock_v6) {
+        struct sockaddr_in* a = (struct sockaddr_in*) ss;
+        a->sin_family = AF_INET; a->sin_port = htons((u_short) port);
+        memcpy(&a->sin_addr, ip, 4);
+        return (int) sizeof *a;
+    } else {
+        /* An IPv4 destination on an IPv6 (dual-stack) socket goes out as a v4-mapped address. */
+        struct sockaddr_in6* a = (struct sockaddr_in6*) ss;
+        a->sin6_family = AF_INET6; a->sin6_port = htons((u_short) port);
+        if (family == 4) {
+            a->sin6_addr.s6_addr[10] = 0xff; a->sin6_addr.s6_addr[11] = 0xff;
+            memcpy(&a->sin6_addr.s6_addr[12], ip, 4);
+        } else {
+            memcpy(&a->sin6_addr, ip, 16);
+            a->sin6_scope_id = scope;
+        }
+        return (int) sizeof *a;
+    }
+}
+
+static void neton_wudp_read(const void* in, int* family, unsigned char* ip, int* port, unsigned int* scope) {
+    const SOCKADDR_STORAGE* ss = (const SOCKADDR_STORAGE*) in;
+    if (ss->ss_family == AF_INET) {
+        const struct sockaddr_in* a = (const struct sockaddr_in*) ss;
+        *family = 4; memset(ip, 0, 16); memcpy(ip, &a->sin_addr, 4);
+        *port = ntohs(a->sin_port); *scope = 0;
+    } else {
+        const struct sockaddr_in6* a = (const struct sockaddr_in6*) ss;
+        *family = 6; memcpy(ip, &a->sin6_addr, 16);
+        *port = ntohs(a->sin6_port); *scope = a->sin6_scope_id;
+    }
+}
+
+/* A non-blocking UDP socket bound to the address; an IPv6 socket is dual-stack unless v6only. The socket, or -error. */
+static int neton_wudp_bind(int family, const unsigned char* ip, int port, unsigned int scope, int v6only) {
+    SOCKADDR_STORAGE ss;
+    u_long nb = 1;
+    int len, e;
+    SOCKET s = socket(family == 6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) return -WSAGetLastError();
+    if (s > 0x7fffffff) { closesocket(s); return -WSAEMFILE; }   /* the reactor keeps sockets as Int */
+    if (ioctlsocket(s, FIONBIO, &nb) != 0) { e = WSAGetLastError(); closesocket(s); return -e; }
+    if (family == 6) (void) neton_wudp_opt(s, IPPROTO_IPV6, IPV6_V6ONLY, v6only ? 1 : 0);
+    len = neton_wudp_fill(&ss, family == 6, family, ip, port, scope);
+    if (bind(s, (struct sockaddr*) &ss, len) != 0) { e = WSAGetLastError(); closesocket(s); return -e; }
+    return (int) s;
+}
+
+/* quinn-udp MAX_GSO_SEGMENTS: UDP_SEND_MSG_SIZE accepted on a separate socket (as a socket option it would
+   segment every send) -> 512 ("empirically found on Windows 11 x64"), else 1. */
+static int neton_wudp_probe_gso(void) {
+    struct sockaddr_in a;
+    int ok;
+    SOCKET t = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (t == INVALID_SOCKET) return 1;
+    memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ok = bind(t, (struct sockaddr*) &a, sizeof a) == 0 && neton_wudp_opt(t, IPPROTO_UDP, UDP_SEND_MSG_SIZE, 1500);
+    closesocket(t);
+    return ok ? 512 : 1;
+}
+
+/* Socket options as quinn-udp's UdpSocketState::new; every one is required, as there. Writes the GSO and GRO
+   segment counts; returns may_fragment (always 0: don't-fragment is set) or -error. */
+static int neton_wudp_setup(unsigned long long sock, int v6, int v6only, int* gso, int* gro) {
+    SOCKET s = (SOCKET) sock;
+    int is_ipv4 = !v6 || !v6only;
+    *gso = 1; *gro = 64;   /* quinn-udp gro_segments: 64, a buffer factor even with URO off (its default) */
+    if (neton_wsarecvmsg == NULL) {
+        GUID guid = WSAID_WSARECVMSG;
+        LPFN_WSARECVMSG fn = NULL;
+        DWORD len = 0;
+        if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof guid, &fn, sizeof fn, &len, NULL, NULL) != 0)
+            return -WSAGetLastError();
+        if (fn == NULL || len != sizeof fn) return -WSAEOPNOTSUPP;
+        neton_wsarecvmsg = fn;
+    }
+    if (is_ipv4) {
+        if (!neton_wudp_opt(s, IPPROTO_IP, IP_DONTFRAGMENT, 1)) return -WSAGetLastError();
+        if (!neton_wudp_opt(s, IPPROTO_IP, IP_PKTINFO, 1)) return -WSAGetLastError();
+        if (!neton_wudp_opt(s, IPPROTO_IP, IP_RECVECN, 1)) return -WSAGetLastError();
+    }
+    if (v6) {
+        if (!neton_wudp_opt(s, IPPROTO_IPV6, IPV6_DONTFRAG, 1)) return -WSAGetLastError();
+        if (!neton_wudp_opt(s, IPPROTO_IPV6, IPV6_PKTINFO, 1)) return -WSAGetLastError();
+        if (!neton_wudp_opt(s, IPPROTO_IPV6, IPV6_RECVECN, 1)) return -WSAGetLastError();
+    }
+    if (neton_wudp_gso == 0) neton_wudp_gso = neton_wudp_probe_gso();
+    *gso = neton_wudp_gso;
+    return 0;
+}
+
+static int neton_wudp_local(unsigned long long s, int* family, unsigned char* ip, int* port, unsigned int* scope) {
+    SOCKADDR_STORAGE ss;
+    int len = (int) sizeof ss;
+    if (getsockname((SOCKET) s, (struct sockaddr*) &ss, &len) != 0) return -WSAGetLastError();
+    neton_wudp_read(&ss, family, ip, port, scope);
+    return 0;
+}
+
+/* Get (value < 0) or set a socket buffer size; which: 0 send, 1 receive. The size, or -error. */
+static int neton_wudp_buffer(unsigned long long s, int which, int value) {
+    int name = which ? SO_RCVBUF : SO_SNDBUF, out = 0, len = (int) sizeof out;
+    if (value >= 0 && setsockopt((SOCKET) s, SOL_SOCKET, name, (const char*) &value, (int) sizeof value) != 0) return -WSAGetLastError();
+    if (getsockopt((SOCKET) s, SOL_SOCKET, name, (char*) &out, &len) != 0) return -WSAGetLastError();
+    return out;
+}
+
+/* Receive one datagram (quinn-udp recv): length, URO stride, source, ECN bits, destination. 1, or -error
+   (WSAEWOULDBLOCK when nothing is queued). */
+static int neton_wudp_recv(unsigned long long s, unsigned char* buf, int slot_len,
+                           int* lens, int* strides, int* families, unsigned char* ips, int* ports, unsigned int* scopes,
+                           int* ecns, int* dst_families, unsigned char* dst_ips) {
+    SOCKADDR_STORAGE src;
+    WSABUF data;
+    WSAMSG msg;
+    DWORD len = 0;
+    union { WSACMSGHDR align; char b[NETON_WUDP_CMSG]; } ctrl;
+    WSACMSGHDR* c;
+    if (neton_wsarecvmsg == NULL) return -WSAEOPNOTSUPP;
+    memset(&src, 0, sizeof src); memset(&msg, 0, sizeof msg); memset(&ctrl, 0, sizeof ctrl);
+    data.buf = (char*) buf; data.len = (ULONG) slot_len;
+    msg.name = (LPSOCKADDR) &src; msg.namelen = (int) sizeof src;
+    msg.lpBuffers = &data; msg.dwBufferCount = 1;
+    msg.Control.buf = ctrl.b; msg.Control.len = (ULONG) sizeof ctrl.b;
+    if (neton_wsarecvmsg((SOCKET) s, &msg, &len, NULL, NULL) != 0) return -WSAGetLastError();
+    lens[0] = (int) len; strides[0] = (int) len; ecns[0] = 0; dst_families[0] = 0;
+    neton_wudp_read(&src, &families[0], ips, &ports[0], &scopes[0]);
+    for (c = WSA_CMSG_FIRSTHDR(&msg); c != NULL; c = WSA_CMSG_NXTHDR(&msg, c)) {
+        if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO) {
+            IN_PKTINFO pi; memcpy(&pi, WSA_CMSG_DATA(c), sizeof pi);
+            dst_families[0] = 4; memset(dst_ips, 0, 16); memcpy(dst_ips, &pi.ipi_addr, 4);
+        } else if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_PKTINFO) {
+            IN6_PKTINFO pi; memcpy(&pi, WSA_CMSG_DATA(c), sizeof pi);
+            dst_families[0] = 6; memcpy(dst_ips, &pi.ipi6_addr, 16);
+        } else if ((c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_ECN) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_ECN)) {
+            int v; memcpy(&v, WSA_CMSG_DATA(c), sizeof v); ecns[0] = v & 3;     /* a C int (winsock-ecn) */
+        } else if (c->cmsg_level == IPPROTO_UDP && c->cmsg_type == UDP_COALESCED_INFO) {
+            DWORD v; memcpy(&v, WSA_CMSG_DATA(c), sizeof v); strides[0] = (int) v;
+        }
+    }
+    return 1;
+}
+
+/* One control message into the send buffer at *c; advances *c and *used. */
+static void neton_wudp_push(WSAMSG* msg, WSACMSGHDR** c, ULONG* used, int level, int type, const void* data, int size) {
+    (*c)->cmsg_level = level; (*c)->cmsg_type = type; (*c)->cmsg_len = WSA_CMSG_LEN(size);
+    memcpy(WSA_CMSG_DATA(*c), data, (size_t) size);
+    *used += (ULONG) WSA_CMSG_SPACE(size);
+    *c = WSA_CMSG_NXTHDR(msg, *c);
+}
+
+/*
+ * Send one transmit (quinn-udp windows.rs send): source IP as IP_PKTINFO / IPV6_PKTINFO, ECN as IP_ECN (IPv4 or
+ * v4-mapped destination) or IPV6_ECN, UDP_SEND_MSG_SIZE when segment_size < len (USO). einval_mode: ECN is left out
+ * once a send failed with WSAEINVAL (a stack without ECN on send; the reference fails every send there). Bytes sent,
+ * or -error.
+ */
+static int neton_wudp_send(unsigned long long s, int sock_v6, const unsigned char* data, int len,
+                           int family, const unsigned char* ip, int port, unsigned int scope,
+                           int ecn, int segment_size, int src_family, const unsigned char* src_ip, int einval_mode) {
+    SOCKADDR_STORAGE ss;
+    WSABUF buf;
+    WSAMSG msg;
+    DWORD sent = 0;
+    union { WSACMSGHDR align; char b[NETON_WUDP_CMSG]; } ctrl;
+    WSACMSGHDR* c;
+    ULONG used = 0;
+    int is_ipv4 = family == 4 || (family == 6 && ip[10] == 0xff && ip[11] == 0xff
+        && !ip[0] && !ip[1] && !ip[2] && !ip[3] && !ip[4] && !ip[5] && !ip[6] && !ip[7] && !ip[8] && !ip[9]);
+    memset(&msg, 0, sizeof msg); memset(&ctrl, 0, sizeof ctrl);
+    buf.buf = (char*) data; buf.len = (ULONG) len;
+    msg.name = (LPSOCKADDR) &ss; msg.namelen = neton_wudp_fill(&ss, sock_v6, family, ip, port, scope);
+    msg.lpBuffers = &buf; msg.dwBufferCount = 1;
+    msg.Control.buf = ctrl.b; msg.Control.len = (ULONG) sizeof ctrl.b;
+    c = WSA_CMSG_FIRSTHDR(&msg);
+    if (src_family == 4) {
+        IN_PKTINFO pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi_addr, src_ip, 4);
+        neton_wudp_push(&msg, &c, &used, IPPROTO_IP, IP_PKTINFO, &pi, (int) sizeof pi);
+    } else if (src_family == 6) {
+        IN6_PKTINFO pi; memset(&pi, 0, sizeof pi); memcpy(&pi.ipi6_addr, src_ip, 16);
+        neton_wudp_push(&msg, &c, &used, IPPROTO_IPV6, IPV6_PKTINFO, &pi, (int) sizeof pi);
+    }
+    if (!einval_mode) {
+        int v = ecn;
+        if (is_ipv4) neton_wudp_push(&msg, &c, &used, IPPROTO_IP, IP_ECN, &v, (int) sizeof v);
+        else neton_wudp_push(&msg, &c, &used, IPPROTO_IPV6, IPV6_ECN, &v, (int) sizeof v);
+    }
+    if (segment_size > 0 && segment_size < len) {
+        DWORD v = (DWORD) segment_size;
+        neton_wudp_push(&msg, &c, &used, IPPROTO_UDP, UDP_SEND_MSG_SIZE, &v, (int) sizeof v);
+    }
+    msg.Control.len = used;
+    if (used == 0) msg.Control.buf = NULL;
+    if (WSASendMsg((SOCKET) s, &msg, 0, &sent, NULL, NULL) != 0) return -WSAGetLastError();
+    return (int) sent;
+}
+
+/*
+ * IOCP readiness for UDP: a zero-byte overlapped WSARecv with MSG_PEEK completes when a datagram is queued and takes
+ * nothing (libuv's zero read for UDP). Failing at once with WSAEMSGSIZE (the datagram does not fit zero bytes) or a
+ * reset reported by ICMP means a receive will not block: 0, as a completion now. Otherwise as neton_start_result.
+ */
+static char neton_zero_byte;
+static int neton_udp_peek(unsigned long long s, void* p, int skip) {
+    neton_op* op = (neton_op*) p;
+    int e;
+    memset(&op->ov, 0, sizeof op->ov);
+    op->sock = (SOCKET) s; op->one.buf = &neton_zero_byte; op->one.len = 0; op->flags = MSG_PEEK; op->bytes = 0;
+    if (WSARecv((SOCKET) s, &op->one, 1, &op->bytes, &op->flags, &op->ov, NULL) == 0) return skip ? 0 : 1;
+    e = WSAGetLastError();
+    if (e == WSA_IO_PENDING) return 1;
+    if (e == WSAEMSGSIZE || e == WSAECONNRESET || e == WSAENETRESET) return 0;
+    return e;
+}
+
+/* A UDP socket's send buffer has room (WSAPoll, no wait): 1 yes, 0 no. */
+static int neton_poll_writable(unsigned long long s) {
+    WSAPOLLFD f;
+    f.fd = (SOCKET) s; f.events = POLLWRNORM; f.revents = 0;
+    return WSAPoll(&f, 1, 0) != 0 ? 1 : 0;
+}
+
