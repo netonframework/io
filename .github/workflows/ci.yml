@@ -1,7 +1,7 @@
 name: CI
 
 # Functional validation on every platform GitHub hosts (SPEC §20): macOS (kqueue, poll), Linux x64
-# (epoll, poll, io_uring), Windows (IOCP, WSAPoll). Any branch, PRs, or by hand.
+# (epoll, poll, io_uring), Windows (IOCP, WSAPoll), and the JVM target on all three. Any branch, PRs, or by hand.
 on:
   push:
   pull_request:
@@ -80,6 +80,34 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.name }}
+          path: |
+            neton-io/build/test-results/**
+            neton-io/build/reports/tests/**
+          if-no-files-found: ignore
+
+  test-jvm:
+    # The JVM target (java.nio Selector reactor, SPEC §12 / 0.2.0) on each GitHub host: Selector differs per OS.
+    name: test (JVM ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test
+        shell: bash
+        run: ./gradlew :io:jvmTest --no-daemon --stacktrace --continue
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-JVM ${{ matrix.os }}
           path: |
             neton-io/build/test-results/**
             neton-io/build/reports/tests/**
