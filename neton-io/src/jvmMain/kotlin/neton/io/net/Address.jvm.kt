@@ -126,9 +126,14 @@ internal actual fun udpLocal(fd: Int, out: IntArray, ip: ByteArray): Int {
 }
 
 internal actual fun socketAddress(fd: Int, peer: Boolean): SocketAddress? {
-    val socket = (Channels[fd] as? SocketChannel)?.socket() ?: return null
-    val address = (if (peer) socket.inetAddress else socket.localAddress) ?: return null
-    val port = if (peer) socket.port else socket.localPort
+    val (address, port) = when (val channel = Channels[fd]) {
+        // A listener has only a local address (TcpListener.localAddress).
+        is ServerSocketChannel -> if (peer) return null else channel.socket().let { (it.inetAddress ?: return null) to it.localPort }
+        is SocketChannel -> channel.socket().let { socket ->
+            ((if (peer) socket.inetAddress else socket.localAddress) ?: return null) to (if (peer) socket.port else socket.localPort)
+        }
+        else -> return null
+    }
     if (port <= 0) return null
     val bytes = if (Channels.isIpv6(fd)) ipv6Bytes(address) else address.address
     return SocketAddress.of(bytes, port, (address as? Inet6Address)?.scopeId ?: 0)

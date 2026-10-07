@@ -19,13 +19,10 @@ class TcpListener internal constructor(private val server: TcpServer) {
     suspend fun accept(): IoStream = server.accept()
     fun close() = server.close()
 
-    /** The address the listener is bound to — the port the OS chose for port 0 (not yet on Windows). */
+    /** The address the listener is bound to — the port the OS chose for port 0. */
     val localAddress: SocketAddress
-        get() {
-            val f = IntArray(3); val ip = ByteArray(16)
-            check(udpLocal(server.listenFd, f, ip) == 0) { "getsockname failed" }
-            return SocketAddress.fromFields(f[0], ip, 0, f[1], f[2])
-        }
+        // getsockname through the TCP path: the UDP helper it used is not implemented on Windows.
+        get() = checkNotNull(socketAddress(server.listenFd, peer = false)) { "getsockname failed" }
 }
 
 /**
