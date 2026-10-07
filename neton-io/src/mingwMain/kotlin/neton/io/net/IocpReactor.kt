@@ -372,6 +372,13 @@ internal class IocpReactor : Reactor() {
         return sendAll(fd, src)
     }
 
+    /**
+     * One WSASend's length. Like a non-blocking send (Sockets.mingw.kt), an overlapped WSASend takes a whole buffer while
+     * the send buffer is not full, so a 32 MiB write to a peer that does not read completed at once: no backpressure, and
+     * a write timeout or cancel had nothing to act on. Capped, the send after the buffer fills stays pending (SPEC §33.3).
+     */
+    private fun sendLen(src: Buffer): UInt = minOf(src.readableBytes, MAX_SEND_CHUNK).toUInt()
+
     /** Send all of [src]: sends that complete at once are chained here; a pending one continues in [onSendDone]. */
     private suspend fun sendAll(fd: Int, src: Buffer): Int {
         val skip = if (ensureAssociated(fd)) 1 else 0
@@ -385,7 +392,7 @@ internal class IocpReactor : Reactor() {
         return suspendCoroutineUninterceptedOrReturn { cont ->
             try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
             while (true) {
-                val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), src.readableBytes.toUInt(), skip)
+                val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), sendLen(src), skip)
                 when (rc) {
                     0 -> {
                         val n = neton_op_bytes(slot.op).toInt()
@@ -431,9 +438,12 @@ internal class IocpReactor : Reactor() {
             val n = minOf(MAX_IOV, count - i)
             val pins = Array(n) { bufs[i + it].backingArray().pin() }
             val wsabufs = neton_wsabufs_new(n.toUInt()) ?: error("out of memory")
+            var budget = MAX_SEND_CHUNK                       // as sendLen: at most MAX_SEND_CHUNK per WSASend
             for (k in 0 until n) {
                 val b = bufs[i + k]
-                neton_wsabuf_set(wsabufs, k.toUInt(), if (b.readableBytes == 0) null else pins[k].addressOf(b.readerIndex()), b.readableBytes.toUInt())
+                val len = minOf(b.readableBytes, budget)
+                budget -= len
+                neton_wsabuf_set(wsabufs, k.toUInt(), if (len == 0) null else pins[k].addressOf(b.readerIndex()), len.toUInt())
             }
             val res = submit(fd, KIND_SEND, null, cancelOnAbort = false, isWrite = true, extraPins = pins, nativeBlock = wsabufs) { op, skip ->
                 neton_sendv(fd.toSocket(), op, wsabufs, n.toUInt(), skip)
@@ -629,7 +639,7 @@ internal class IocpReactor : Reactor() {
         val skip = if (ix(fd).let { skipOn[it] }) 1 else 0
         val pin = slot.pin!!
         while (src.readableBytes > 0) {
-            val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), src.readableBytes.toUInt(), skip)
+            val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), sendLen(src), skip)
             when (rc) {
                 0 -> { val m = neton_op_bytes(slot.op).toInt(); src.consumeSent(m); slot.sendTotal += m }
                 1 -> return                                   // the next completion continues
