@@ -42,10 +42,7 @@ internal actual fun sendBuffers(fd: Int, bufs: Array<Buffer>, from: Int, count: 
         }
         val sent = alloc<UIntVar>()
         val rc = WSASend(fd.toSocket(), wsabufs, used.convert(), sent.ptr, 0u, null, null)
-        if (rc == SOCKET_ERROR) {
-            val e = WSAGetLastError()
-            if (e == WSAEWOULDBLOCK || e == WSAEINTR) WOULD_BLOCK.toLong() else IO_ERROR.toLong()
-        } else sent.value.toLong()
+        if (rc == SOCKET_ERROR) failedIo().toLong() else sent.value.toLong()
     }
 }
 

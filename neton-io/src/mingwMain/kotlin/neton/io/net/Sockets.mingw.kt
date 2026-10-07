@@ -68,7 +68,27 @@ internal actual fun socketError(fd: Int): Int = memScoped {
     if (neton_getsockopt_int(fd.toSocket(), SOL_SOCKET, SO_ERROR, err.ptr) != 0) WSAGetLastError() else err.value
 }
 
-internal actual fun lastSocketError(): Int = WSAGetLastError()
+/**
+ * The Winsock error of the last failed recv / send on this thread, taken right at the failure. WSAGetLastError() is the
+ * thread's last error of any call, so reading it later (after the runtime made other Win32 calls, e.g. allocating)
+ * reported "Winsock error 0" for a failed read (CI, ParkCancellationTest).
+ */
+@kotlin.native.concurrent.ThreadLocal
+private var savedSocketError = 0
+
+/** A failed recv / send's result: WOULD_BLOCK, or IO_ERROR with its error saved for [lastSocketError]. */
+internal fun failedIo(): Int {
+    val e = WSAGetLastError()
+    if (e == WSAEWOULDBLOCK || e == WSAEINTR) return WOULD_BLOCK
+    savedSocketError = e
+    return IO_ERROR
+}
+
+internal actual fun lastSocketError(): Int {
+    val e = savedSocketError
+    savedSocketError = 0
+    return if (e != 0) e else WSAGetLastError()
+}
 
 internal actual fun errnoMessage(code: Int): String = "Winsock error $code"
 
@@ -80,7 +100,7 @@ internal actual fun recvPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, 
     return when {
         n > 0 -> n
         n == 0 -> EOF_RESULT
-        else -> { val e = WSAGetLastError(); if (e == WSAEWOULDBLOCK || e == WSAEINTR) WOULD_BLOCK else IO_ERROR }
+        else -> failedIo()
     }
 }
 
@@ -95,8 +115,7 @@ internal const val MAX_SEND_CHUNK = 256 * 1024
 internal actual fun sendPinned(fd: Int, pinned: Pinned<ByteArray>, offset: Int, len: Int): Int {
     val n = send(fd.toSocket(), pinned.addressOf(offset), minOf(len, MAX_SEND_CHUNK), 0)
     if (n > 0) return n
-    val e = WSAGetLastError()
-    return if (e == WSAEWOULDBLOCK || e == WSAEINTR) WOULD_BLOCK else IO_ERROR
+    return failedIo()
 }
 
 /**
