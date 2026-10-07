@@ -26,6 +26,9 @@ import platform.windows.AI_PASSIVE
 import platform.windows.addrinfo
 import platform.windows.freeaddrinfo
 import platform.windows.getaddrinfo
+import neton.io.win.neton_bind_err
+import neton.io.win.neton_connect_err
+import neton.io.win.neton_listen_err
 import neton.io.win.neton_setsockopt_int
 import platform.posix.AF_INET
 import platform.posix.AF_INET6
@@ -135,9 +138,11 @@ internal actual fun tcpListenAddr(addr: SockAddr, display: String, options: Sock
     val fd = s.toFd()
     applyListenerOptions(fd, options)   // no SO_REUSEADDR on Windows: it would let another socket take over a port in use
     if (addr.isIpv6) neton_setsockopt_int(s, IPPROTO_IPV6, IPV6_V6ONLY, 0)
-    val rc = addr.bytes.usePinned { bind(s, it.addressOf(0).reinterpret<sockaddr>(), addr.bytes.size) }
-    if (rc == SOCKET_ERROR) { val e = WSAGetLastError(); closeFd(fd); error("bind($display) failed: Winsock error $e") }
-    if (listen(s, options.backlog) == SOCKET_ERROR) { val e = WSAGetLastError(); closeFd(fd); error("listen($display) failed: Winsock error $e") }
+    // The error is taken inside the call (winshim.def): read afterwards from Kotlin it can already be 0.
+    val be = addr.bytes.usePinned { neton_bind_err(s, it.addressOf(0), addr.bytes.size) }
+    if (be != 0) { closeFd(fd); error("bind($display) failed: Winsock error $be") }
+    val le = neton_listen_err(s, options.backlog)
+    if (le != 0) { closeFd(fd); error("listen($display) failed: Winsock error $le") }
     setNonBlocking(fd)
     return fd
 }
@@ -149,9 +154,10 @@ internal actual fun tcpConnectAddr(addr: SockAddr, display: String, options: Soc
     val fd = s.toFd()
     setNonBlocking(fd)
     applyStreamOptions(fd, options)
-    val rc = addr.bytes.usePinned { connect(s, it.addressOf(0).reinterpret<sockaddr>(), addr.bytes.size) }
-    if (rc == SOCKET_ERROR) {
-        val e = WSAGetLastError()
+    // The error is taken inside the call: read afterwards from Kotlin it could be 0, and a non-blocking connect's
+    // WSAEWOULDBLOCK then looked like a failure ("connect ... failed: Winsock error 0", CI: TcpEchoTest on IOCP).
+    val e = addr.bytes.usePinned { neton_connect_err(s, it.addressOf(0), addr.bytes.size) }
+    if (e != 0) {
         if (e != WSAEWOULDBLOCK && e != WSAEINPROGRESS) {
             closeFd(fd)
             throw ConnectException("connect to $display failed: Winsock error $e").also { it.code = e }

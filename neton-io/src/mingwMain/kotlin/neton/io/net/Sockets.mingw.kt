@@ -14,6 +14,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
 import kotlinx.cinterop.value
+import neton.io.win.neton_accept_nb
 import neton.io.win.neton_recv_nb
 import neton.io.win.neton_send_nb
 import neton.io.win.neton_getsockopt_int
@@ -56,9 +57,10 @@ internal actual fun setNonBlocking(fd: Int) {
     }
 }
 
-internal actual fun acceptOne(listenFd: Int): Int {
-    val s = accept(listenFd.toSocket(), null, null)
-    return if (s == INVALID_SOCKET) -1 else s.toFd()
+internal actual fun acceptOne(listenFd: Int): Int = memScoped {
+    val err = alloc<IntVar>()
+    val s = neton_accept_nb(listenFd.toSocket(), err.ptr)
+    if (s == INVALID_SOCKET) { savedSocketError = err.value; -1 } else s.toFd()
 }
 
 internal actual fun closeFd(fd: Int) {
@@ -71,7 +73,7 @@ internal actual fun socketError(fd: Int): Int = memScoped {
 }
 
 /**
- * The Winsock error of the last failed recv / send on this thread, as the call itself reported it (the neton_*_nb shims
+ * The Winsock error of the last failed recv / send / accept on this thread, as the call itself reported it (the shims
  * read WSAGetLastError() inside the call). Read from Kotlin after the call returned, the thread's last error could
  * already be 0 ("read failed: Winsock error 0", CI: ParkCancellationTest, MultiReactorTest; SPEC §33.5).
  */

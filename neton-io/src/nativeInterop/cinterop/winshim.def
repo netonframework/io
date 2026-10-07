@@ -38,6 +38,21 @@ static long long neton_sendv_nb(unsigned long long s, void* bufs, unsigned int n
     if (WSASend((SOCKET) s, (WSABUF*) bufs, n, &sent, 0, NULL, NULL) == 0) return (long long) sent;
     return -(long long) WSAGetLastError();
 }
+/* accept / connect / bind / listen likewise: the error is taken inside the call (0 = success). */
+static unsigned long long neton_accept_nb(unsigned long long ls, int* err) {
+    SOCKET s = accept((SOCKET) ls, NULL, NULL);
+    *err = s == INVALID_SOCKET ? WSAGetLastError() : 0;
+    return (unsigned long long) s;
+}
+static int neton_connect_err(unsigned long long s, void* addr, int len) {
+    return connect((SOCKET) s, (const struct sockaddr*) addr, len) == 0 ? 0 : WSAGetLastError();
+}
+static int neton_bind_err(unsigned long long s, void* addr, int len) {
+    return bind((SOCKET) s, (const struct sockaddr*) addr, len) == 0 ? 0 : WSAGetLastError();
+}
+static int neton_listen_err(unsigned long long s, int backlog) {
+    return listen((SOCKET) s, backlog) == 0 ? 0 : WSAGetLastError();
+}
 
 /* Integer socket options: setsockopt takes `const char*` on Windows, which cinterop maps to a String. */
 static int neton_setsockopt_int(unsigned long long s, int level, int opt, int value) {
