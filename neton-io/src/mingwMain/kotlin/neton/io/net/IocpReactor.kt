@@ -2,6 +2,13 @@
 
 package neton.io.net
 
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.plus
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.usePinned
+import platform.posix.free
+import platform.posix.malloc
+import platform.posix.memcpy
 import neton.io.core.boxedInt
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
@@ -44,9 +51,6 @@ import neton.io.win.neton_op_set_id
 import neton.io.win.neton_op_slot
 import neton.io.win.neton_recv
 import neton.io.win.neton_send
-import neton.io.win.neton_sendv
-import neton.io.win.neton_wsabuf_set
-import neton.io.win.neton_wsabufs_new
 import platform.posix.fprintf
 import platform.posix.getenv
 import platform.posix.stderr
@@ -68,6 +72,8 @@ import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
  * - Buffer lifetime is the io_uring rule: a buffer stays pinned from the start of an operation until
  *   its completion packet, also when the awaiting coroutine is cancelled or the stream closed
  *   (CancelIoEx makes the packet arrive early, with an abort status).
+ * - Writes are non-blocking sends; only a send that would block goes out overlapped, from a copy the
+ *   reactor owns, and is never cancelled for its writer (SPEC §33.3: Windows cannot cancel a TCP send exactly).
  * - Cross-thread wakeups are PostQueuedCompletionStatus packets; there is no wake socket pair.
  * - Fairness (§19.5): a connection whose read completed at once is served once per loop round; its
  *   next read in the same round waits for the next round.
@@ -102,7 +108,7 @@ internal class IocpReactor : Reactor() {
             watchJobA = watchJobA.copyOf(n); watchHandleA = watchHandleA.copyOf(n)
             watchJobB = watchJobB.copyOf(n); watchHandleB = watchHandleB.copyOf(n)
             readBusy = readBusy.copyOf(n); readDeferred = readDeferred.copyOf(n); writeBusy = writeBusy.copyOf(n)
-            deferredReader = deferredReader.copyOf(n)
+            deferredReader = deferredReader.copyOf(n); staged = staged.copyOf(n)
         }
         return i
     }
@@ -113,6 +119,7 @@ internal class IocpReactor : Reactor() {
     private var readDeferred = BooleanArray(256)
     private var deferredReader = arrayOfNulls<Continuation<Unit>>(256)   // the reader deferred to the next round, per fd
     private var writeBusy = BooleanArray(256)
+    private var staged = IntArray(256)                  // the socket's staged send: slot index + 1, 0 if none
 
     /** Associate [fd] with the port once; returns whether skip-on-success is active for it. */
     private fun ensureAssociated(fd: Int): Boolean {
@@ -167,7 +174,9 @@ internal class IocpReactor : Reactor() {
         // SPEC §24 (as in UringReactor): a read or whole-buffer send completed by the reactor, and the
         // cause a cancelled / timed-out one is resumed with once its completion has been accounted.
         var readBuf: Buffer? = null; var readSizer: ReadSizer? = null
-        var sendBuf: Buffer? = null; var sendTotal = 0; var abort: Throwable? = null
+        var abort: Throwable? = null
+        // A staged send (SPEC §33.3): its length and how much the kernel has taken; the copy is [nativeBlock].
+        var stage = 0; var stageOff = 0
     }
     private var slots = arrayOfNulls<Slot>(256)
     private var freeSlots = IntArray(256) { it }
@@ -192,9 +201,8 @@ internal class IocpReactor : Reactor() {
 
     private fun releaseSlot(idx: Int, slot: Slot) {
         if (slot.readBuf != null) ix(slot.fd).let { readBusy[it] = false }
-        if (slot.sendBuf != null) ix(slot.fd).let { writeBusy[it] = false }
         slot.live = false; slot.cont = null; slot.fd = -1; slot.kind = 0; slot.isWrite = false
-        slot.readBuf = null; slot.readSizer = null; slot.sendBuf = null; slot.sendTotal = 0; slot.abort = null
+        slot.readBuf = null; slot.readSizer = null; slot.abort = null; slot.stage = 0; slot.stageOff = 0
         slot.pin?.let { it.refs--; it.release() }; slot.pin = null
         slot.extraPins?.let { for (p in it) p.unpin() }; slot.extraPins = null
         slot.nativeBlock?.let { neton_free(it) }; slot.nativeBlock = null
@@ -235,7 +243,7 @@ internal class IocpReactor : Reactor() {
             if (!slot.live || slot.fd != fd) continue
             val c = slot.cont ?: continue
             if (c.context[Job] !== job) continue
-            if (slot.readBuf != null || slot.sendBuf != null) { abortOp(slot, ex); continue }
+            if (slot.readBuf != null) { abortOp(slot, ex); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, ex)
             if (slot.cancelOnAbort) neton_cancel(fd.toSocket(), slot.op)
@@ -248,7 +256,7 @@ internal class IocpReactor : Reactor() {
             if (!slot.live || slot.fd != fd) continue
             if (if (slot.isWrite) !writes else !reads) continue
             val c = slot.cont ?: continue
-            if (slot.readBuf != null || slot.sendBuf != null) { abortOp(slot, cause); continue }
+            if (slot.readBuf != null) { abortOp(slot, cause); continue }
             slot.cont = null
             enqueueResumeInt(c, 0, cause)
             if (slot.cancelOnAbort) neton_cancel(fd.toSocket(), slot.op)
@@ -367,59 +375,32 @@ internal class IocpReactor : Reactor() {
 
     override suspend fun write(fd: Int, src: Buffer): Int {
         checkOwner("write")
-        if (ix(fd).let { writeBusy[it] }) throw IllegalStateException("concurrent write on socket $fd")
+        val w = ix(fd)
+        if (writeBusy[w]) throw IllegalStateException("concurrent write on socket $fd")
         if (src.readableBytes == 0) return 0
-        return sendAll(fd, src)
-    }
-
-    /**
-     * One WSASend's length. Like a non-blocking send (Sockets.mingw.kt), an overlapped WSASend takes a whole buffer while
-     * the send buffer is not full, so a 32 MiB write to a peer that does not read completed at once: no backpressure, and
-     * a write timeout or cancel had nothing to act on. Capped, the send after the buffer fills stays pending (SPEC §33.3).
-     */
-    private fun sendLen(src: Buffer): UInt = minOf(src.readableBytes, MAX_SEND_CHUNK).toUInt()
-
-    /** Send all of [src]: sends that complete at once are chained here; a pending one continues in [onSendDone]. */
-    private suspend fun sendAll(fd: Int, src: Buffer): Int {
-        val skip = if (ensureAssociated(fd)) 1 else 0
-        val pin = pinForWrite(fd, src.backingArray())
-        val idx = takeSlot()
-        val slot = slots[idx]!!
-        slot.fd = fd; slot.kind = KIND_SEND; slot.cancelOnAbort = false; slot.isWrite = true
-        slot.pin = pin; pin.refs++
-        slot.sendBuf = src; slot.sendTotal = 0
-        ix(fd).let { writeBusy[it] = true }
-        return suspendCoroutineUninterceptedOrReturn { cont ->
-            try { watchCancellation(fd, cont) } catch (t: Throwable) { releaseSlot(idx, slot); throw t }
-            while (true) {
-                val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), sendLen(src), skip)
-                when (rc) {
-                    0 -> {
-                        val n = neton_op_bytes(slot.op).toInt()
-                        src.consumeSent(n); slot.sendTotal += n
-                        stats?.let { it.writes++; it.writeBytes += n }
-                        if (src.readableBytes == 0) {
-                            val total = slot.sendTotal
-                            releaseSlot(idx, slot)
-                            return@suspendCoroutineUninterceptedOrReturn boxedInt(total)
+        writeBusy[w] = true
+        try {
+            var total = 0
+            while (src.readableBytes > 0) {
+                if (staged[w] != 0) { awaitStaged(fd, w); continue }
+                val n = sendPinned(fd, pinForWrite(fd, src.backingArray()).pinned, src.readerIndex(), src.readableBytes)
+                when {
+                    n > 0 -> { src.consumeSent(n); total += n; stats?.let { it.writes++; it.writeBytes += n } }
+                    n == WOULD_BLOCK -> {
+                        val len = minOf(src.readableBytes, MAX_SEND_CHUNK)
+                        stageSend(fd, w, len) { dst ->
+                            src.backingArray().usePinned { p -> memcpy(dst, p.addressOf(src.readerIndex()), len.convert()) }
+                            src.consumeSent(len)
                         }
+                        total += len
                     }
-                    1 -> { slot.cont = cont; return@suspendCoroutineUninterceptedOrReturn COROUTINE_SUSPENDED }
-                    else -> { releaseSlot(idx, slot); throw IoException("WSASend failed: ${errnoMessage(rc)}", rc) }
+                    else -> { val e = lastSocketError(); throw IoException("send failed: ${errnoMessage(e)}", e) }
                 }
             }
-            @Suppress("UNREACHABLE_CODE") COROUTINE_SUSPENDED
+            return total
+        } finally {
+            writeBusy[w] = false
         }
-    }
-
-    /**
-     * A read or send whose caller gave up (cancelled, timed out): cancel the I/O and resume the caller
-     * with [cause] from the completion, once the bytes that did move are accounted in its buffer.
-     */
-    private fun abortOp(slot: Slot, cause: Throwable) {
-        if (slot.abort != null) return
-        slot.abort = cause
-        neton_cancel(slot.fd.toSocket(), slot.op)
     }
 
     override suspend fun writev(fd: Int, bufs: Array<Buffer>, count: Int): Long {
@@ -427,32 +408,97 @@ internal class IocpReactor : Reactor() {
         val w = ix(fd)
         if (writeBusy[w]) throw IllegalStateException("concurrent write on socket $fd")
         writeBusy[w] = true
-        try { return writevBatches(fd, bufs, count) } finally { writeBusy[w] = false }
+        try {
+            var total = 0L
+            var i = 0
+            while (i < count && bufs[i].readableBytes == 0) i++
+            while (i < count) {
+                if (staged[w] != 0) { awaitStaged(fd, w); continue }
+                val n = minOf(MAX_IOV, count - i)
+                val pins = arrayOfNulls<Pinned<ByteArray>>(n)
+                for (k in 0 until n) pins[k] = bufs[i + k].backingArray().pin()
+                val sent = try { sendBuffers(fd, bufs, i, n, pins) } finally { for (p in pins) p?.unpin() }
+                when {
+                    sent > 0 -> { total += sent; stats?.let { it.writes++; it.writeBytes += sent }; i = advanceBuffers(bufs, i, count, sent) }
+                    sent == WOULD_BLOCK.toLong() -> {
+                        var len = 0
+                        var k = i
+                        while (k < count && len < MAX_SEND_CHUNK) { len += minOf(bufs[k].readableBytes, MAX_SEND_CHUNK - len); k++ }
+                        stageSend(fd, w, len) { dst ->
+                            var off = 0
+                            var j = i
+                            while (off < len) {
+                                val b = bufs[j++]
+                                val take = minOf(b.readableBytes, len - off)
+                                if (take > 0) b.backingArray().usePinned { p -> memcpy(dst + off, p.addressOf(b.readerIndex()), take.convert()) }
+                                off += take
+                            }
+                            i = advanceBuffers(bufs, i, count, len.toLong())
+                        }
+                        total += len
+                    }
+                    else -> { val e = lastSocketError(); throw IoException("send failed: ${errnoMessage(e)}", e) }
+                }
+            }
+            return total
+        } finally {
+            writeBusy[w] = false
+        }
     }
 
-    private suspend fun writevBatches(fd: Int, bufs: Array<Buffer>, count: Int): Long {
-        var total = 0L
-        var i = 0
-        while (i < count && bufs[i].readableBytes == 0) i++
-        while (i < count) {
-            val n = minOf(MAX_IOV, count - i)
-            val pins = Array(n) { bufs[i + it].backingArray().pin() }
-            val wsabufs = neton_wsabufs_new(n.toUInt()) ?: error("out of memory")
-            var budget = MAX_SEND_CHUNK                       // as sendLen: at most MAX_SEND_CHUNK per WSASend
-            for (k in 0 until n) {
-                val b = bufs[i + k]
-                val len = minOf(b.readableBytes, budget)
-                budget -= len
-                neton_wsabuf_set(wsabufs, k.toUInt(), if (len == 0) null else pins[k].addressOf(b.readerIndex()), len.toUInt())
-            }
-            val res = submit(fd, KIND_SEND, null, cancelOnAbort = false, isWrite = true, extraPins = pins, nativeBlock = wsabufs) { op, skip ->
-                neton_sendv(fd.toSocket(), op, wsabufs, n.toUInt(), skip)
-            }
-            stats?.let { it.writes++; it.writeBytes += res }
-            total += res
-            i = advanceBuffers(bufs, i, count, res.toLong())
+    /**
+     * A send that would block (SPEC §33.3): [fill] copies its [len] bytes into a block the reactor owns and consumes
+     * them from the caller's buffers, so they count as sent once handed to the kernel; an overlapped WSASend then sends
+     * the copy, and the writer waits for it. Windows cannot cancel a pending TCP send exactly (a cancelled WSASend
+     * reported 0 bytes while the kernel sent all of them, and a successor sent them again), so this send is never
+     * cancelled for its writer: a cancelled or timed-out writer resumes at once and the send finishes on its own, or
+     * with the socket. One per socket: the next write waits for it, which keeps the order and bounds the memory.
+     */
+    private suspend inline fun stageSend(fd: Int, w: Int, len: Int, fill: (CPointer<ByteVar>) -> Unit) {
+        val block = malloc(len.convert())?.reinterpret<ByteVar>() ?: throw IoException("out of memory for a $len-byte send", 0)
+        try { fill(block) } catch (t: Throwable) { free(block); throw t }
+        val skip = if (ensureAssociated(fd)) 1 else 0
+        val idx = takeSlot()
+        val slot = slots[idx]!!
+        slot.fd = fd; slot.kind = KIND_SEND; slot.cancelOnAbort = false; slot.isWrite = true
+        slot.nativeBlock = block; slot.stage = len; slot.stageOff = 0
+        stats?.let { it.writes++; it.writeBytes += len }
+        val rc = startStaged(fd, slot, skip)
+        if (rc == 0) { releaseSlot(idx, slot); return }       // the kernel took it at once
+        if (rc != 1) { releaseSlot(idx, slot); throw IoException("WSASend failed: ${errnoMessage(rc)}", rc) }
+        staged[w] = idx + 1
+        awaitStaged(fd, w)
+    }
+
+    /** Send the rest of a staged copy: 0 when the kernel took all of it, 1 when a send is pending, else the error. */
+    private fun startStaged(fd: Int, slot: Slot, skip: Int): Int {
+        while (true) {
+            val rc = neton_send(fd.toSocket(), slot.op, slot.nativeBlock!!.reinterpret<ByteVar>() + slot.stageOff,
+                (slot.stage - slot.stageOff).toUInt(), skip)
+            if (rc != 0) return rc
+            slot.stageOff += neton_op_bytes(slot.op).toInt()
+            if (slot.stageOff >= slot.stage) return 0
         }
-        return total
+    }
+
+    /** Wait until the socket's staged send has been taken by the kernel; a cancel or timeout only ends the wait. */
+    private suspend fun awaitStaged(fd: Int, w: Int) {
+        val slot = slots[staged[w] - 1]!!
+        suspendCoroutineUninterceptedOrReturn<Int> { cont ->
+            watchCancellation(fd, cont)
+            slot.cont = cont
+            COROUTINE_SUSPENDED
+        }
+    }
+
+    /**
+     * A read whose caller gave up (cancelled, timed out): cancel the I/O and resume the caller
+     * with [cause] from the completion, once the bytes that did move are accounted in its buffer.
+     */
+    private fun abortOp(slot: Slot, cause: Throwable) {
+        if (slot.abort != null) return
+        slot.abort = cause
+        neton_cancel(slot.fd.toSocket(), slot.op)
     }
 
     // SPEC §29.4: IOCP datagrams (WSARecvMsg / WSASendMsg overlapped) are not implemented yet; the readiness
@@ -521,12 +567,13 @@ internal class IocpReactor : Reactor() {
             // SPEC §28.6: the op keeps its awaiter until its completion packet says the kernel is done
             // with the buffer; a read or send ends with ClosedException (or the cause it already had),
             // other ops with ClosedException from the aborted completion.
-            if (slot.cont != null && (slot.readBuf != null || slot.sendBuf != null) && slot.abort == null) slot.abort = ClosedException()
+            if (slot.cont != null && slot.readBuf != null && slot.abort == null) slot.abort = ClosedException()
         }
         if (any) neton_cancel(fd.toSocket(), null)   // their packets arrive (aborted) and free the slots
         forgetWatches(fd)
         retirePin(fd)
         val i = ix(fd)
+        staged[i] = 0                                     // its slot ends with the aborted packet
         // A reader deferred to the next round must not recv on this fd number (the kernel may reuse it): fail it now.
         deferredReader[i]?.let { deferredReader[i] = null; enqueueResume(it, ClosedException()) }
         associated[i] = false; skipOn[i] = false; servedRound[i] = -1; pollAccept[i] = false
@@ -577,7 +624,7 @@ internal class IocpReactor : Reactor() {
         val slot = slots.getOrNull(idx) ?: return
         if (!slot.live || slot.gen != neton_op_gen(op)) return
         if (slot.readBuf != null) { onReadDone(idx, slot, n, err); return }
-        if (slot.sendBuf != null) { onSendDone(idx, slot, n, err); return }
+        if (slot.stage > 0) { onStagedDone(idx, slot, n, err); return }
         val fd = slot.fd
         val cont = slot.cont
         var value = n
@@ -619,36 +666,24 @@ internal class IocpReactor : Reactor() {
         }
     }
 
-    /** A send's completion: account it, then continue with the rest or resume the writer. */
-    private fun onSendDone(idx: Int, slot: Slot, n: Int, err: Int) {
-        val cont = slot.cont
-        if (cont == null) { releaseSlot(idx, slot); return }  // stream closed: buffer abandoned
-        val src = slot.sendBuf!!
-        if (n > 0 && (err == 0 || err == ERROR_OPERATION_ABORTED)) {
-            src.consumeSent(n); slot.sendTotal += n
-            stats?.let { it.writes++; it.writeBytes += n }
-        }
-        val abort = slot.abort
-        if (abort != null || err != 0) {
-            releaseSlot(idx, slot)
-            enqueueResumeInt(cont, 0, abort ?: if (err == ERROR_OPERATION_ABORTED) ClosedException()
-                else IoException("WSASend failed: ${errnoMessage(err)}", err))
-            return
-        }
-        val fd = slot.fd
-        val skip = if (ix(fd).let { skipOn[it] }) 1 else 0
-        val pin = slot.pin!!
-        while (src.readableBytes > 0) {
-            val rc = neton_send(fd.toSocket(), slot.op, pin.pinned.addressOf(src.readerIndex()), sendLen(src), skip)
-            when (rc) {
-                0 -> { val m = neton_op_bytes(slot.op).toInt(); src.consumeSent(m); slot.sendTotal += m }
-                1 -> return                                   // the next completion continues
-                else -> { releaseSlot(idx, slot); enqueueResumeInt(cont, 0, IoException("WSASend failed: ${errnoMessage(rc)}", rc)); return }
+    /** A staged send's completion: send what the kernel did not take yet, else end it and resume its waiter. */
+    private fun onStagedDone(idx: Int, slot: Slot, n: Int, err: Int) {
+        var e = err
+        if (e == 0) {
+            slot.stageOff += n
+            if (slot.stageOff < slot.stage) {                // a partial send (not expected on TCP): the rest
+                val skip = if (ix(slot.fd).let { skipOn[it] }) 1 else 0
+                e = startStaged(slot.fd, slot, skip)
+                if (e == 1) return                            // the next completion continues
             }
         }
-        val total = slot.sendTotal
+        val w = ix(slot.fd)
+        if (staged[w] == idx + 1) staged[w] = 0
+        val cont = slot.cont
         releaseSlot(idx, slot)
-        enqueueResumeInt(cont, total)
+        if (cont == null) return                              // its writer gave up, or the socket closed
+        if (e == 0) enqueueResumeInt(cont, 0)
+        else enqueueResumeInt(cont, 0, if (e == ERROR_OPERATION_ABORTED) ClosedException() else IoException("WSASend failed: ${errnoMessage(e)}", e))
     }
 
     /**
