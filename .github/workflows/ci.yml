@@ -85,6 +85,45 @@ jobs:
             neton-io/build/reports/tests/**
           if-no-files-found: ignore
 
+  udp-probe:
+    # A measurement, not a check (UdpReceiveProbeTest, NETON_IO_UDP_PROBE=1): per-datagram send and receive cost and
+    # receive wake-up latency on each native driver, for the Windows receive-side work (SPEC §29.9).
+    name: udp probe (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS kqueue, os: macos-14, task: macosArm64Test, driver: "" }
+          - { name: Linux epoll, os: ubuntu-latest, task: linuxX64Test, driver: epoll }
+          - { name: Linux io_uring, os: ubuntu-latest, task: linuxX64Test, driver: iouring }
+          - { name: Windows IOCP, os: windows-latest, task: mingwX64Test, driver: "" }
+          - { name: Windows WSAPoll, os: windows-latest, task: mingwX64Test, driver: wsapoll }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      NETON_IO_DRIVER: ${{ matrix.driver }}
+      NETON_IO_UDP_PROBE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Cache Kotlin/Native toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+      - name: Probe
+        shell: bash
+        run: ./gradlew :io:${{ matrix.task }} --tests 'neton.io.net.UdpReceiveProbeTest' --no-daemon --stacktrace
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          { echo "### udp probe (${{ matrix.name }})"; echo '```'; grep -ho 'probe: [^<&]*' neton-io/build/test-results/*/*Probe*.xml; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
   test-jvm:
     # The JVM target (java.nio Selector reactor, SPEC §12 / 0.2.0) on each GitHub host: Selector differs per OS.
     name: test (JVM ${{ matrix.os }})
