@@ -23,11 +23,15 @@ starting at 0.1.0; the older `com.netonstream:neton-io:0.1.0` is a different, ea
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux), java.nio `Selector` (JVM). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.3.1") }
+dependencies { implementation("com.netonstream:io:0.3.2") }
 ```
 
 Targets: macOS, iOS, Linux (x64/arm64), Android native, Windows (mingwX64, IOCP and WSAPoll drivers) and the
 JVM.
+
+**0.3.2** (2026-10-08). UDP receives up to 32 datagrams per call on Windows and Apple too (a WSARecvMsg / recvmsg
+loop in the shims, as recvmmsg does on Linux; SPEC §29.9): per received datagram IOCP 13.7 → 0.9 µs, WSAPoll 23–33 →
+2.3–2.7 µs; a 4 MiB QUIC transfer on Windows WSAPoll 436–895 → 146–154 ms. `NETON_IO_UDP_BATCH` overrides the batch.
 
 **0.3.1** (2026-10-08). On Windows a read that ends because the peer dropped the connection (WSAECONNABORTED,
 ERROR_NETNAME_DELETED, ERROR_CONNECTION_ABORTED) counts as a connection reset, as ECONNRESET does elsewhere.
