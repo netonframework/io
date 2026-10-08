@@ -67,7 +67,7 @@ internal object Channels {
 
 /**
  * errno for the JVM. NIO reports failures as exceptions; the shared layers expect a code (they put
- * it in [neton.io.core.IoException.errno] and compare against [connectionResetErrno]). The Linux
+ * it in [neton.io.core.IoException.errno] and compare against ECONNRESET). The Linux
  * values are used so a code reads the same in a log from either kind of target.
  */
 internal object JvmErrno {

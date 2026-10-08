@@ -38,12 +38,13 @@ val neton.io.core.IoStream.localAddress: SocketAddress?
     get() = (this as? ReactorStream)?.takeUnless { it.isClosed }?.let { socketAddress(it.fd, peer = false) }
 
 /**
- * The peer reset the connection (ECONNRESET / WSAECONNRESET): after a close handshake a protocol may treat this as a
- * normal end (tungstenite `check_connection_reset`).
+ * The peer reset the connection (ECONNRESET; on Windows WSAECONNRESET, and the codes an overlapped operation ends with
+ * when the connection is torn down under it: WSAECONNABORTED, ERROR_NETNAME_DELETED, ERROR_CONNECTION_ABORTED): after
+ * a close handshake a protocol may treat this as a normal end (tungstenite `check_connection_reset`).
  */
-val neton.io.core.IoException.isConnectionReset: Boolean get() = errno != 0 && errno == connectionResetErrno
+val neton.io.core.IoException.isConnectionReset: Boolean get() = errno != 0 && isConnectionResetErrno(errno)
 
-internal expect val connectionResetErrno: Int
+internal expect fun isConnectionResetErrno(errno: Int): Boolean
 
 /** Bind and listen on [host]:[port] with [options] (also applied to accepted connections). Must run inside [runReactor]. */
 suspend fun listen(host: String, port: Int, options: SocketOptions = SocketOptions.Default): TcpListener =

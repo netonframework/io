@@ -36,6 +36,6 @@ actual fun cpuCount(): Int = Runtime.getRuntime().availableProcessors().coerceAt
 /** SO_REUSEPORT load balancing is a Linux kernel feature the JDK does not expose portably. */
 internal actual val reusePortBalancesLoad: Boolean = false
 
-internal actual val connectionResetErrno: Int = JvmErrno.ECONNRESET
+internal actual fun isConnectionResetErrno(errno: Int): Boolean = errno == JvmErrno.ECONNRESET
 
 internal actual fun createReactor(): Reactor = NioReactor()

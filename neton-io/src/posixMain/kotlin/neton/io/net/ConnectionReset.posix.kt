@@ -1,3 +1,3 @@
 package neton.io.net
 
-internal actual val connectionResetErrno: Int = platform.posix.ECONNRESET
+internal actual fun isConnectionResetErrno(errno: Int): Boolean = errno == platform.posix.ECONNRESET
