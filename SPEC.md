@@ -1710,6 +1710,23 @@ Windows 上运行。按 `quinn-udp` 0.11 `windows.rs` 补全，C 部分在 `wins
   取整到毫秒、再加 1 ms 的系统精度，与 tokio 计时轮的 1 ms 同级；若要亚毫秒，后续可改用高精度可等待计时器（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`）
   接入完成端口，以同一测试验收。
 
+### 29.9 Windows 的批量接收（2026-10-08，性能）
+- **现象**（quic SPEC §11.13 遗留）：quic 在 Windows 上传 4 MiB 需 0.55–0.85 s（Linux 0.10–0.17 s），发送预算几乎不让出。两端在同一反应器线程时
+  （`TransferProbeTest`，调试构建）RTT 达 90–245 ms，接收轮几乎每个数据报就因时间预算让出一次（4,296 个消息 4,179 次）：接收侧每次系统调用只取一个
+  数据报，接收方每处理两个包就回一个 ACK，发送方随之处理更多 ACK。
+- **测量**（新测试 `UdpReceiveProbeTest`，`NETON_IO_UDP_PROBE=1`，CI 作业 `udp probe`：100 个数据报一批发出、全部到达后再收，接收不挂起，得到的就是
+  接收路径本身的开销）：每个数据报的接收 IOCP 13.7 µs、WSAPoll 23–33 µs；同一次 C 调用（`WSARecvMsg`）在批量时不到 1 µs，开销主要在每次调用的 Kotlin
+  一侧。Linux（`recvmmsg`，32 个一批）0.3–2.5 µs。
+- **修正** ⚖️：Windows 一次接收调用最多取 32 个数据报——shim 内对 `WSARecvMsg` 循环到套接字为空或批满，依次写入 `RecvBatch` 的各个槽位，与 Linux
+  `recvmmsg` 填批的方式相同（Winsock 没有批量接收）；第一个就失败时返回该错误（无数据为 WSAEWOULDBLOCK），之后的错误结束本批、下次调用再见到。
+  quinn-udp 在 Windows 上每次一个（BATCH_SIZE 1）。`NETON_IO_UDP_BATCH`（1–64）可覆盖，供对照测量。
+- **结果**（同一 CI 轮，批 32 对批 1）：
+  - io 探针每个数据报的接收：IOCP 0.86–0.89 µs 对 13.7 µs，WSAPoll 2.3–2.7 µs 对 23–33 µs。
+  - quic `TransferProbeTest`（4 MiB，5 轮，以 io main 构建）：WSAPoll 146–154 ms 对 436–895 ms，IOCP 310–329 ms 对 447–847 ms；RTT 由 90–245 ms 降到
+    1.5–2.6 ms，接收让出由数千次降到 137–152 次。同一轮 Linux epoll 212–222 ms（另一台机器）。
+- **仍待做**：IOCP 比 WSAPoll 慢一倍（310 对 150 ms）；macOS 每次也只收一个数据报（RTT 50–150 ms，与 Windows 批 1 相同的形态），可用同样的循环
+  （或 `recvmsg_x`）改善，另行测量。
+
 ## 30. TCP 连接的地址（2026-09-29，Neton 框架引擎适配器提出的缺口）
 
 需求：框架的请求对象带 `remoteAddress`（按 IP 限流、访问日志），而底座没有取 TCP 流对端地址的办法，适配器只能把所有客户端记为 "unknown"。
