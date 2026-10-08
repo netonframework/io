@@ -3,7 +3,7 @@ plugins {
 }
 allprojects {
     group = "com.netonstream"
-    version = "0.3.0"
+    version = "0.3.1"
 }
 
 // ---------- Maven Central publishing ----------
