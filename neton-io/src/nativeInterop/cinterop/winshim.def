@@ -443,9 +443,9 @@ static int neton_wudp_buffer(unsigned long long s, int which, int value) {
 
 /* Receive one datagram (quinn-udp recv): length, URO stride, source, ECN bits, destination. 1, or -error
    (WSAEWOULDBLOCK when nothing is queued). */
-static int neton_wudp_recv(unsigned long long s, unsigned char* buf, int slot_len,
-                           int* lens, int* strides, int* families, unsigned char* ips, int* ports, unsigned int* scopes,
-                           int* ecns, int* dst_families, unsigned char* dst_ips) {
+static int neton_wudp_recv_one(unsigned long long s, unsigned char* buf, int slot_len,
+                               int* lens, int* strides, int* families, unsigned char* ips, int* ports, unsigned int* scopes,
+                               int* ecns, int* dst_families, unsigned char* dst_ips) {
     SOCKADDR_STORAGE src;
     WSABUF data;
     WSAMSG msg;
@@ -475,6 +475,22 @@ static int neton_wudp_recv(unsigned long long s, unsigned char* buf, int slot_le
         }
     }
     return 1;
+}
+
+/* SPEC §29.9: up to `count` datagrams in one call, one WSARecvMsg each into consecutive slots, until the socket is
+   empty, as recvmmsg fills a batch on Linux (Winsock has no batch receive). The number received, or -error when the
+   first receive fails (WSAEWOULDBLOCK when nothing is queued); an error after the first ends the batch and is seen
+   again, or for good, on the next call. */
+static int neton_wudp_recv(unsigned long long s, unsigned char* buf, int slot_len, int count,
+                           int* lens, int* strides, int* families, unsigned char* ips, int* ports, unsigned int* scopes,
+                           int* ecns, int* dst_families, unsigned char* dst_ips) {
+    int i, r;
+    for (i = 0; i < count; i++) {
+        r = neton_wudp_recv_one(s, buf + (size_t) i * (size_t) slot_len, slot_len, lens + i, strides + i, families + i,
+                                ips + 16 * i, ports + i, scopes + i, ecns + i, dst_families + i, dst_ips + 16 * i);
+        if (r < 0) return i > 0 ? i : r;
+    }
+    return count;
 }
 
 /* One control message into the send buffer at *c; advances *c and *used. */

@@ -4,9 +4,11 @@ package neton.io.net
 
 import kotlinx.cinterop.toKString
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import platform.posix.getenv
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /**
@@ -44,27 +46,36 @@ class UdpReceiveProbeTest {
             t.length = SIZE * segments
             t.segmentSize = if (segments > 1) SIZE else 0
             t.setDestination(recv.localAddress)
-            val calls = BURST / segments
-            val sendStart = TimeSource.Monotonic.markNow()
-            repeat(calls) { send.send(t) }
-            val sendNs = sendStart.elapsedNow().inWholeNanoseconds
+            // Bursts of [CHUNK] datagrams, each drained before the next: Linux caps the receive buffer (rmem_max,
+            // about 200 KiB on GitHub's runners), and a larger burst would be partly dropped
+            val callsPerChunk = CHUNK / segments
+            var sendNs = 0L
+            var recvNs = 0L
+            var recvCalls = 0
+            var datagrams = 0
             RecvBatch(BATCH_SIZE, 64 * 1024).use { b ->
-                var datagrams = 0
-                var recvCalls = 0
-                val recvStart = TimeSource.Monotonic.markNow()
-                while (datagrams < calls * segments) {
-                    val n = recv.recv(b)
-                    recvCalls++
-                    for (i in 0 until n) datagrams += b.length(i) / b.stride(i)
+                repeat(BURST / CHUNK) {
+                    val sendStart = TimeSource.Monotonic.markNow()
+                    repeat(callsPerChunk) { send.send(t) }
+                    sendNs += sendStart.elapsedNow().inWholeNanoseconds
+                    var got = 0
+                    val recvStart = TimeSource.Monotonic.markNow()
+                    while (got < callsPerChunk * segments) {
+                        val n = withTimeoutOrNull(2.seconds) { recv.recv(b) } ?: error("datagrams lost: $got of ${callsPerChunk * segments}")
+                        recvCalls++
+                        for (i in 0 until n) got += b.length(i) / b.stride(i)
+                    }
+                    recvNs += recvStart.elapsedNow().inWholeNanoseconds
+                    datagrams += got
                 }
-                val recvNs = recvStart.elapsedNow().inWholeNanoseconds
-                assertEquals(calls * segments, datagrams)
-                println(
-                    "probe: segments $segments round $round: send ${sendNs / 1000} us (${sendNs / BURST} ns/datagram, " +
-                        "${sendNs / calls} ns/call); receive ${recvNs / 1000} us (${recvNs / datagrams} ns/datagram, " +
-                        "$recvCalls calls, ${recvNs / recvCalls} ns/call)",
-                )
             }
+            val calls = BURST / segments
+            assertEquals(BURST, datagrams)
+            println(
+                "probe: segments $segments round $round: send ${sendNs / 1000} us (${sendNs / BURST} ns/datagram, " +
+                    "${sendNs / calls} ns/call); receive ${recvNs / 1000} us (${recvNs / datagrams} ns/datagram, " +
+                    "$recvCalls calls, ${recvNs / recvCalls} ns/call)",
+            )
         }
     }
 
@@ -76,7 +87,10 @@ class UdpReceiveProbeTest {
             RecvBatch(BATCH_SIZE, 64 * 1024).use { b ->
                 for (i in 0 until PINGS) {
                     var sentAt = TimeSource.Monotonic.markNow()
-                    val receiver = launch { recv.recv(b); samples[i] = sentAt.elapsedNow().inWholeNanoseconds }
+                    val receiver = launch {
+                        withTimeoutOrNull(2.seconds) { recv.recv(b) } ?: error("ping $i lost")
+                        samples[i] = sentAt.elapsedNow().inWholeNanoseconds
+                    }
                     kotlinx.coroutines.yield() // the receive parks
                     sentAt = TimeSource.Monotonic.markNow()
                     send.send(t)
@@ -94,6 +108,7 @@ class UdpReceiveProbeTest {
     private companion object {
         const val SIZE = 1200
         const val BURST = 2000
+        const val CHUNK = 100
         const val PINGS = 200
     }
 }

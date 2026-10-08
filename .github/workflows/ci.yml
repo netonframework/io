@@ -97,11 +97,14 @@ jobs:
           - { name: Linux epoll, os: ubuntu-latest, task: linuxX64Test, driver: epoll }
           - { name: Linux io_uring, os: ubuntu-latest, task: linuxX64Test, driver: iouring }
           - { name: Windows IOCP, os: windows-latest, task: mingwX64Test, driver: "" }
+          - { name: Windows IOCP batch 1, os: windows-latest, task: mingwX64Test, driver: "", batch: "1" }
           - { name: Windows WSAPoll, os: windows-latest, task: mingwX64Test, driver: wsapoll }
+          - { name: Windows WSAPoll batch 1, os: windows-latest, task: mingwX64Test, driver: wsapoll, batch: "1" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
       NETON_IO_DRIVER: ${{ matrix.driver }}
+      NETON_IO_UDP_BATCH: ${{ matrix.batch }}
       NETON_IO_UDP_PROBE: "1"
     steps:
       - uses: actions/checkout@v4

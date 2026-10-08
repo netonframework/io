@@ -6,6 +6,7 @@ import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import neton.io.win.neton_wudp_bind
 import neton.io.win.neton_wudp_buffer
@@ -15,9 +16,16 @@ import neton.io.win.neton_wudp_send
 import neton.io.win.neton_wudp_setup
 
 // SPEC §29.7: UDP on Windows after quinn-udp 0.11 windows.rs (WSARecvMsg / WSASendMsg with PKTINFO and ECN, USO when
-// the stack accepts it), in winshim.def. One datagram per receive call, as in the reference (BATCH_SIZE 1).
+// the stack accepts it), in winshim.def.
 
-internal actual fun udpBatchSize(): Int = 1
+/**
+ * SPEC §29.9 ⚖️: up to 32 datagrams per receive call, one WSARecvMsg each inside the shim until the socket is empty
+ * (quinn-udp: one per call, BATCH_SIZE 1). `NETON_IO_UDP_BATCH` overrides it (1 to 64), for measurement.
+ */
+internal actual fun udpBatchSize(): Int = WIN_UDP_BATCH
+
+private val WIN_UDP_BATCH: Int =
+    platform.posix.getenv("NETON_IO_UDP_BATCH")?.toKString()?.toIntOrNull()?.coerceIn(1, 64) ?: 32
 
 internal actual fun udpBind(family: Int, ip: ByteArray, port: Int, scope: Int, v6only: Boolean): Int {
     ensureWinsock()
@@ -51,7 +59,7 @@ private fun code(negError: Int): Int = when (val e = -negError) {
 
 internal actual fun udpRecv(fd: Int, batch: RecvBatch): Int {
     val n = neton_wudp_recv(
-        fd.toSocket(), batch.pBuffer.addressOf(0).reinterpret<UByteVar>(), batch.slotSize,
+        fd.toSocket(), batch.pBuffer.addressOf(0).reinterpret<UByteVar>(), batch.slotSize, batch.capacity,
         batch.pLens.addressOf(0), batch.pStrides.addressOf(0), batch.pFamilies.addressOf(0),
         batch.pIps.addressOf(0).reinterpret(), batch.pPorts.addressOf(0), batch.pScopes.addressOf(0).reinterpret<UIntVar>(),
         batch.pEcns.addressOf(0), batch.pDstFamilies.addressOf(0), batch.pDstIps.addressOf(0).reinterpret(),
