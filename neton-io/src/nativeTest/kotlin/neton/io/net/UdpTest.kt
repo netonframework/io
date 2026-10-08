@@ -1,8 +1,12 @@
+@file:OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+
 package neton.io.net
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import neton.io.core.ClosedException
+import kotlin.native.OsFamily
+import kotlin.native.Platform
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -122,7 +126,8 @@ class UdpTest {
     @Test
     fun socketBuffers() = runReactor {
         val size = 123456
-        val factor = if (BATCH_SIZE > 1) 2 else 1               // Linux / Android double the requested size
+        // Linux / Android double the requested size
+        val factor = if (Platform.osFamily == OsFamily.LINUX || Platform.osFamily == OsFamily.ANDROID) 2 else 1
         val send = bindUdp(SocketAddress.IPV4_LOCALHOST_ANY_PORT); val recv = bindUdp(SocketAddress.IPV4_LOCALHOST_ANY_PORT)
         for (s in listOf(send, recv)) {
             val before = s.sendBufferSize()
@@ -138,7 +143,10 @@ class UdpTest {
 
     // ---- SPEC §29.5 additions -------------------------------------------------------------------
 
-    /** One recv call returns up to BATCH_SIZE datagrams (32 on Linux / Android via recvmmsg, 1 elsewhere). */
+    /**
+     * One recv call returns up to BATCH_SIZE datagrams: 32 by default (Linux / Android via recvmmsg; Apple and Windows
+     * one recvmsg / WSARecvMsg each inside the shim, SPEC §29.9).
+     */
     @Test
     fun batchReceive() = runReactor {
         val send = bindUdp(SocketAddress.IPV4_LOCALHOST_ANY_PORT); val recv = bindUdp(SocketAddress.IPV4_LOCALHOST_ANY_PORT)

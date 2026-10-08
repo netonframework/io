@@ -1724,8 +1724,11 @@ Windows 上运行。按 `quinn-udp` 0.11 `windows.rs` 补全，C 部分在 `wins
   - io 探针每个数据报的接收：IOCP 0.86–0.89 µs 对 13.7 µs，WSAPoll 2.3–2.7 µs 对 23–33 µs。
   - quic `TransferProbeTest`（4 MiB，5 轮，以 io main 构建）：WSAPoll 146–154 ms 对 436–895 ms，IOCP 310–329 ms 对 447–847 ms；RTT 由 90–245 ms 降到
     1.5–2.6 ms，接收让出由数千次降到 137–152 次。同一轮 Linux epoll 212–222 ms（另一台机器）。
-- **仍待做**：IOCP 比 WSAPoll 慢一倍（310 对 150 ms）；macOS 每次也只收一个数据报（RTT 50–150 ms，与 Windows 批 1 相同的形态），可用同样的循环
-  （或 `recvmsg_x`）改善，另行测量。
+- **Apple 同样处理**：macOS 也是每次一个数据报（CI 上 RTT 50–150 ms，与 Windows 批 1 相同的形态）。posixshim 非 Linux 分支同样循环 `recvmsg`，
+  默认 32 个（quinn-udp 只有开启 `fast-apple-datapath` 时才批量，用私有的 `recvmsg_x`）。本机 macOS（M 系列）：io 探针每个数据报 6.1 → 1.6 µs；
+  quic `TransferProbeTest` 186–277 → 147–157 ms，RTT 30–50 ms → 约 0.9 ms。quic 全量（以本版 io 构建）两种 TLS 模式各 615 个通过。
+- `UdpTest.socketBuffers` 原以 `BATCH_SIZE > 1` 判断"Linux 会把缓冲加倍"，改为按操作系统判断。
+- **仍待做**：IOCP 比 WSAPoll 慢一倍（310 对 150 ms），另行剖析。
 
 ## 30. TCP 连接的地址（2026-09-29，Neton 框架引擎适配器提出的缺口）
 

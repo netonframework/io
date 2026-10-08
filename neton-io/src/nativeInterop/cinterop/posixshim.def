@@ -437,7 +437,7 @@ static void neton_udp_decode(void *msg, int len, int *stride, int *ecn, int *dst
 }
 
 /*
- * Receive up to count datagrams (Linux: recvmmsg, at most 32; elsewhere 1) into buf, slot i at i * slot_len.
+ * Receive up to count datagrams (Linux: recvmmsg; elsewhere one recvmsg each; at most 32) into buf, slot i at i * slot_len.
  * Per datagram: length, GRO stride, source (family, ip[16], port, scope), ECN bits, destination (family, ip[16]).
  * Returns the number received, or -errno (EAGAIN when nothing is there).
  */
@@ -467,20 +467,25 @@ static int neton_udp_recv(int fd, unsigned char *buf, int slot_len, int count,
     }
     return n;
 #else
+    /* SPEC §29.9: no recvmmsg; one recvmsg per slot until the socket is empty, as on Windows. An error after the first
+       datagram ends the batch and is seen again on the next call. */
     struct msghdr hdr;
     ssize_t r;
-    (void) count;
-    memset(&hdr, 0, sizeof hdr);
-    iov[0].iov_base = buf; iov[0].iov_len = (size_t) slot_len;
-    hdr.msg_name = &names[0]; hdr.msg_namelen = sizeof names[0];
-    hdr.msg_iov = &iov[0]; hdr.msg_iovlen = 1;
-    hdr.msg_control = ctrl[0].b; hdr.msg_controllen = NETON_UDP_CMSG;
-    do { r = recvmsg(fd, &hdr, 0); } while (r < 0 && errno == EINTR);
-    if (r < 0) return -errno;
-    lens[0] = (int) r;
-    neton_sa_read(&names[0], &families[0], ips, &ports[0], &scopes[0]);
-    neton_udp_decode(&hdr, lens[0], &strides[0], &ecns[0], &dst_families[0], dst_ips);
-    return 1;
+    if (count > NETON_UDP_BATCH) count = NETON_UDP_BATCH;
+    (void) n;
+    for (i = 0; i < count; i++) {
+        memset(&hdr, 0, sizeof hdr);
+        iov[i].iov_base = buf + (size_t) i * (size_t) slot_len; iov[i].iov_len = (size_t) slot_len;
+        hdr.msg_name = &names[i]; hdr.msg_namelen = sizeof names[i];
+        hdr.msg_iov = &iov[i]; hdr.msg_iovlen = 1;
+        hdr.msg_control = ctrl[i].b; hdr.msg_controllen = NETON_UDP_CMSG;
+        do { r = recvmsg(fd, &hdr, 0); } while (r < 0 && errno == EINTR);
+        if (r < 0) return i > 0 ? i : -errno;
+        lens[i] = (int) r;
+        neton_sa_read(&names[i], &families[i], ips + 16 * i, &ports[i], &scopes[i]);
+        neton_udp_decode(&hdr, lens[i], &strides[i], &ecns[i], &dst_families[i], dst_ips + 16 * i);
+    }
+    return count;
 #endif
 }
 
