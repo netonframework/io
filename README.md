@@ -23,11 +23,15 @@ starting at 0.1.0; the older `com.netonstream:neton-io:0.1.0` is a different, ea
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux), java.nio `Selector` (JVM). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.3.2") }
+dependencies { implementation("com.netonstream:io:0.3.3") }
 ```
 
 Targets: macOS, iOS, Linux (x64/arm64), Android native, Windows (mingwX64, IOCP and WSAPoll drivers) and the
 JVM.
+
+**0.3.3** (2026-10-09). `lookupHost(host, port)`: resolve a name to `SocketAddress`es (tokio `net::lookup_host`) for
+protocols that dial addresses themselves (UDP, QUIC); literals inline, names off the reactor (SPEC §35). Built with
+Kotlin 2.4.20 (SPEC §34), so consumers compile with 2.4.20 or later.
 
 **0.3.2** (2026-10-08). UDP receives up to 32 datagrams per call on Windows and Apple too (a WSARecvMsg / recvmsg
 loop in the shims, as recvmmsg does on Linux; SPEC §29.9): per received datagram IOCP 13.7 → 0.9 µs, WSAPoll 23–33 →
