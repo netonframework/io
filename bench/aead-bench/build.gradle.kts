@@ -1,4 +1,4 @@
-plugins { kotlin("multiplatform") version "2.4.0" }
+plugins { kotlin("multiplatform") version "2.4.20" }
 kotlin {
     macosArm64 {
         // Declarations only: the symbols come from native-builds' libcrypto, the same one cryptography-kotlin's

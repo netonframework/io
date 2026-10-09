@@ -517,7 +517,9 @@ SHA-256/384、HKDF、ECDSA P-256 / RSA 验签）。
 ### 19.1 工具链升级（单变量）
 neton-io、msgtrans、pulsekit 同时升到 Kotlin 2.4.20、coroutines 1.11.0（复合构建必须同一版本）。验收：三仓库全部测试（macOS + 153 三驱动）；153 单核成对轮次 2.4.20 对 2.4.0 同一代码，比值应在 [0.97, 1.03] 内或更好。
 
-**决定（2026-09-26，用户）**：Kotlin/Native 固定在 **2.4.0**，暂不升 2.4.10 / 2.4.20，以后有必要再议。以下为当时的分析。
+**已被取代（2026-10-09，用户）**：全部 Kotlin/Native 项目升到 **2.4.20**，不允许更低版本，见 §34。
+
+~~**决定（2026-09-26，用户）**：Kotlin/Native 固定在 **2.4.0**，暂不升 2.4.10 / 2.4.20，以后有必要再议。~~以下为当时的分析。
 
 **阻塞（2026-09-26）**：vip-application（本地 PulseKit 接入服务）以复合构建引入 neton-io、msgtrans，同时引入 Neton 框架仓库（`Neton/neton`、`geolite4k`、`hyper4k`），全部固定在 2.4.0。只升这三个仓库会让同一构建里出现两个 Kotlin 版本（两份 Kotlin Gradle 插件，或 2.4.0 编译器读 2.4.20 的 klib），通常无法构建。要升就得连 Neton 框架仓库一起升，超出 PulseKit 范围——**等用户决定**。由于 2.4.10/2.4.20 没有 Native 运行时改动，暂缓不影响性能工作；19.2、19.3 在 2.4.0 上进行。
 
@@ -1896,3 +1898,19 @@ ArrayIndexOutOfBoundsException 并使进程退出（CI 第 64 个测试后崩溃
 ### 33.6 结果
 运行 37653522928（815f593）：编译 + 链接全部目标、macOS kqueue / poll、Linux epoll / poll / io_uring、Windows IOCP / WSAPoll、JVM（Linux、macOS、
 Windows）共 11 项全部通过，是 io 的 CI 第一次全部通过。提交本节后的运行作为第二次确认（结果见提交说明）。
+
+## 34. 升级到 Kotlin 2.4.20（2026-10-09，用户决定）
+- **决定**：技术栈与 hyper4k 的 Kotlin/Native 项目一律 2.4.20，不允许更低（取代 §19.1 的 2.4.0 固定）。§19.1 记下的阻塞（复合构建里 Neton
+  框架仓库也须同版本）由另一个会话同时把 Neton 各仓库升到 2.4.20 解除；PulseKit 各仓库由本会话升级。
+- **改动**：根构建与版本目录 2.4.0 → 2.4.20；每个根构建加同一段版本下限检查（低于 2.4.20、或 2.4.20 的 Beta / RC，配置阶段即报错），与 Neton
+  各仓库相同；`gradle.properties` 开启 `kotlin.incremental.native=true`（2.4.20 的 klib 增量编译，Beta，只影响本地构建，CI 与发布从干净目录构建）。
+- **2.4.20 与 2.4.0 的 Native 相关变化**（官方说明与发布记录）：cinterop 为 C 字符串参数增加 `CValuesRef` 重载、宏扫描提速、`@CCall` 编号更稳定；
+  klib 增量编译；Swift 导出（sealed 类、跨语言继承）；AtomicFU 原子操作不得出现在 public inline 函数中（本库未使用 AtomicFU）。2.4.0 已带来
+  CMS 并发 GC 默认、LLVM 21、klib 模块内内联、`kotlin.uuid.Uuid` 稳定、context parameters / explicit backing fields 稳定。LLVM 与 Linux sysroot
+  依赖名与 2.4.0 相同（openssl-kotlin 的 `build-openssl.sh` 无需改依赖，只改注释）。
+- **采用的新特性**：klib 增量编译；pulsekit 的 `newId()` 改用 `Uuid.random().toHexString()`（同为 32 位十六进制，来源由非安全的 `kotlin.random`
+  改为平台安全随机数）。context parameters 与 explicit backing fields 在本库代码中没有天然的使用点（没有 `_x`/`x` 双属性写法），不为用而用。
+- **验收**（macOS，2.4.20）：io 156、http 1,259（14 跳过）、websocket 247、quic 621（3 跳过，真实 TLS）、http3 506、msgtrans 44 + JVM 44、pulsekit 58 +
+  JVM 54、tls 16、openssl 25，全部通过。已发布的 0.3.2 / 0.2.0 等 klib 由 2.4.0 构建，2.4.20 的使用者可以读取；反之不行，所以下一版起各库以
+  2.4.20 构建发布。
+

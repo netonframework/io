@@ -40,7 +40,8 @@ ERROR_NETNAME_DELETED, ERROR_CONNECTION_ABORTED) counts as a connection reset, a
 PKTINFO, USO; SPEC §29.7) and 1 ms timer resolution while a Windows reactor runs (SPEC §29.8). CI passes on every
 platform for the first time (SPEC §33): IOCP index and accept fixes, bounded Windows sends with exact accounting of
 cancelled writes, a reactor that a fast external poster could keep from stopping, Winsock errors taken inside each
-call, and io_uring setup retries. The native artifacts are klibs, so a consumer compiles with the release's Kotlin version (2.4.0).
+call, and io_uring setup retries. The native artifacts are klibs, so a consumer compiles with the release's Kotlin version (2.4.20 from the next release on; 0.3.2 and earlier were built
+with 2.4.0).
 
 **JVM** (2026-10-03). The reactor core, timers, cross-thread dispatch, lifecycle, TCP layer, `ReactorGroup`,
 `serveTcp` and the public API are the same code as on native; only the driver differs: `NioReactor`, a
