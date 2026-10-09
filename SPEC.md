@@ -1914,3 +1914,12 @@ Windows）共 11 项全部通过，是 io 的 CI 第一次全部通过。提交�
   JVM 54、tls 16、openssl 25，全部通过。已发布的 0.3.2 / 0.2.0 等 klib 由 2.4.0 构建，2.4.20 的使用者可以读取；反之不行，所以下一版起各库以
   2.4.20 构建发布。
 
+## 35. 公开的地址解析 `lookupHost`（2026-10-09）
+- **缘由**：自己拨地址的协议（UDP、QUIC，例如 msgtrans 的 QUIC 传输）需要把主机名解析成 `SocketAddress`；此前只有 `connect` / `listen`
+  内部使用的 `resolve`，使用者只能自己调 getaddrinfo（还会阻塞 reactor）。
+- **接口**：`suspend fun lookupHost(host, port): List<SocketAddress>`（对应 tokio `net::lookup_host`），按解析器顺序（RFC 6724）返回；
+  IP 字面量（含带方括号的 IPv6）就地解析不阻塞，名字在 reactor 线程之外查询，与 `connect` 相同（§18.2、§27.5）。解析失败抛
+  `UnknownHostException`（`IoException`，带 `host`）。
+- **实现**：复用 `resolve`，把 `sockaddr` 字节转成 `SocketAddress`：各平台（以及 JVM 采用的 Linux 布局）端口都在偏移 2（大端），IPv4 地址在
+  偏移 4，IPv6 地址在偏移 8、scope id 在偏移 24（主机序，所有目标均为小端），只有端口之前的地址族字段不同。
+- **测试**：`LookupHostTest`（IPv4 / IPv6 字面量、`localhost`、不可解析的名字、端口越界），macOS 与 JVM 通过；其余平台由 CI 验证。
