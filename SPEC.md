@@ -1923,3 +1923,17 @@ Windows）共 11 项全部通过，是 io 的 CI 第一次全部通过。提交�
 - **实现**：复用 `resolve`，把 `sockaddr` 字节转成 `SocketAddress`：各平台（以及 JVM 采用的 Linux 布局）端口都在偏移 2（大端），IPv4 地址在
   偏移 4，IPv6 地址在偏移 8、scope id 在偏移 24（主机序，所有目标均为小端），只有端口之前的地址族字段不同。
 - **测试**：`LookupHostTest`（IPv4 / IPv6 字面量、`localhost`、不可解析的名字、端口越界），macOS 与 JVM 通过；其余平台由 CI 验证。
+
+## 36. 一致性套件进入 JVM 与 CI 产物；UDP 计数改为断言（2026-10-11）
+
+- **JVM 运行一致性套件**：`IoStreamConformance` 只用到通用 API（`newSingleThreadContext` 在 JVM 与 native 上都有），从 `io-testkit` 的
+  nativeMain 移到 commonMain；`io-testkit` 增加 JVM 目标（与 neton-io 的 JVM 相同：stdlib 2.2.21、API 2.2、JVM 1.8）。`ConformanceTest`
+  移到 commonTest（TCP、内存流、两种 `BaseFilter`、套件能抓出违约），Unix 域套接字一项留在 nativeTest（`UnixConformanceTest`）。JVM（NIO
+  反应器）上 5 个通过，其中 `suiteCatchesAViolation` 说明套件在 JVM 上同样有效；macOS 6 个通过。
+- **CI 产物**：此前 `io-testkit` 的结果既不计入摘要也不上传。现在各 native 作业与 JVM 作业都运行 `:io-testkit`，摘要分别列出一致性测试
+  个数，`io-testkit/build/test-results` 与报告随 `test-results-*` 上传。
+- **UDP 计数由打印改为断言**（`UdpTest`）：先从上一次 CI（运行 37953259387）的测试结果读出打印值——Linux epoll / poll / io_uring 都是 GSO 64、
+  GRO 64，macOS kqueue / poll 是 1 / 1，Windows IOCP / WSAPoll 是 512 / 64，七种驱动的批量接收首次调用都取到 32 / 32。`gso` 现按平台断言
+  这些值（Windows 的 GSO 取决于 USO，可为 1 或 512；Android 取决于内核，可为 1 或 64），并断言分段发送后 `maxGsoSegments` 没有回退到 1
+  （即内核确实接受了分段发送）；`batchReceive` 断言首次调用取到整批（`BATCH_SIZE`，Windows 的 `NETON_IO_UDP_BATCH=1` 时为 1）。
+

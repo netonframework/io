@@ -67,13 +67,14 @@ jobs:
         run: |
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import glob, re
-          tests = fails = 0; failed = []
-          for f in glob.glob('neton-io/build/test-results/**/*.xml', recursive=True):
+          tests = fails = 0; failed = []; conf = 0
+          for f in glob.glob('*/build/test-results/**/*.xml', recursive=True):
               s = open(f, encoding='utf-8', errors='replace').read()
-              m = re.search(r'tests="(\d+)"', s); tests += int(m.group(1)) if m else 0
+              m = re.search(r'tests="(\d+)"', s); n = int(m.group(1)) if m else 0; tests += n
+              if f.startswith('io-testkit'): conf += n
               for c in re.finditer(r'<testcase name="([^"]+)" classname="([^"]+)"[^>]*>\s*<failure message="([^"]*)"', s):
                   fails += 1; failed.append(f"- {c.group(2)}.{c.group(1)}: {c.group(3)[:300]}")
-          print(f"### ${{ matrix.name }}: {tests} tests, {fails} failures")
+          print(f"### ${{ matrix.name }}: {tests} tests ({conf} conformance), {fails} failures")
           print("\n".join(failed))
           PY
       - if: always()
@@ -83,6 +84,8 @@ jobs:
           path: |
             neton-io/build/test-results/**
             neton-io/build/reports/tests/**
+            io-testkit/build/test-results/**
+            io-testkit/build/reports/tests/**
           if-no-files-found: ignore
 
   udp-probe:
@@ -145,7 +148,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Test
         shell: bash
-        run: ./gradlew :io:jvmTest --no-daemon --stacktrace --continue
+        run: ./gradlew :io:jvmTest :io-testkit:jvmTest --no-daemon --stacktrace --continue
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, re
+          tests = fails = 0; failed = []; conf = 0
+          for f in glob.glob('*/build/test-results/jvmTest/*.xml'):
+              s = open(f, encoding='utf-8', errors='replace').read()
+              m = re.search(r'tests="(\d+)"', s); n = int(m.group(1)) if m else 0; tests += n
+              if f.startswith('io-testkit'): conf += n
+              for c in re.finditer(r'<testcase name="([^"]+)" classname="([^"]+)"[^>]*>\s*<failure message="([^"]*)"', s):
+                  fails += 1; failed.append(f"- {c.group(2)}.{c.group(1)}: {c.group(3)[:300]}")
+          print(f"### JVM ${{ matrix.os }}: {tests} tests ({conf} conformance), {fails} failures")
+          print("\n".join(failed))
+          PY
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -153,6 +172,8 @@ jobs:
           path: |
             neton-io/build/test-results/**
             neton-io/build/reports/tests/**
+            io-testkit/build/test-results/**
+            io-testkit/build/reports/tests/**
           if-no-files-found: ignore
 
   build-all-targets:

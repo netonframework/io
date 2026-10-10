@@ -5,18 +5,16 @@ import neton.io.core.IoStream
 import neton.io.core.memoryStreamPair
 import neton.io.net.SocketOptions
 import neton.io.net.connect
-import neton.io.net.connectUnix
 import neton.io.net.listen
-import neton.io.net.listenUnix
 import neton.io.net.runReactor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * SPEC §28.6 / §28.11 step 2: every IoStream implementation in neton-io passes the conformance suite.
- * The socket runs use whichever driver NETON_IO_DRIVER / the platform selects; CI and the Linux
- * acceptance run repeat them per driver.
+ * SPEC §28.6 / §28.11 step 2: every IoStream implementation in neton-io passes the conformance suite, on native and on
+ * the JVM (its NIO reactor). The socket runs use whichever driver NETON_IO_DRIVER / the platform selects; CI repeats
+ * them per driver. Unix domain sockets (native only): [UnixConformanceTest].
  */
 class ConformanceTest {
 
@@ -36,16 +34,6 @@ class ConformanceTest {
         return StreamPair(a, b)
     }
 
-    private var nextPath = 0
-
-    private suspend fun unixPair(): StreamPair {
-        val path = "neton-conf-${nextPath++}.sock"
-        val l = listenUnix(path)
-        val a = connectUnix(path)
-        val b = l.accept()
-        return StreamPair(a, b) { l.close() }
-    }
-
     private fun memoryPair(): StreamPair { val (a, b) = memoryStreamPair(); return StreamPair(a, b) }
 
     private fun filtered(p: StreamPair): StreamPair = StreamPair(BaseFilter(p.a), p.b) { p.dispose() }
@@ -54,13 +42,6 @@ class ConformanceTest {
     fun tcp() = runReactor {
         // The accepted end lingers 0 s, so its close sends RST.
         assertConforms(IoStreamConformance("tcp", { tcpPair() }, { tcpPair(SocketOptions(lingerSeconds = 0)) }).run())
-    }
-
-    @Test
-    fun unixSocket() = runReactor {
-        val probe = runCatching { listenUnix("neton-conf-probe.sock").close() }
-        if (probe.isFailure) { println("SKIP unixSocket: ${probe.exceptionOrNull()}"); return@runReactor }
-        assertConforms(IoStreamConformance("unix", { unixPair() }).run())
     }
 
     @Test

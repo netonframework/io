@@ -112,14 +112,25 @@ class UdpTest {
         send.close(); recv.close()
     }
 
-    /** Linux, Android and Windows in the reference (`#[cfg_attr(not(linux, windows, android), ignore)]`); elsewhere max segments is 1. */
+    /**
+     * Linux, Android and Windows in the reference (`#[cfg_attr(not(linux, windows, android), ignore)]`); elsewhere max
+     * segments is 1. The segment counts are quinn-udp's: Linux 64 / 64 (UDP_SEGMENT, UDP_GRO), Apple 1 / 1, Windows
+     * 512 with USO (else 1) / 64; Android's depend on its kernel. A send with segments must not fall back to one.
+     */
     @Test
     fun gso() = runReactor {
         val send = bindLocal(); val recv = bindLocal()
+        val counts = send.maxGsoSegments to recv.groSegments
+        when (Platform.osFamily) {
+            OsFamily.LINUX -> assertEquals(64 to 64, counts)
+            OsFamily.MACOSX, OsFamily.IOS -> assertEquals(1 to 1, counts)
+            OsFamily.WINDOWS -> { assertTrue(counts.first in setOf(1, 512), "$counts"); assertEquals(64, counts.second) }
+            else -> assertTrue(counts.first in setOf(1, 64) && counts.second in setOf(1, 64), "$counts")
+        }
         val segment = 128
         val msg = ByteArray(segment * send.maxGsoSegments) { 0xAB.toByte() }
-        println("UdpTest.gso: maxGsoSegments=${send.maxGsoSegments} groSegments=${recv.groSegments}")
         testSendRecv(send, recv, Tx(recv.localAddress, null, msg, segmentSize = segment))
+        assertEquals(counts.first, send.maxGsoSegments, "the segmented send fell back to one segment")
         send.close(); recv.close()
     }
 
@@ -160,8 +171,9 @@ class UdpTest {
             while (got < BATCH_SIZE) {
                 val n = recv.recv(b)
                 for (i in 0 until n) { seen[b.buffer[b.offset(i)].toInt()] = true; assertEquals(1, b.length(i)) }
+                // All were queued before the first call: it takes the whole batch (every driver in CI, 2026-10).
+                if (got == 0) assertEquals(BATCH_SIZE, n, "the first call returned $n of $BATCH_SIZE")
                 got += n
-                if (got == n) println("UdpTest.batchReceive: first call returned $n of $BATCH_SIZE")
             }
             assertTrue(seen.all { it })
         }
