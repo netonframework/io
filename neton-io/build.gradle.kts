@@ -18,16 +18,20 @@ kotlin {
     // Selector-driven driver (NioReactor) in place of kqueue/epoll/io_uring/IOCP, no native code.
     // Bytecode 1.8 and only APIs Android has had since API 21, so an Android library can depend on it.
     // The JVM artifact must work in Android apps built with an older Kotlin (KuiklyUI pins hosts to
-    // 2.1). Such a host never compiles against these classes, but Gradle aligns its whole classpath
-    // to the highest kotlin-stdlib anything asks for, and its compiler reads stdlib metadata at most
-    // one version ahead. So the JVM build asks for stdlib 2.2.21 and uses no stdlib API newer than
-    // 2.2 (API 2.1 is deprecated); native klibs are unaffected (they follow the compiler version).
+    // 2.1). Gradle aligns its whole classpath to the highest kotlin-stdlib anything asks for, and its
+    // compiler reads metadata at most one version ahead. So the JVM build asks for stdlib 2.2.21 and
+    // uses no stdlib API newer than 2.2 (API 2.1 is deprecated).
     coreLibrariesVersion = "2.2.21"
+    // Language 2.2 for every source set the JVM compiles (KMP also requires a source set to be no older than the ones it
+    // depends on, so native-only ones may stay newer): class metadata then says 2.2, which a Kotlin 2.1 compiler still
+    // reads (one version ahead); with the 2.4 default it refuses to compile against these classes.
     jvm {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
             apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+            languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
         }
+        compilations.configureEach { allKotlinSourceSets.forAll { it.languageSettings.languageVersion = "2.2" } }
     }
 
     // POSIX sockets are shared by Linux, Android and Apple; epoll by Linux and Android. io_uring
