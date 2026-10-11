@@ -1937,3 +1937,17 @@ Windows）共 11 项全部通过，是 io 的 CI 第一次全部通过。提交�
   这些值（Windows 的 GSO 取决于 USO，可为 1 或 512；Android 取决于内核，可为 1 或 64），并断言分段发送后 `maxGsoSegments` 没有回退到 1
   （即内核确实接受了分段发送）；`batchReceive` 断言首次调用取到整批（`BATCH_SIZE`，Windows 的 `NETON_IO_UDP_BATCH=1` 时为 1）。
 
+## 37. JVM 上的 UDP（2026-10-11，JVM QUIC 的前提）
+
+- **结构**：UDP 的公共 API（`EcnCodepoint`、`RecvBatch`、`Transmit`、`UdpOptions`、`UdpSocket`、`bindUdp`、`BATCH_SIZE`）从 nativeMain 移到
+  commonMain，行为不变。原生端对数组的一次性钉住改为 `expect class RecvBatchPins` / `TransmitPins`，nativeMain 以原名的扩展属性（`pBuffer`
+  等）暴露，各平台薄壳一行未改；macOS、Linux x64、Windows、Android、iOS 编译通过，原生全量测试照常。
+- **JVM 实现**：非阻塞 `DatagramChannel` 登记在 `Channels` 表中，由 NIO 反应器像其他通道一样以 OP_READ / OP_WRITE 等待；`closeStream` 唤醒
+  挂起的收发并关闭通道。双栈 IPv6 套接字上的 IPv4 来源按原生约定报告为 `::ffff:a.b.c.d`（复用 `ipv6Bytes`）。
+- **如实声明的限制**（NIO 做不到，不模拟）：每次接收 1 个数据报（`BATCH_SIZE` = 1）；无 GSO / GRO（各为 1；分段的 Transmit 逐个发送，
+  中途发送缓冲满时其余丢弃，如线上丢包）；不报告也不发送 ECN；不能指定源地址；无目标地址（`destination` 为 null）；无 IPV6_V6ONLY（IPv6
+  套接字总是双栈，JDK 默认）；不能设置 DF，`mayFragment` 为 true。QUIC 在这些条件下均可工作（ECN 验证失败即停用，RFC 9000 §13.4.2）。
+- **测试** `jvmTest/UdpJvmTest`（7 个）：能力声明；IPv4 往返与地址、端口、`sourceEquals`；双栈 IPv6 套接字看到 v4 映射地址并能按它回复；
+  200 个数据报逐个接收齐全；缓冲区设置；关闭唤醒挂起的接收；超长数据报按已发送处理。JVM 全量 130 个、macOS 163 个，唯一失败
+  `LookupHostTest.unknownHost` 是本机 Clash 的 fake-IP DNS（不存在的名字解析到 198.18.0.45），与本改动无关，CI 不受影响。
+

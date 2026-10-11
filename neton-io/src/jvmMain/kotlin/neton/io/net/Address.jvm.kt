@@ -43,7 +43,7 @@ private fun SockAddr.toInet(): InetSocketAddress {
 }
 
 /** The 16-byte form of [address] on an IPv6-family socket: IPv4 becomes `::ffff:a.b.c.d`. */
-private fun ipv6Bytes(address: InetAddress): ByteArray {
+internal fun ipv6Bytes(address: InetAddress): ByteArray {
     val ip = address.address
     if (ip.size == 16) return ip
     return ByteArray(16).also { ip.copyInto(it, 12); it[10] = -1; it[11] = -1 }
@@ -114,6 +114,7 @@ internal actual fun udpLocal(fd: Int, out: IntArray, ip: ByteArray): Int {
     val (address, port) = when (val channel = Channels[fd]) {
         is ServerSocketChannel -> channel.socket().inetAddress to channel.socket().localPort
         is SocketChannel -> channel.socket().localAddress to channel.socket().localPort
+        is java.nio.channels.DatagramChannel -> channel.socket().localAddress to channel.socket().localPort
         else -> return -JvmErrno.EBADF
     }
     if (address == null || port <= 0) return -JvmErrno.ENOTCONN

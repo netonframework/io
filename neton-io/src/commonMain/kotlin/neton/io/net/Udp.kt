@@ -1,14 +1,12 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-
 package neton.io.net
 
-import kotlinx.cinterop.Pinned
-import kotlinx.cinterop.pin
 import neton.io.core.ClosedException
 import neton.io.core.IoException
 
 // SPEC §29: the UDP datagram layer, after quinn-udp 0.11. Hot paths allocate nothing: batches and transmits own
-// their arrays, pinned once for their lifetime; addresses on the receive path stay in primitive fields.
+// their arrays (on native pinned once for their lifetime, [RecvBatchPins] / [TransmitPins]); addresses on the receive
+// path stay in primitive fields. The JVM (DatagramChannel, SPEC §37) receives one datagram per call and has no GSO,
+// GRO, per-datagram ECN, source address choice or destination address.
 
 /** Explicit Congestion Notification codepoints (RFC 3168), as the low two bits of TOS / traffic class. */
 enum class EcnCodepoint(val bits: Int) {
@@ -37,11 +35,8 @@ class RecvBatch(val capacity: Int = BATCH_SIZE, val slotSize: Int = 65535) : Aut
     internal val ecns = IntArray(capacity)
     internal val dstFamilies = IntArray(capacity)
     internal val dstIps = ByteArray(16 * capacity)
-    // Pinned once for the batch's lifetime: a pin per call would allocate on every receive.
-    internal val pBuffer = buffer.pin(); internal val pLens = lens.pin(); internal val pStrides = strides.pin()
-    internal val pFamilies = families.pin(); internal val pIps = ips.pin(); internal val pPorts = ports.pin()
-    internal val pScopes = scopes.pin(); internal val pEcns = ecns.pin(); internal val pDstFamilies = dstFamilies.pin()
-    internal val pDstIps = dstIps.pin()
+    // Pinned once for the batch's lifetime on native: a pin per call would allocate on every receive.
+    internal val pins = RecvBatchPins(this)
     private var closed = false
 
     /** Bytes received in slot [i]. */
@@ -65,7 +60,7 @@ class RecvBatch(val capacity: Int = BATCH_SIZE, val slotSize: Int = 65535) : Aut
     override fun close() {
         if (closed) return
         closed = true
-        listOf<Pinned<*>>(pBuffer, pLens, pStrides, pFamilies, pIps, pPorts, pScopes, pEcns, pDstFamilies, pDstIps).forEach { it.unpin() }
+        pins.unpin()
     }
 }
 
@@ -87,7 +82,7 @@ class Transmit(capacity: Int = 65535) : AutoCloseable {
     internal var dstScope = 0
     internal var srcFamily = 0
     internal val srcIp = ByteArray(16)
-    internal val pBuffer = buffer.pin(); internal val pDstIp = dstIp.pin(); internal val pSrcIp = srcIp.pin()
+    internal val pins = TransmitPins(this)
     private var closed = false
 
     fun setDestination(address: SocketAddress) {
@@ -103,7 +98,7 @@ class Transmit(capacity: Int = 65535) : AutoCloseable {
     override fun close() {
         if (closed) return
         closed = true
-        pBuffer.unpin(); pDstIp.unpin(); pSrcIp.unpin()
+        pins.unpin()
     }
 }
 
@@ -118,7 +113,7 @@ class UdpOptions(
     companion object { val Default = UdpOptions() }
 }
 
-/** Datagrams per receive call (Linux recvmmsg; 1 elsewhere), quinn-udp `BATCH_SIZE`. */
+/** Datagrams per receive call (Linux recvmmsg; 32 within the shim on Apple and Windows; 1 on the JVM), quinn-udp `BATCH_SIZE`. */
 val BATCH_SIZE: Int get() = udpBatchSize()
 
 /**
@@ -235,6 +230,16 @@ internal const val UDP_MSG_SIZE = -2
 internal const val UDP_EIO = -3
 internal const val UDP_EINVAL = -4
 internal const val UDP_CONN_ERROR = -5
+
+/** A batch's arrays pinned for its lifetime (native); nothing on the JVM. */
+internal expect class RecvBatchPins(batch: RecvBatch) {
+    fun unpin()
+}
+
+/** A transmit's arrays pinned for its lifetime (native); nothing on the JVM. */
+internal expect class TransmitPins(transmit: Transmit) {
+    fun unpin()
+}
 
 internal expect fun udpBatchSize(): Int
 /** fd, or -errno. */
