@@ -132,15 +132,22 @@ jobs:
 
   test-jvm:
     # The JVM target (java.nio Selector reactor, SPEC §12 / 0.2.0) on each GitHub host: Selector differs per OS.
-    name: test (JVM ${{ matrix.os }})
+    # On JDK 8 (the oldest the bytecode targets) and 21; Gradle itself runs on 17.
+    name: test (JVM ${{ matrix.os }} JDK ${{ matrix.jdk }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
+        jdk: ['8', '21']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        id: test-jdk
+        with:
+          distribution: zulu
+          java-version: ${{ matrix.jdk }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -148,7 +155,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Test
         shell: bash
-        run: ./gradlew :io:jvmTest :io-testkit:jvmTest --no-daemon --stacktrace --continue
+        run: ./gradlew :io:jvmTest :io-testkit:jvmTest -PtestJavaHome="${{ steps.test-jdk.outputs.path }}" --no-daemon --stacktrace --continue
       - name: Summary
         if: always()
         shell: bash
@@ -162,13 +169,13 @@ jobs:
               if f.startswith('io-testkit'): conf += n
               for c in re.finditer(r'<testcase name="([^"]+)" classname="([^"]+)"[^>]*>\s*<failure message="([^"]*)"', s):
                   fails += 1; failed.append(f"- {c.group(2)}.{c.group(1)}: {c.group(3)[:300]}")
-          print(f"### JVM ${{ matrix.os }}: {tests} tests ({conf} conformance), {fails} failures")
+          print(f"### JVM ${{ matrix.os }} JDK ${{ matrix.jdk }}: {tests} tests ({conf} conformance), {fails} failures")
           print("\n".join(failed))
           PY
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-JVM ${{ matrix.os }}
+          name: test-results-JVM ${{ matrix.os }} JDK ${{ matrix.jdk }}
           path: |
             neton-io/build/test-results/**
             neton-io/build/reports/tests/**

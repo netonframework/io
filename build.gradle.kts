@@ -96,3 +96,10 @@ subprojects {
         }
     }
 }
+
+// -PtestJavaHome=<JDK> runs the JVM tests on that JDK instead of Gradle's own; CI uses it for the oldest JDK the bytecode
+// targets (8) next to a current one.
+providers.gradleProperty("testJavaHome").orNull?.let { jdk ->
+    val java = File(jdk, if (System.getProperty("os.name").startsWith("Windows")) "bin/java.exe" else "bin/java").absolutePath
+    subprojects { tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach { executable = java } }
+}
