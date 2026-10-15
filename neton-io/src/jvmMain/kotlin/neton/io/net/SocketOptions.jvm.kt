@@ -17,13 +17,19 @@ internal actual fun applyListenerOptions(fd: Int, options: SocketOptions) {
     if (options.reusePort) runCatching { channel.setOption(StandardSocketOptions.SO_REUSEPORT, true) }
 }
 
+// Best effort, as the POSIX path ignores setsockopt failures: an accepted connection the peer already reset
+// rejects options (macOS returns EINVAL), and that must surface on the first read, not escape the accept loop.
 internal actual fun applyStreamOptions(fd: Int, options: SocketOptions) {
     val socket = (Channels[fd] as? SocketChannel)?.socket() ?: return
-    socket.tcpNoDelay = options.noDelay
-    if (options.keepAlive != null) socket.keepAlive = true
-    if (options.sendBufferSize > 0) socket.sendBufferSize = options.sendBufferSize
-    if (options.receiveBufferSize > 0) socket.receiveBufferSize = options.receiveBufferSize
-    if (options.lingerSeconds >= 0) socket.setSoLinger(true, options.lingerSeconds)
+    bestEffort { socket.tcpNoDelay = options.noDelay }
+    if (options.keepAlive != null) bestEffort { socket.keepAlive = true }
+    if (options.sendBufferSize > 0) bestEffort { socket.sendBufferSize = options.sendBufferSize }
+    if (options.receiveBufferSize > 0) bestEffort { socket.receiveBufferSize = options.receiveBufferSize }
+    if (options.lingerSeconds >= 0) bestEffort { socket.setSoLinger(true, options.lingerSeconds) }
+}
+
+private inline fun bestEffort(set: () -> Unit) {
+    try { set() } catch (_: java.io.IOException) { }
 }
 
 internal actual fun readSocketOptions(fd: Int): SocketOptionsSnapshot {

@@ -99,7 +99,8 @@ internal actual fun udpSend(fd: Int, sockV6: Boolean, t: Transmit, einvalMode: B
             channel.send(ByteBuffer.wrap(t.buffer, at, n), to)
         } catch (e: IOException) {
             val message = e.message.orEmpty().lowercase()
-            if ("too long" in message || "too large" in message || "message size" in message) return UDP_MSG_SIZE
+            // Linux/macOS "Message too long"; Windows WSAEMSGSIZE "…was larger than the internal message buffer…".
+            if ("too long" in message || "too large" in message || "larger than" in message || "message size" in message) return UDP_MSG_SIZE
             if (e is PortUnreachableException) return t.length                       // reported later; the datagram left
             return -(1000 + JvmErrno.record(e))
         }

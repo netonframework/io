@@ -105,6 +105,7 @@ internal object JvmErrno {
             t is UnresolvedAddressException -> EHOSTUNREACH
             "refused" in message -> ECONNREFUSED
             "reset" in message -> ECONNRESET
+            "forcibly closed" in message -> ECONNRESET                  // Windows WSAECONNRESET
             "broken pipe" in message -> EPIPE
             "timed out" in message -> ETIMEDOUT
             "network is unreachable" in message -> ENETUNREACH
