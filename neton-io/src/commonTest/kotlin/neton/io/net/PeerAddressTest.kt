@@ -42,7 +42,7 @@ class PeerAddressTest {
             val peer = assertNotNull(s.peerAddress)
             assertTrue(peer.isIpv6, "$peer")
             assertEquals(c.localAddress, peer)
-            assertEquals("[0:0:0:0:0:0:0:1]:21873", c.peerAddress.toString())
+            assertEquals("[::1]:21873", c.peerAddress.toString())
         }
     }
 
@@ -75,6 +75,31 @@ class PeerAddressTest {
         assertEquals("2001:db8::ff00:42:8329", v6(0x2001, 0xdb8, 0, 0, 0, 0xff00, 0x42, 0x8329))
         assertEquals("::ffff:192.0.2.128", v6(0, 0, 0, 0, 0, 0xffff, 0xc000, 0x280))
         assertEquals("fe80::1%3", v6(0xfe80, 0, 0, 0, 0, 0, 0, 1, scope = 3))
+        assertEquals("2001:db8::1", v6(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))    // lower case, no leading zeros
+        assertEquals("ab:cd::ef", v6(0xAB, 0xCD, 0, 0, 0, 0, 0, 0xEF))
+    }
+
+    /** `toString`: `a.b.c.d:port`, and `[ipv6]:port` with the IPv6 part in RFC 5952 form. */
+    @Test
+    fun toStringIsCanonicalWithPort() {
+        fun v6(vararg g: Int, port: Int, scope: Int = 0) =
+            SocketAddress.of(ByteArray(16) { i -> (g[i / 2] shr (if (i % 2 == 0) 8 else 0)).toByte() }, port, scope).toString()
+        assertEquals("127.0.0.1:80", SocketAddress.ipv4(127, 0, 0, 1, 80).toString())
+        assertEquals("[::]:0", SocketAddress.IPV6_UNSPECIFIED_ANY_PORT.toString())
+        assertEquals("[::1]:443", v6(0, 0, 0, 0, 0, 0, 0, 1, port = 443))
+        assertEquals("[2001:db8::ff00:42:8329]:8080", v6(0x2001, 0xdb8, 0, 0, 0, 0xff00, 0x42, 0x8329, port = 8080))
+        assertEquals("[1::4:5:0:0:8]:1", v6(1, 0, 0, 4, 5, 0, 0, 8, port = 1))
+        assertEquals("[1:0:2:3:4:5:6:7]:2", v6(1, 0, 2, 3, 4, 5, 6, 7, port = 2))
+        assertEquals("[::ffff:192.0.2.128]:9000", v6(0, 0, 0, 0, 0, 0xffff, 0xc000, 0x280, port = 9000))
+        assertEquals("[fe80::1%3]:22", v6(0xfe80, 0, 0, 0, 0, 0, 0, 1, port = 22, scope = 3))
+    }
+
+    @Test
+    fun formatIpAddressTakesRawBytes() {
+        assertEquals("10.0.0.1", formatIpAddress(byteArrayOf(10, 0, 0, 1)))
+        assertEquals("::", formatIpAddress(ByteArray(16)))
+        assertEquals("::1", formatIpAddress(ByteArray(16).also { it[15] = 1 }))
+        assertEquals("fe80::1%7", formatIpAddress(ByteArray(16).also { it[0] = 0xfe.toByte(); it[1] = 0x80.toByte(); it[15] = 1 }, 7))
     }
 
     @Test
