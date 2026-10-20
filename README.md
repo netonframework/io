@@ -23,11 +23,14 @@ starting at 0.1.0; the older `com.netonstream:neton-io:0.1.0` is a different, ea
 - `neton.io.net` — the reactor over TCP. Readiness drivers: kqueue (Apple), epoll and poll (Linux), java.nio `Selector` (JVM). Completion driver: io_uring (Linux). Selectable via `NETON_IO_DRIVER`
 
 ```kotlin
-dependencies { implementation("com.netonstream:io:0.3.3") }
+dependencies { implementation("com.netonstream:io:0.4.1") }
 ```
 
 Targets: macOS, iOS, Linux (x64/arm64), Android native, Windows (mingwX64, IOCP and WSAPoll drivers) and the
 JVM.
+
+**0.4.1** (2026-10-20). `SocketAddress.toString` prints IPv6 in RFC 5952 form (`[::1]:443`), and the formatter is
+public as `formatIpAddress(bytes, scopeId)` for consumers that format raw address bytes.
 
 **0.3.3** (2026-10-09). `lookupHost(host, port)`: resolve a name to `SocketAddress`es (tokio `net::lookup_host`) for
 protocols that dial addresses themselves (UDP, QUIC); literals inline, names off the reactor (SPEC §35). Built with
